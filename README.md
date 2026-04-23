@@ -2,56 +2,123 @@
 
 <h1>Global Capacity Orchestrator (GCO)</h1>
 
+<!-- BEGIN BADGE TABLE -->
 <table>
 <tr>
-<td><strong>CI/CD</strong></td>
-<td>
-  <img src="https://img.shields.io/badge/pytest-3610-blue?style=flat&logo=pytest&logoColor=white" alt="PyTest">
-  <img src="https://img.shields.io/badge/BATS-167-blue?style=flat&logo=gnu-bash&logoColor=white" alt="BATS">
-  <img src="https://img.shields.io/badge/coverage-85%25+-brightgreen?style=flat" alt="Coverage">
+<td colspan="2">
+
+#### Unit Tests
+
+[![Unit Tests](https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/unit-tests.yml/badge.svg?branch=main)](https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/unit-tests.yml)
+
 </td>
 </tr>
 <tr>
-<td><strong>Security</strong></td>
-<td>
-  <img src="https://img.shields.io/badge/Bandit-SAST-4B8BBE?style=flat&logo=python&logoColor=white" alt="Bandit">
-  <img src="https://img.shields.io/badge/Trivy-container%20scan-4B8BBE?style=flat&logo=aqua&logoColor=white" alt="Trivy">
-  <img src="https://img.shields.io/badge/Checkov-IaC%20scan-4B8BBE?style=flat&logo=paloaltonetworks&logoColor=white" alt="Checkov">
-  <img src="https://img.shields.io/badge/KICS-IaC%20scan-4B8BBE?style=flat" alt="KICS">
-  <img src="https://img.shields.io/badge/Semgrep-SAST-4B8BBE?style=flat" alt="Semgrep">
-  <img src="https://img.shields.io/badge/Gitleaks-secrets-4B8BBE?style=flat" alt="Gitleaks">
-  <img src="https://img.shields.io/badge/TruffleHog-secrets-4B8BBE?style=flat" alt="TruffleHog">
-  <img src="https://img.shields.io/badge/Safety-dependency%20scan-4B8BBE?style=flat&logo=pypi&logoColor=white" alt="Safety">
-  <img src="https://img.shields.io/badge/pip--audit-dependency%20scan-4B8BBE?style=flat&logo=pypi&logoColor=white" alt="pip-audit">
-  <img src="https://img.shields.io/badge/cdk--nag-AWS%20Solutions%20%7C%20HIPAA%20%7C%20NIST%20%7C%20PCI%20%7C%20Serverless%20packs-4B8BBE?style=flat&logo=amazonaws&logoColor=white" alt="cdk-nag">
+<td colspan="2">
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/unit-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/unit-tests.yml?branch=main&label=unit%3Abats%3Ashell&job=unit-bats-shell" alt="unit:bats:shell"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/unit-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/unit-tests.yml?branch=main&label=unit%3Acdk%3Aconfig-matrix&job=unit-cdk-config-matrix" alt="unit:cdk:config-matrix"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/unit-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/unit-tests.yml?branch=main&label=unit%3Acdk%3Asynth&job=unit-cdk-synth" alt="unit:cdk:synth"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/unit-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/unit-tests.yml?branch=main&label=unit%3Acli%3Asmoke&job=unit-cli-smoke" alt="unit:cli:smoke"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/unit-tests.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fawslabs%2Fglobal-capacity-orchestrator-on-aws%2Fbadges%2Fbadges%2Fcoverage.json" alt="unit:coverage"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/unit-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/unit-tests.yml?branch=main&label=unit%3Afresh-install&job=unit-fresh-install" alt="unit:fresh-install"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/unit-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/unit-tests.yml?branch=main&label=unit%3Alockfile%3Afreshness&job=unit-lockfile-freshness" alt="unit:lockfile:freshness"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/unit-tests.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fawslabs%2Fglobal-capacity-orchestrator-on-aws%2Fbadges%2Fbadges%2Fpytest-count.json" alt="unit:pytest:core"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/unit-tests.yml"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fawslabs%2Fglobal-capacity-orchestrator-on-aws%2Fbadges%2Fbadges%2Fbats-count.json" alt="unit:bats:count"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/unit-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/unit-tests.yml?branch=main&label=unit%3Aworkload%3Aimports&job=unit-workload-imports" alt="unit:workload:imports"></a>
 </td>
 </tr>
 <tr>
-<td><strong>Linting</strong></td>
-<td>
-  <img src="https://img.shields.io/badge/Ruff-linter-7B68AE?style=flat&logo=ruff&logoColor=white" alt="Ruff">
-  <img src="https://img.shields.io/badge/Flake8-linter-7B68AE?style=flat&logo=python&logoColor=white" alt="Flake8">
-  <img src="https://img.shields.io/badge/Black-formatter-7B68AE?style=flat&logo=python&logoColor=white" alt="Black">
-  <img src="https://img.shields.io/badge/isort-imports-7B68AE?style=flat&logo=python&logoColor=white" alt="isort">
-  <img src="https://img.shields.io/badge/mypy-strict-7B68AE?style=flat&logo=python&logoColor=white" alt="mypy strict">
-  <img src="https://img.shields.io/badge/yamllint-YAML-7B68AE?style=flat" alt="yamllint">
-  <img src="https://img.shields.io/badge/Hadolint-Dockerfile-7B68AE?style=flat&logo=docker&logoColor=white" alt="Hadolint">
-  <img src="https://img.shields.io/badge/ShellCheck-shell%20lint-7B68AE?style=flat&logo=gnu-bash&logoColor=white" alt="ShellCheck">
+<td colspan="2">
+
+#### Integration Tests
+
+[![Integration Tests](https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/integration-tests.yml/badge.svg?branch=main)](https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/integration-tests.yml)
+
 </td>
 </tr>
 <tr>
-<td><strong>Stack</strong></td>
-<td>
-  <img src="https://img.shields.io/badge/Python-3.14-3776AB?style=flat&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/CDK-2.248-FF9900?style=flat&logo=amazonaws&logoColor=white" alt="CDK">
-  <img src="https://img.shields.io/badge/EKS-Auto%20Mode-FF9900?style=flat&logo=amazoneks&logoColor=white" alt="EKS Auto Mode">
-  <img src="https://img.shields.io/badge/Kubernetes-1.35-326CE5?style=flat&logo=kubernetes&logoColor=white" alt="Kubernetes">
-  <img src="https://img.shields.io/badge/EKS%20v2-L2%20Constructs-FF9900?style=flat&logo=amazonaws&logoColor=white" alt="EKS v2">
-  <img src="https://img.shields.io/badge/Inference_Examples-vLLM%20%7C%20TGI%20%7C%20Triton%20%7C%20SGLang-10b981?style=flat&logo=nvidia&logoColor=white" alt="Inference Examples">
-  <img src="https://img.shields.io/badge/MCP%20tools-44-10b981?style=flat&logo=anthropic&logoColor=white" alt="MCP Tools">
+<td colspan="2">
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/integration-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/integration-tests.yml?branch=main&label=integration%3Adocker%3Adev-container&job=integration-docker-dev-container" alt="integration:docker:dev-container"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/integration-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/integration-tests.yml?branch=main&label=integration%3Adocker%3Ahealth-monitor&job=integration-docker-health-monitor" alt="integration:docker:health-monitor"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/integration-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/integration-tests.yml?branch=main&label=integration%3Adocker%3Ahelm-installer&job=integration-docker-helm-installer" alt="integration:docker:helm-installer"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/integration-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/integration-tests.yml?branch=main&label=integration%3Adocker%3Ainference-monitor&job=integration-docker-inference-monitor" alt="integration:docker:inference-monitor"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/integration-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/integration-tests.yml?branch=main&label=integration%3Adocker%3Amanifest-processor&job=integration-docker-manifest-processor" alt="integration:docker:manifest-processor"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/integration-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/integration-tests.yml?branch=main&label=integration%3Adocker%3Aqueue-processor&job=integration-docker-queue-processor" alt="integration:docker:queue-processor"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/integration-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/integration-tests.yml?branch=main&label=integration%3Ak8s%3Amanifest-schema&job=integration-k8s-manifest-schema" alt="integration:k8s:manifest-schema"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/integration-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/integration-tests.yml?branch=main&label=integration%3Akind%3Acluster-e2e&job=integration-kind-cluster-e2e" alt="integration:kind:cluster-e2e"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/integration-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/integration-tests.yml?branch=main&label=integration%3Alambda%3Aimports&job=integration-lambda-imports" alt="integration:lambda:imports"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/integration-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/integration-tests.yml?branch=main&label=integration%3Amcp%3Aserver&job=integration-mcp-server" alt="integration:mcp:server"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/integration-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/integration-tests.yml?branch=main&label=integration%3Apytest%3Across-module&job=integration-pytest-cross-module" alt="integration:pytest:cross-module"></a>
+</td>
+</tr>
+<tr>
+<td colspan="2">
+
+#### Security
+
+[![Security](https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/security.yml)
+
+</td>
+</tr>
+<tr>
+<td colspan="2">
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/security.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/security.yml?branch=main&label=security%3Abandit%3Asast&job=security-bandit-sast" alt="security:bandit:sast"></a>
+  <a href="docs/ARCHITECTURE.md"><img src="https://img.shields.io/badge/security%3Acdk--nag%3Acompliance-AWS%20Solutions%20%7C%20HIPAA%20%7C%20NIST%20%7C%20PCI%20%7C%20Serverless-4B8BBE?style=flat" alt="security:cdk-nag:compliance"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/security.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/security.yml?branch=main&label=security%3Acheckov%3Aiac&job=security-checkov-iac" alt="security:checkov:iac"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/security.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/security.yml?branch=main&label=security%3Agitleaks%3Asecrets&job=security-gitleaks-secrets" alt="security:gitleaks:secrets"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/security.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/security.yml?branch=main&label=security%3Akics%3Aiac&job=security-kics-iac" alt="security:kics:iac"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/security.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/security.yml?branch=main&label=security%3Apip-audit%3Adeps&job=security-pip-audit-deps" alt="security:pip-audit:deps"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/security.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/security.yml?branch=main&label=security%3Asafety%3Adeps&job=security-safety-deps" alt="security:safety:deps"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/security.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/security.yml?branch=main&label=security%3Asemgrep%3Asast&job=security-semgrep-sast" alt="security:semgrep:sast"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/security.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/security.yml?branch=main&label=security%3Atrivy%3Acontainer-scan&job=security-trivy-container-scan" alt="security:trivy:container-scan"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/security.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/security.yml?branch=main&label=security%3Atrivy%3Afilesystem&job=security-trivy-filesystem" alt="security:trivy:filesystem"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/security.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/security.yml?branch=main&label=security%3Atrufflehog%3Asecrets&job=security-trufflehog-secrets" alt="security:trufflehog:secrets"></a>
+</td>
+</tr>
+<tr>
+<td colspan="2">
+
+#### Linting
+
+[![Linting](https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/lint.yml)
+
+</td>
+</tr>
+<tr>
+<td colspan="2">
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/lint.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/lint.yml?branch=main&label=lint%3Aactionlint%3Aworkflows&job=lint-actionlint-workflows" alt="lint:actionlint:workflows"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/lint.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/lint.yml?branch=main&label=lint%3Ablack%3Aformat&job=lint-black-format" alt="lint:black:format"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/lint.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/lint.yml?branch=main&label=lint%3Aflake8%3Apython&job=lint-flake8-python" alt="lint:flake8:python"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/lint.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/lint.yml?branch=main&label=lint%3Ahadolint%3Adockerfile&job=lint-hadolint-dockerfile" alt="lint:hadolint:dockerfile"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/lint.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/lint.yml?branch=main&label=lint%3Aisort%3Aimports&job=lint-isort-imports" alt="lint:isort:imports"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/lint.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/lint.yml?branch=main&label=lint%3Amypy%3Alambda&job=lint-mypy-lambda" alt="lint:mypy:lambda"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/lint.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/lint.yml?branch=main&label=lint%3Amypy%3Astacks&job=lint-mypy-stacks" alt="lint:mypy:stacks"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/lint.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/lint.yml?branch=main&label=lint%3Amypy%3Astrict&job=lint-mypy-strict" alt="lint:mypy:strict"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/lint.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/lint.yml?branch=main&label=lint%3Aruff%3Apython&job=lint-ruff-python" alt="lint:ruff:python"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/lint.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/lint.yml?branch=main&label=lint%3Ashellcheck%3Ashell&job=lint-shellcheck-shell" alt="lint:shellcheck:shell"></a>
+  <a href="https://github.com/awslabs/global-capacity-orchestrator-on-aws/actions/workflows/lint.yml"><img src="https://img.shields.io/github/actions/workflow/status/awslabs/global-capacity-orchestrator-on-aws/lint.yml?branch=main&label=lint%3Ayamllint%3Ayaml&job=lint-yamllint-yaml" alt="lint:yamllint:yaml"></a>
+</td>
+</tr>
+<tr>
+<td colspan="2">
+
+#### Stack
+
+</td>
+</tr>
+<tr>
+<td colspan="2">
+  <a href="https://github.com/aws/aws-cdk/releases"><img src="https://img.shields.io/badge/CDK-2.248-FF9900?style=flat&logo=amazonaws&logoColor=white" alt="CDK"></a>
+  <a href="https://docs.aws.amazon.com/eks/latest/userguide/automode.html"><img src="https://img.shields.io/badge/EKS-Auto%20Mode-FF9900?style=flat&logo=amazoneks&logoColor=white" alt="EKS Auto Mode"></a>
+  <a href="gco/stacks/regional_stack.py"><img src="https://img.shields.io/badge/EKS%20v2-L2%20Constructs-FF9900?style=flat&logo=amazonaws&logoColor=white" alt="EKS v2 L2 Constructs"></a>
+  <a href="docs/INFERENCE.md"><img src="https://img.shields.io/badge/Inference_Examples-vLLM%20%7C%20TGI%20%7C%20Triton%20%7C%20SGLang-10b981?style=flat&logo=nvidia&logoColor=white" alt="Inference Examples"></a>
+  <a href="cdk.json"><img src="https://img.shields.io/badge/Kubernetes-1.35-326CE5?style=flat&logo=kubernetes&logoColor=white" alt="Kubernetes"></a>
+  <a href="mcp/README.md"><img src="https://img.shields.io/badge/MCP%20tools-44-10b981?style=flat&logo=anthropic&logoColor=white" alt="MCP Tools"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.14-3776AB?style=flat&logo=python&logoColor=white" alt="Python"></a>
 </td>
 </tr>
 </table>
+<!-- END BADGE TABLE -->
 
 **Multi-region EKS Auto Mode platform for AI/ML workload orchestration**
 
@@ -350,12 +417,12 @@ docker run -it --rm -v ~/.aws:/root/.aws:ro -v $(pwd):/workspace -w /workspace g
 │
 ├── mcp/                                 # MCP server for LLM interaction (44 tools wrapping the CLI)
 ├── scripts/                             # Utility scripts (version bump, cluster access setup)
-└── tests/                               # 3,610 PyTest tests with 85%+ coverage and 167 BATS tests for shell scripts
+└── tests/                               # PyTest + BATS test suites (counts tracked via badges)
 ```
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, CI/CD pipeline details, release process, and dependency scanning schedules.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, the GitHub Actions CI/CD layout, release process, and dependency scanning schedules.
 
 Quick start for contributors:
 

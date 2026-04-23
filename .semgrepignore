@@ -1,0 +1,64 @@
+# Semgrep Ignore File
+# Intentional security exemptions with documented justifications
+
+# =============================================================================
+# NVIDIA Device Plugin - Requires privileged access for GPU device management
+# =============================================================================
+# The NVIDIA device plugin DaemonSet needs access to host device paths
+# (/var/lib/kubelet/device-plugins) to expose GPU devices to containers.
+# This is a fundamental requirement for GPU support in Kubernetes.
+# Reference: https://github.com/NVIDIA/k8s-device-plugin
+lambda/kubectl-applier-simple/manifests/50-nvidia-device-plugin.yaml
+
+# =============================================================================
+# Lambda Container Dockerfiles - No USER directive needed
+# =============================================================================
+# AWS Lambda containers run as the Lambda runtime user, not as root.
+# Adding a USER directive would break Lambda execution.
+# Reference: https://docs.aws.amazon.com/lambda/latest/dg/images-create.html
+lambda/helm-installer/Dockerfile
+lambda/ga-registration/Dockerfile
+lambda/secret-rotation/Dockerfile
+lambda/api-gateway-proxy/Dockerfile
+
+# =============================================================================
+# Example YAML files - Documentation/reference only
+# =============================================================================
+# Example manifests are for documentation purposes and demonstrate various
+# configurations. They are not deployed directly and users customize them.
+examples/
+
+# =============================================================================
+# CDK NAG Suppressions - Intentional string concatenation for readability
+# =============================================================================
+# The nag_suppressions.py file uses multi-line strings in lists for readability.
+# This is intentional Python syntax, not a bug.
+gco/stacks/nag_suppressions.py
+gco/stacks/monitoring_stack.py
+
+# =============================================================================
+# Test Files - False positives for test fixtures
+# =============================================================================
+# test_auth_middleware.py defines FastAPI route handlers inside a fixture function.
+# These are used by the test client and are not "unused" - semgrep doesn't understand
+# that FastAPI decorators register the functions as route handlers.
+tests/test_auth_middleware.py
+
+# =============================================================================
+# Build artifacts and generated code
+# =============================================================================
+lambda/kubectl-applier-simple-build/
+lambda/helm-installer-build/
+cdk.out/
+.venv/
+htmlcov/
+*.egg-info/
+
+# =============================================================================
+# Asciinema recordings - terminal output, not source code
+# =============================================================================
+# Cast files contain raw terminal output from demo recordings. Semgrep's
+# generic secret detector flags CloudFormation resource names that contain
+# base64-encoded strings (e.g., SecretRotationFunction/InvokeN0--a2GK...).
+# These are CFN logical IDs, not actual secrets.
+demo/*.cast

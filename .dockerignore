@@ -1,0 +1,22 @@
+# Exclude everything by default, then allowlist only what the Dockerfiles need.
+# This keeps the CDK asset fingerprint stable — only changes to actual service
+# code (gco/, cli/, pyproject.toml, dockerfiles/) trigger a Docker rebuild.
+*
+
+# Allow the source packages and build config
+!gco/
+!cli/
+!pyproject.toml
+!requirements-lock.txt
+!dockerfiles/
+
+# Re-exclude generated/cache dirs inside the allowed paths
+gco/**/__pycache__/
+cli/**/__pycache__/
+gco/**/*.pyc
+cli/**/*.pyc
+gco/**/*.pyo
+cli/**/*.pyo
+
+# Exclude CDK stacks — not needed inside the container
+gco/stacks/

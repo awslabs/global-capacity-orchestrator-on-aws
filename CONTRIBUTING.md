@@ -294,38 +294,38 @@ pytest tests/ -m integration
 
 ### CI/CD Pipeline
 
-The project uses GitLab CI/CD for automated testing. The pipeline runs on every push and merge request.
+The project uses GitHub Actions for automated testing. Every push and pull request runs four primary workflows in parallel, plus three satellites on schedule or manual trigger.
 
-#### Pipeline Stages
+#### Primary workflows (run on every push + PR)
 
-1. **Validate** - All checks run in parallel:
-   - Python linting (Black, Ruff, isort)
-   - YAML validation
-   - Dockerfile linting
-   - Type checking (mypy)
-   - CDK synthesis validation
-   - CDK configuration matrix (20 config combinations)
-   - Fresh install verification (imports and entry points)
-   - Unit tests with coverage
-   - Security scanning (Bandit, Safety, Trivy, TruffleHog)
-   - Docker image builds
+| Workflow file | README row | Purpose |
+|---------------|------------|---------|
+| `.github/workflows/unit-tests.yml` | Unit Tests | pytest with coverage, BATS, CLI smoke, CDK synth + config matrix, lockfile freshness, fresh install, workload import checks |
+| `.github/workflows/integration-tests.yml` | Integration Tests | Per-Dockerfile build + healthcheck, kind cluster E2E (with Calico for NetworkPolicy enforcement), K8s manifest schema, Lambda import validation, cross-module pytest, MCP server pytest |
+| `.github/workflows/security.yml` | Security | bandit, safety, pip-audit, trivy (filesystem + per-image), trufflehog, gitleaks, semgrep, checkov, KICS |
+| `.github/workflows/lint.yml` | Linting | actionlint, black, flake8, hadolint, isort, mypy (strict/stacks/lambda), ruff, shellcheck, yamllint |
 
-2. **Integration** - Runs after validate:
-   - API contract validation
-   - Kubernetes manifest validation
-   - Lambda handler import verification
-   - Lambda build directory validation (via CDK synth)
+Each workflow file has a comment header documenting triggers and per-job purpose — that is the single source of truth. Every job uses `category:tool:test_name` display names (e.g., `unit:pytest:core`, `security:trivy:container-scan`) and `category-tool-test_name` job IDs.
 
-3. **Deploy Preview** - Coverage report publishing
+#### Satellite workflows
 
-4. **Release** - Manual version bumps (patch/minor/major)
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `.github/workflows/release.yml` | Manual (`workflow_dispatch`) | Bump version, tag, and create a GitHub Release with auto-generated notes |
+| `.github/workflows/deps-scan.yml` | `cron: 0 9 1 * *` (monthly) | Check Python/Docker/Helm/EKS-addon versions; open an issue if drift detected |
+| `.github/workflows/cve-scan.yml` | `cron: 0 9 * * 1` (weekly) | Re-run Trivy + safety against current CVE databases |
 
-5. **Maintenance** - Scheduled + manual jobs (dependency checks)
-   - `dependency-scan:monthly` runs automatically on the 1st of each month (requires pipeline schedule setup)
-   - `security-scan:weekly` runs every Monday to check for new CVEs (requires pipeline schedule setup)
-   - `dependency-check` can be triggered manually at any time
+#### Auto-generated badges
 
-#### Running Pipeline Locally
+Three README badges update automatically from `push: main` runs:
+
+- `unit:pytest:core` test count
+- `unit:bats:count`
+- `unit:coverage` percentage
+
+Values are published to the orphan `badges` branch as shields.io endpoint JSON and consumed via `img.shields.io/endpoint?url=…`. Fork PRs cannot write to this branch — the publish step is gated on `push: main`.
+
+#### Running the pipeline locally
 
 You can simulate the CI pipeline locally:
 
@@ -333,36 +333,45 @@ You can simulate the CI pipeline locally:
 # Install dev dependencies
 pip install -e ".[dev]"
 
-# Run linters
+# Run linters (matches lint.yml jobs)
 black --check gco/ cli/ tests/ lambda/ scripts/
 ruff check gco/ cli/ tests/
 isort --check-only gco/ cli/ tests/ lambda/ scripts/
+flake8 gco/ cli/ tests/ lambda/ scripts/
 
 # Run type checks (everything except stacks — fast, no CDK needed)
-mypy gco/config/ gco/models/ gco/services/ cli/ --ignore-missing-imports --check-untyped-defs
+mypy gco/ cli/ mcp/ scripts/ --exclude 'gco/stacks/'
 
 # Run type checks on stacks (requires CDK)
 pip install -e ".[cdk,typecheck]"
-mypy gco/stacks/ --ignore-missing-imports --check-untyped-defs
+mypy gco/stacks/ app.py
 
 # Run security scans
 bandit -r gco/ cli/ -c pyproject.toml --severity-level medium
 
-# Run tests with coverage
+# Run tests with coverage (matches unit:pytest:core)
 pytest tests/ --cov=gco --cov=cli --cov-report=html --cov-fail-under=85
 
-# Run CDK config matrix (tests 20 config combinations synthesize cleanly)
+# Run CDK config matrix (matches unit:cdk:config-matrix)
 python scripts/test-cdk-synthesis.py
 
 # Regenerate the lockfile (after dependency changes)
 pip-compile --no-emit-index-url --strip-extras -o requirements-lock.txt pyproject.toml
 ```
 
-#### Pipeline Badges
+#### Debugging a failing check
 
-The README displays pipeline status and coverage badges:
-- Pipeline status: Shows if the latest build passed
-- Coverage: Shows test coverage percentage
+The README badge label tells you the workflow and job. For example, `unit:pytest:core` maps to:
+
+- Workflow file: `.github/workflows/unit-tests.yml`
+- Job ID: `unit-pytest-core`
+- Actions UI: repo → Actions → "Unit Tests" → latest run → `unit:pytest:core`
+
+Click any badge to land on the workflow page; the Actions UI lists every job.
+
+#### Frozen GitLab pipeline
+
+`.gitlab-ci.yml` is kept as a frozen reference for anyone forking to GitLab. It is NOT maintained and may drift as tools evolve. GitHub Actions is authoritative.
 
 ### Integration Tests
 
@@ -438,59 +447,27 @@ We use semantic versioning (MAJOR.MINOR.PATCH):
 
 ### CI/CD Token Setup
 
-The release and dependency-check jobs require a `RELEASE_TOKEN` with appropriate permissions. This is a one-time setup:
+No long-lived tokens are required for the GitHub Actions pipeline. Both the release and dependency-scan workflows use the built-in `GITHUB_TOKEN`:
 
-#### Step 1: Create a Project Access Token
+- `release.yml` needs `contents: write` to push the version commit, tag, and create the GitHub Release. The workflow declares this at the top of the file.
+- `deps-scan.yml` needs `issues: write` to open a dependency-drift issue. Also declared at the top of the file.
 
-1. Go to your GitLab project → Settings → Access Tokens
-2. Create a new token with these settings:
-   - **Token name**: `CI Release Token` (or similar)
-   - **Role**: `Maintainer`
-   - **Scopes** (check all of these):
-     - `api` - Required for creating issues (dependency-check job)
-     - `read_repository` - Required for git operations
-     - `write_repository` - Required for pushing tags and commits (release jobs)
-   - **Expiration**: Set as appropriate for your security policy (recommend 1 year)
-3. Click "Create project access token"
-4. **Copy the token value immediately** - it won't be shown again
-
-#### Step 2: Add Token as CI/CD Variable
-
-1. Go to Settings → CI/CD → Variables
-2. Click "Add variable"
-3. Configure the variable:
-   - **Key**: `RELEASE_TOKEN`
-   - **Value**: Paste the token you copied
-   - **Type**: Variable
-   - **Flags**:
-     - ✅ Mask variable (hides value in job logs)
-     - ⬜ Protect variable (optional - if checked, only available on protected branches)
-     - ⬜ Expand variable reference (leave unchecked)
-4. Click "Add variable"
-
-#### What Each Job Needs
-
-| Job | Required Scopes | Purpose |
-|-----|-----------------|---------|
-| `release:patch/minor/major` | `write_repository` | Push version commits and tags |
-| `dependency-check` | `api` | Create GitLab issues for outdated deps |
+If you fork and run your own copy, no setup is needed — the tokens are generated per-run by GitHub.
 
 ### Creating a Release
 
-Releases are created via the GitLab CI/CD pipeline:
+Releases are triggered from the Actions tab:
 
-1. Go to CI/CD → Pipelines → Latest pipeline on main
-2. Find the Release stage and click the appropriate job:
-   - `release:patch` - Bug fixes (0.0.X)
-   - `release:minor` - New features (0.X.0)
-   - `release:major` - Breaking changes (X.0.0)
-3. Click "Play" to trigger the release
+1. Go to the repository on GitHub → Actions → Release.
+2. Click "Run workflow".
+3. Pick the bump type (`patch`, `minor`, or `major`) and click "Run workflow".
 
-The job will automatically:
-- Bump the version in `gco/_version.py`
-- Commit the change
-- Create a git tag
-- Push to the repository
+The workflow will:
+
+- Run `scripts/bump_version.py` with the chosen bump type.
+- Commit the version change to `main` (as `github-actions[bot]`).
+- Create and push a `v<new-version>` git tag.
+- Create a GitHub Release with auto-generated notes (categorized per `.github/release.yml`).
 
 #### Manual Release (Alternative)
 
@@ -501,87 +478,44 @@ If you need to release manually:
 python scripts/bump_version.py patch  # or minor/major
 
 # Commit and tag
-git add gco/_version.py
+git add gco/_version.py cli/__init__.py
 git commit -m "Release v1.2.3"
 git tag -a v1.2.3 -m "Release v1.2.3"
-git push origin main --tags
+git push origin main
+git push origin v1.2.3
+
+# Create the GitHub Release with generated notes
+gh release create v1.2.3 --generate-notes
 ```
 
 After releasing, update CHANGELOG.md and deploy to production environments.
 
 ### Dependency Updates
 
-The `dependency-check` job checks for outdated Python packages and Docker images, then creates a GitLab issue if updates are available.
+Dependency drift is tracked through three layers:
 
-#### What Gets Checked
+1. **Dependabot (weekly PRs)** — GitHub Actions and Docker only. See `.github/dependabot.yml`. Python packages are intentionally excluded because `requirements-lock.txt` is managed through `pip-compile` and bumped intentionally.
+2. **`deps-scan` workflow (monthly issue)** — runs on the 1st of each month at 09:00 UTC. Checks Python packages, Docker images, Helm charts, and EKS add-on versions. If anything is out of date, it opens a GitHub issue labeled `dependencies, automated`.
+3. **`cve-scan` workflow (weekly job)** — runs Mondays at 09:00 UTC. Re-runs Trivy + safety against the latest CVE databases. A red run is the signal; the per-push `security.yml` workflow will catch the same issue on the next PR.
 
-1. **Python Packages**: All packages in `pyproject.toml` are checked against PyPI for newer versions
-2. **Docker Images**: Images are checked against their registries for newer semver tags
-   - CI images in `.gitlab-ci.yml`
-   - K8s manifests in `lambda/kubectl-applier-simple/manifests/` (e.g., NVIDIA device plugin)
-   - Example manifests in `examples/`
-   - Helm chart value images in `lambda/helm-installer/charts.yaml` (e.g., Slurm operator, KubeRay)
-   - Uses `skopeo` to query Docker Hub, Quay.io, GHCR, and other registries
-   - Only checks semver-tagged images (e.g., `v1.2.3`, `1.2.3`)
-   - Skips `gco/*` images (we control those), `latest` tags, and template variables
+#### What Gets Checked by `deps-scan`
 
-#### Running the Dependency Check
+- **Python Packages**: all packages resolved from `pyproject.toml` are checked against PyPI for newer versions
+- **Docker Images**: semver-tagged images referenced in `.github/workflows/*.yml`, K8s manifests, examples, and Helm chart values
+- **Helm Charts**: from `lambda/helm-installer/charts.yaml`
+- **EKS Add-ons**: extracted from `gco/stacks/regional_stack.py` (requires AWS credentials via OIDC; falls back gracefully otherwise)
 
-1. Go to CI/CD → Pipelines → Latest pipeline on main
-2. Find the Maintenance stage and click `dependency-check`
-3. Click "Play" to trigger the check
+#### Running the Dependency Check Manually
 
-The job will:
-- Check all packages in `pyproject.toml` for newer versions
-- Check Docker images for newer semver tags
-- Create a GitLab issue with tables of outdated dependencies
-- Include current version, latest version, and update instructions
+The monthly scan is also wired to `workflow_dispatch`:
 
-#### Scheduling Automatic Checks
-
-A monthly dependency scan (`dependency-scan:monthly`) is built into the pipeline and runs on the 1st of each month at 09:00 UTC. It uses the same logic as the manual `dependency-check` job.
-
-**One-time setup** (required to activate the schedule):
-
-1. Go to CI/CD → Schedules
-2. Click "New schedule"
-3. Configure:
-   - **Description**: `Monthly dependency scan`
-   - **Interval pattern**: `0 9 1 * *`
-   - **Cron timezone**: UTC
-   - **Target branch**: `main`
-4. Add a variable:
-   - **Key**: `SCHEDULED_SCAN`
-   - **Value**: `true`
-5. Click "Create pipeline schedule"
-
-The job will automatically check all Python packages and Docker images (CI, K8s manifests, examples) for newer versions and create a GitLab issue if updates are found.
-
-You can also trigger the scan manually at any time via the `dependency-check` job in the Maintenance stage.
-
-#### Weekly Security Scan (CVE Detection)
-
-A weekly CVE scan (`security-scan:weekly`) runs every Monday at 09:00 UTC. It re-checks your dependencies against the latest Trivy and Safety vulnerability databases to catch newly published CVEs for packages you already depend on.
-
-**One-time setup** (required to activate the schedule):
-
-1. Go to CI/CD → Schedules
-2. Click "New schedule"
-3. Configure:
-   - **Description**: `Weekly security scan`
-   - **Interval pattern**: `0 9 * * 1`
-   - **Cron timezone**: UTC
-   - **Target branch**: `main`
-4. Add a variable:
-   - **Key**: `SECURITY_SCAN`
-   - **Value**: `true`
-5. Click "Create pipeline schedule"
-
-This is separate from the per-push security scans (which run on every commit). The weekly scan exists because CVE databases update daily — a dependency that was clean last week may have a new HIGH/CRITICAL vulnerability today.
+1. Go to Actions → "Deps scan" → "Run workflow".
+2. Pick the `main` branch and click Run.
+3. On completion, either a new issue appears (if drift was found) or the workflow just turns green.
 
 #### Checking EKS Addon Versions
 
-EKS addon versions are not automatically checked by the CI pipeline (requires AWS credentials). Periodically check for updates manually:
+EKS addon versions are checked by `deps-scan` when AWS credentials are configured. Without credentials, the addon section is skipped silently. To check manually at any time:
 
 ```bash
 # Check latest versions for all addons used by GCO
@@ -590,8 +524,8 @@ K8S_VERSION="1.35"  # Match your configured Kubernetes version
 for addon in metrics-server aws-efs-csi-driver amazon-cloudwatch-observability aws-fsx-csi-driver; do
   echo "=== $addon ==="
   aws eks describe-addon-versions \
-    --addon-name $addon \
-    --kubernetes-version $K8S_VERSION \
+    --addon-name "$addon" \
+    --kubernetes-version "$K8S_VERSION" \
     --query 'addons[0].addonVersions[0].addonVersion' \
     --output text
 done

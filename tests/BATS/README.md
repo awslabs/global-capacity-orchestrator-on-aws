@@ -42,9 +42,7 @@ bats tests/BATS/ --tap
 
 ## CI Integration
 
-BATS tests run automatically in the `validate` stage of `.gitlab-ci.yml` as the `test:bats` job. They run in parallel with pytest, linting, and security scans.
-
-The job uses the `bats/bats:1.13.0` Docker image with `entrypoint: [""]` (required for GitLab CI compatibility — the default entrypoint conflicts with GitLab's shell detection). The `before_script` installs `jq`, `bash`, `python3`, and `py3-yaml` since several tests parse cdk.json and validate YAML manifests.
+BATS tests run on every push and PR as the `unit:bats:shell` job in `.github/workflows/unit-tests.yml`. They run in parallel with pytest, linting, and security scans — see the workflow file for the exact image pin and installed dependencies.
 
 ## Adding New Tests
 
