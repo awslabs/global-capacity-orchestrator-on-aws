@@ -60,7 +60,7 @@ jobs:
             -f json -o bandit-report.json
       - name: Upload bandit report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bandit-report
           path: bandit-report.json
@@ -88,7 +88,7 @@ jobs:
           safety check -r /tmp/requirements-lock.txt --output json > safety-report.json
       - name: Upload safety report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: safety-report
           path: safety-report.json
@@ -120,7 +120,7 @@ jobs:
           pip-audit -r requirements-lock.txt --desc
       - name: Upload pip-audit report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pip-audit-report
           path: pip-audit-report.json
@@ -143,7 +143,7 @@ jobs:
           output: "trivy-fs-report.json"
       - name: Upload trivy report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trivy-fs-report
           path: trivy-fs-report.json
@@ -189,7 +189,7 @@ jobs:
           output: "trivy-${{ matrix.image }}-report.json"
       - name: Upload trivy report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trivy-image-${{ matrix.image }}
           path: trivy-${{ matrix.image }}-report.json
@@ -208,7 +208,7 @@ jobs:
             filesystem /repo --only-verified --fail --json > trufflehog-report.json 2>&1
       - name: Upload trufflehog report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trufflehog-report
           path: trufflehog-report.json
@@ -229,7 +229,7 @@ jobs:
             --report-format json --report-path gitleaks-report.json
       - name: Upload gitleaks report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gitleaks-report
           path: gitleaks-report.json
@@ -247,7 +247,7 @@ jobs:
         run: semgrep scan --config auto --error --json -o semgrep-report.json .
       - name: Upload semgrep report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: semgrep-report
           path: semgrep-report.json
@@ -266,7 +266,7 @@ jobs:
             -d . --config-file .checkov.yaml -o json > checkov-report.json
       - name: Upload checkov report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: checkov-report
           path: checkov-report.json
@@ -304,7 +304,7 @@ jobs:
             --config .kics.yaml --fail-on high
       - name: Upload KICS report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kics-report
           path: |

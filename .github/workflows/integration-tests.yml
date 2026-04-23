@@ -216,7 +216,7 @@ jobs:
             --junitxml=test-integration-report.xml
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integration-pytest-report
           path: test-integration-report.xml
@@ -243,7 +243,7 @@ jobs:
             --junitxml=test-mcp-integration-report.xml
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integration-mcp-report
           path: test-mcp-integration-report.xml
