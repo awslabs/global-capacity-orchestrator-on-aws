@@ -1,0 +1,69 @@
+# KICS Configuration for GCO (Global Capacity Orchestrator on AWS)
+# This file configures KICS security scanning exclusions for findings that are:
+# - False positives (e.g., VPC Flow Logs already enabled)
+# - By design (e.g., NVIDIA device plugin requires host path access)
+# - Cost prohibitive (e.g., Shield Advanced, Network Firewall)
+# - Example files (not production code)
+
+# Severity threshold - fail on HIGH and CRITICAL only
+fail-on:
+  - high
+  - critical
+
+# Exclude specific query IDs that are false positives or by design
+exclude-queries:
+  # ============================================================================
+  # FALSE POSITIVES - Features already implemented
+  # ============================================================================
+  # VPC Flow Logs - Already enabled in regional_stack.py _create_vpc_flow_logs()
+  - 4c4f5a5a-5f5a-4c4f-5a5a-5f5a4c4f5a5a  # VPC FlowLogs Disabled
+  # ============================================================================
+  # BY DESIGN - Required for functionality
+  # ============================================================================
+  # NVIDIA Device Plugin requires host path access for GPU device management
+  # The plugin needs access to /var/lib/kubelet/device-plugins to register GPUs
+  - 302736f4-b16c-41b8-befe-c0baffa0bd9d  # Container Host Path Volume Mount
+  - 5308a7a8-06f8-45ac-bf10-791fe21de46e  # Workload Mounting With Sensitive OS Directory
+  - b7652612-de4e-4466-a0bf-1cd81f0c6063  # Volume Mount With OS Directory Write Permissions
+  # RBAC wildcards for CRD API groups - required to manage all resources in these groups
+  # These are scoped to specific API groups (kueue, ray, volcano, keda), not cluster-wide
+  - 6b896afb-ca07-467a-b256-1a0077a1c08e  # RBAC Wildcard In Rule
+  # EKS Auto Mode manages node security - we don't control node configurations
+  - 8b36775e-183d-4d46-b0f7-96a6f34a723f  # EKS Node Group Remote Access
+  # KMS Key Policy - CDK default policy grants root account admin access, which is required
+  # for key management. This is AWS best practice, not a vulnerability.
+  - da905474-7454-43c0-b8d2-5756ab951aba  # KMS Key With Vulnerable Policy
+  # Generic Secret - False positive on Secrets Manager ARN patterns in IAM policies
+  - a88baa34-e2ad-44ea-ad6f-8cac87bc7c71  # Passwords And Secrets - Generic Secret
+  # Lambda containers run as non-root by default (Lambda runtime handles this)
+  - fd54f200-402c-4333-a5a4-36ef6709af2f  # Missing User Instruction
+  # ============================================================================
+  # COST PROHIBITIVE - Enterprise features not needed for all deployments
+  # ============================================================================
+  # AWS Shield Advanced - $3000/month minimum, not required for all deployments
+  - 084c6686-2a70-4710-91b1-000393e54c12  # Shield Advanced Not In Use
+  # AWS Network Firewall - Significant cost, VPC security groups are sufficient
+  - 0e59d33e-bba2-4b5a-8f7c-5e3e3e3e3e3e  # Network Firewall Not Used
+  # All requests to ALBs pass through WAF already at the API Gateway stage
+  - 0a494a6a-ebe2-48a0-9d77-cf9d5125e1b3  # ELB Without WAF
+  # ============================================================================
+  # EXAMPLE FILES - Not production code
+  # ============================================================================
+  # Example YAML files in examples/ directory are for documentation purposes
+  # They demonstrate job submission patterns, not production configurations
+
+# Exclude paths that contain example/test code
+exclude-paths:
+  - "examples/"
+  - "**/test_*.py"
+  - "**/*_test.py"
+
+# Output configuration
+output-path: "."
+output-name: "kics-report"
+report-formats:
+  - json
+  - html
+
+# Verbose output for debugging
+verbose: false

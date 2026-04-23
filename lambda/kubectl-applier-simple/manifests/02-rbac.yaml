@@ -1,0 +1,253 @@
+# GCO RBAC — Per-service roles following least-privilege principle
+# Each platform service gets its own ServiceAccount and minimally-scoped role.
+#
+# Roles:
+#   gco-health-monitor-role          (ClusterRole)  — read-only cluster-wide
+#   gco-manifest-processor-role      (Role)         — write in gco-jobs namespace
+#   gco-manifest-processor-cluster-read (ClusterRole) — read namespaces + CRDs
+#   gco-inference-monitor-role       (Role)         — write in gco-inference namespace
+#
+# ServiceAccounts (all in gco-system):
+#   gco-health-monitor-sa
+#   gco-manifest-processor-sa
+#   gco-inference-monitor-sa
+
+# ─── ServiceAccounts ────────────────────────────────────────────────
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gco-health-monitor-sa
+  namespace: gco-system
+  labels:
+    app: health-monitor
+    project: gco
+  annotations:
+    eks.amazonaws.com/role-arn: "{{SERVICE_ACCOUNT_ROLE_ARN}}"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gco-manifest-processor-sa
+  namespace: gco-system
+  labels:
+    app: manifest-processor
+    project: gco
+  annotations:
+    eks.amazonaws.com/role-arn: "{{SERVICE_ACCOUNT_ROLE_ARN}}"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gco-inference-monitor-sa
+  namespace: gco-system
+  labels:
+    app: inference-monitor
+    project: gco
+  annotations:
+    eks.amazonaws.com/role-arn: "{{SERVICE_ACCOUNT_ROLE_ARN}}"
+
+# ─── Health Monitor: cluster-wide read-only ─────────────────────────
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gco-health-monitor-role
+  labels:
+    app: health-monitor
+    project: gco
+rules:
+  # Core resources — read-only
+  - apiGroups: [""]
+    resources: ["pods", "nodes", "services", "events"]
+    verbs: ["get", "list", "watch"]
+
+  # Apps resources — read-only
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+
+  # Batch resources — read-only (webhook_dispatcher watches jobs to fire
+  # lifecycle events; runs in-process inside the health-monitor pod)
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
+
+  # Metrics — read-only
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gco-health-monitor-binding
+  labels:
+    app: health-monitor
+    project: gco
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gco-health-monitor-role
+subjects:
+  - kind: ServiceAccount
+    name: gco-health-monitor-sa
+    namespace: gco-system
+
+# ─── Manifest Processor: namespace-scoped write in gco-jobs ────────
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gco-manifest-processor-role
+  namespace: gco-jobs
+  labels:
+    app: manifest-processor
+    project: gco
+rules:
+  # Core resources
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "persistentvolumeclaims"]
+    verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
+
+  # Pod logs (subresource) — required for GET /api/v1/jobs/.../logs endpoints
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+
+  # Events — required for GET /api/v1/jobs/.../events endpoint
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+
+  # Apps resources
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
+
+  # Batch resources
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gco-manifest-processor-binding
+  namespace: gco-jobs
+  labels:
+    app: manifest-processor
+    project: gco
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gco-manifest-processor-role
+subjects:
+  - kind: ServiceAccount
+    name: gco-manifest-processor-sa
+    namespace: gco-system
+
+# ─── Manifest Processor: cluster-wide read for namespaces + CRDs ───
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gco-manifest-processor-cluster-read
+  labels:
+    app: manifest-processor
+    project: gco
+rules:
+  # Namespace read — verify namespace existence before applying manifests
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+
+  # Metrics — required for GET /api/v1/jobs/.../metrics endpoint
+  # (uses metrics.k8s.io/v1beta1 via custom_objects API)
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+
+  # CRD read — Kueue resources
+  - apiGroups: ["kueue.x-k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list"]
+
+  # CRD read — KubeRay resources
+  - apiGroups: ["ray.io"]
+    resources: ["*"]
+    verbs: ["get", "list"]
+
+  # CRD read — Volcano resources
+  - apiGroups: ["scheduling.volcano.sh", "batch.volcano.sh", "bus.volcano.sh"]
+    resources: ["*"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gco-manifest-processor-cluster-read-binding
+  labels:
+    app: manifest-processor
+    project: gco
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gco-manifest-processor-cluster-read
+subjects:
+  - kind: ServiceAccount
+    name: gco-manifest-processor-sa
+    namespace: gco-system
+
+# ─── Inference Monitor: namespace-scoped write in gco-inference ────
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gco-inference-monitor-role
+  namespace: gco-inference
+  labels:
+    app: inference-monitor
+    project: gco
+rules:
+  # Apps resources
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
+
+  # Core resources
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
+
+  # Networking resources — Ingress for inference endpoints
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
+
+  # Autoscaling — HPA for inference endpoints (AutoscalingV2 uses "autoscaling" apiGroup)
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
+
+  # Coordination — leader election leases
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gco-inference-monitor-binding
+  namespace: gco-inference
+  labels:
+    app: inference-monitor
+    project: gco
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gco-inference-monitor-role
+subjects:
+  - kind: ServiceAccount
+    name: gco-inference-monitor-sa
+    namespace: gco-system

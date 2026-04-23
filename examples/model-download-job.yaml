@@ -1,0 +1,91 @@
+# Model Download Job
+# Downloads model weights to shared EFS so inference endpoints can mount them.
+# This example downloads facebook/opt-125m (small, public, no token needed).
+# For gated models like Llama, uncomment the HF_TOKEN env var.
+#
+# Usage:
+#   kubectl apply -f examples/model-download-job.yaml
+#
+# After completion, deploy inference with:
+#   gco inference deploy my-model \
+#     -i vllm/vllm-openai:v0.19.1 \
+#     --model-path /models/opt-125m
+#
+# To download from S3 instead of HuggingFace, change the command to:
+#   aws s3 sync s3://my-bucket/models/llama3 /mnt/gco/models/llama3
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: download-model
+  namespace: gco-jobs
+  labels:
+    app: model-download
+    project: gco
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: downloader
+        image: python:3.14-slim
+        command:
+        - python
+        - -c
+        - |
+          import subprocess, sys, os
+          subprocess.check_call([sys.executable, "-m", "pip", "install",
+                                 "--target", "/tmp/pylib", "huggingface_hub", "-q"])
+          sys.path.insert(0, "/tmp/pylib")
+          from huggingface_hub import snapshot_download
+
+          model_id = os.environ.get("MODEL_ID", "facebook/opt-125m")
+          model_name = model_id.split("/")[-1]
+          local_dir = f"/mnt/gco/models/{model_name}"
+
+          print(f"Downloading {model_id} to {local_dir}...")
+          snapshot_download(
+              repo_id=model_id,
+              local_dir=local_dir,
+              ignore_patterns=["*.gguf", "*.ggml", "*.bin"],
+          )
+          print(f"Download complete! Model saved to {local_dir}")
+
+          # List downloaded files
+          for root, dirs, files in os.walk(local_dir):
+              for f in files:
+                  path = os.path.join(root, f)
+                  size_mb = os.path.getsize(path) / (1024 * 1024)
+                  print(f"  {os.path.relpath(path, local_dir)} ({size_mb:.1f} MB)")
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+        resources:
+          requests:
+            cpu: "1"
+            memory: "2Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        env:
+        - name: MODEL_ID
+          value: "facebook/opt-125m"
+        - name: HF_HOME
+          value: "/tmp/hf_cache"
+        # Uncomment for gated models (Llama, Mistral, etc.)
+        # - name: HF_TOKEN
+        #   value: "hf_your_token_here"
+        volumeMounts:
+        - name: shared-storage
+          mountPath: /mnt/gco
+      volumes:
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: gco-shared-storage
+      restartPolicy: Never
+  backoffLimit: 2

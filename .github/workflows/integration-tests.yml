@@ -1,0 +1,477 @@
+# =============================================================================
+# integration-tests.yml — Integration tests
+# =============================================================================
+#
+# Maps to the "Integration Tests" row of the README badge table.
+#
+# Triggers: push: main, pull_request, workflow_dispatch.
+#
+# Jobs (alphabetical by display name):
+#   - integration:docker:dev-container       — Dockerfile.dev + `gco --help`
+#   - integration:docker:health-monitor      — build + /healthz + /readyz
+#   - integration:docker:helm-installer      — build + `helm version`/`kubectl version`
+#   - integration:docker:inference-monitor   — build + import-based liveness
+#   - integration:docker:manifest-processor  — build + /healthz + /readyz
+#   - integration:docker:queue-processor     — build + startup-banner check
+#   - integration:k8s:manifest-schema        — YAML validation + required kinds
+#   - integration:kind:cluster-e2e           — kind + Calico + two services Ready
+#   - integration:lambda:imports             — import each Lambda handler
+#   - integration:mcp:server                 — pytest tests/test_mcp_integration.py
+#   - integration:pytest:cross-module        — pytest tests/test_integration.py
+#
+# =============================================================================
+
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  integration-k8s-manifest-schema:
+    name: "integration:k8s:manifest-schema"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Validate Kubernetes manifest YAML syntax
+        # Port of integration:k8s from the retired GitLab pipeline.
+        # Files containing `{{ template }}` placeholders are skipped because
+        # they aren't valid YAML until the kubectl-applier substitutes values.
+        run: |
+          set -uo pipefail
+          FAILED=0
+          echo "=== Validating Kubernetes manifest YAML syntax ==="
+          for f in lambda/kubectl-applier-simple/manifests/*.yaml; do
+            echo "Validating $f..."
+            if grep -q '{{' "$f"; then
+              echo "  Skipping (contains template variables)"
+              continue
+            fi
+            if ! python -c "import yaml, sys; list(yaml.safe_load_all(open(sys.argv[1])))" "$f"; then
+              echo "  FAILED: $f"
+              FAILED=1
+            else
+              echo "  OK"
+            fi
+          done
+          echo "=== Validating example manifest YAML syntax ==="
+          for f in examples/*.yaml; do
+            echo "Validating $f..."
+            if ! python -c "import yaml, sys; list(yaml.safe_load_all(open(sys.argv[1])))" "$f"; then
+              echo "  FAILED: $f"
+              FAILED=1
+            else
+              echo "  OK"
+            fi
+          done
+          echo "=== Checking for required Kubernetes resources ==="
+          REQUIRED_KINDS="Namespace ServiceAccount ClusterRole ClusterRoleBinding Deployment"
+          for kind in $REQUIRED_KINDS; do
+            if grep -r "kind: $kind" lambda/kubectl-applier-simple/manifests/ > /dev/null; then
+              echo "  Found $kind"
+            else
+              echo "  MISSING: $kind"
+              FAILED=1
+            fi
+          done
+          exit "$FAILED"
+      - name: Validate DAG pipeline definitions
+        run: |
+          set -uo pipefail
+          FAILED=0
+          for f in examples/*dag*.yaml examples/*pipeline*.yaml; do
+            [ -f "$f" ] || continue
+            echo "Validating DAG $f..."
+            python - "$f" <<'PY' || FAILED=1
+          import sys, yaml
+          path = sys.argv[1]
+          with open(path) as fh:
+              data = yaml.safe_load(fh)
+          if 'steps' not in data:
+              print('  Not a DAG file, skipping')
+              sys.exit(0)
+          all_names = {s['name'] for s in data['steps']}
+          names = set()
+          for step in data['steps']:
+              if 'name' not in step or 'manifest' not in step:
+                  print('  FAILED: step missing name or manifest')
+                  sys.exit(1)
+              if step['name'] in names:
+                  print(f"  FAILED: duplicate step name {step['name']}")
+                  sys.exit(1)
+              names.add(step['name'])
+              for dep in step.get('depends_on', []):
+                  if dep not in all_names:
+                      print(f'  FAILED: unknown dependency {dep}')
+                      sys.exit(1)
+          print(f"  OK ({len(data['steps'])} steps)")
+          PY
+          done
+          exit "$FAILED"
+      - name: Check manifest structure
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import yaml
+
+          failed = False
+          root_dir = 'lambda/kubectl-applier-simple/manifests'
+          for root, _dirs, files in os.walk(root_dir):
+              for f in files:
+                  if not f.endswith('.yaml'):
+                      continue
+                  path = os.path.join(root, f)
+                  with open(path) as fh:
+                      content = fh.read()
+                  if '{{' in content:
+                      print(f"  {path}: skipping (contains template variables)")
+                      continue
+                  try:
+                      for doc in yaml.safe_load_all(content):
+                          if doc is None:
+                              continue
+                          if 'kind' not in doc:
+                              print(f"  {path}: missing 'kind' field")
+                              failed = True
+                          if 'apiVersion' not in doc:
+                              print(f"  {path}: missing 'apiVersion' field")
+                              failed = True
+                  except Exception as e:
+                      print(f"  {path}: {e}")
+                      failed = True
+          if failed:
+              sys.exit(1)
+          print("  All manifests have required fields")
+          PY
+
+  integration-lambda-imports:
+    name: "integration:lambda:imports"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Import each Lambda handler
+        run: |
+          set -euo pipefail
+          for d in \
+              lambda/kubectl-applier-simple \
+              lambda/api-gateway-proxy \
+              lambda/ga-registration \
+              lambda/cross-region-aggregator \
+              lambda/regional-api-proxy \
+              lambda/alb-header-validator \
+              lambda/secret-rotation \
+              lambda/helm-installer; do
+            echo "=== $d ==="
+            python -c "import sys; sys.path.insert(0, '$d'); from handler import lambda_handler; print('OK')"
+          done
+
+  integration-pytest-cross-module:
+    name: "integration:pytest:cross-module"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+      - name: Run integration pytest
+        run: |
+          pytest tests/test_integration.py -v --tb=short \
+            --junitxml=test-integration-report.xml
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-pytest-report
+          path: test-integration-report.xml
+          retention-days: 7
+
+  integration-mcp-server:
+    name: "integration:mcp:server"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install dev + mcp
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,mcp]"
+      - name: Run MCP integration tests
+        run: |
+          pytest tests/test_mcp_integration.py -v --tb=short \
+            --junitxml=test-mcp-integration-report.xml
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-mcp-report
+          path: test-mcp-integration-report.xml
+          retention-days: 7
+
+  # --------------------------------------------------------------------------
+  # Per-Dockerfile build + healthcheck integration tests.
+  # One job per image. Each job builds from scratch, runs the container,
+  # probes the health endpoint (or exec equivalent), then tears down.
+  # --------------------------------------------------------------------------
+
+  integration-docker-health-monitor:
+    name: "integration:docker:health-monitor"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -f dockerfiles/health-monitor-dockerfile -t health-monitor:ci .
+      - name: Run container
+        # Health API reads CLUSTER_NAME/REGION from env; AWS calls are only
+        # made by the background monitor task which fails silently when
+        # credentials are absent, so /healthz and /readyz still respond.
+        run: |
+          docker run -d --name hm -p 8080:8080 \
+            -e CLUSTER_NAME=ci -e REGION=us-east-1 -e AWS_REGION=us-east-1 \
+            -e GCO_DEV_MODE=true \
+            health-monitor:ci
+      - name: Wait for /healthz
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/healthz >/dev/null; then
+              echo "healthz ready after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "healthz never returned 200"
+          docker logs hm
+          exit 1
+      - name: Check /readyz
+        run: curl -fsS http://localhost:8080/readyz
+      - name: Cleanup
+        if: always()
+        run: docker rm -f hm || true
+
+  integration-docker-manifest-processor:
+    name: "integration:docker:manifest-processor"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -f dockerfiles/manifest-processor-dockerfile -t manifest-processor:ci .
+      - name: Run container
+        run: |
+          docker run -d --name mp -p 8080:8080 \
+            -e CLUSTER_NAME=ci -e REGION=us-east-1 -e AWS_REGION=us-east-1 \
+            -e GCO_DEV_MODE=true \
+            manifest-processor:ci
+      - name: Wait for /healthz
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/healthz >/dev/null; then
+              echo "healthz ready after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "healthz never returned 200"
+          docker logs mp
+          exit 1
+      - name: Check /readyz
+        run: curl -fsS http://localhost:8080/readyz
+      - name: Cleanup
+        if: always()
+        run: docker rm -f mp || true
+
+  integration-docker-inference-monitor:
+    name: "integration:docker:inference-monitor"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -f dockerfiles/inference-monitor-dockerfile -t inference-monitor:ci .
+      - name: Verify image runs and imports
+        # inference-monitor needs a real Kubernetes API on startup, so we
+        # don't run the reconciliation loop. The Dockerfile's HEALTHCHECK
+        # is an exec probe (`python -c "print('ok')"`), so mirror that here:
+        # the meaningful assertion is that the image starts a Python
+        # interpreter and the gco.services.inference_monitor module imports.
+        run: |
+          docker run --rm inference-monitor:ci \
+            python -c "import gco.services.inference_monitor as m; print('inference-monitor import OK:', m.__name__)"
+
+  integration-docker-queue-processor:
+    name: "integration:docker:queue-processor"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -f dockerfiles/queue-processor-dockerfile -t queue-processor:ci .
+      - name: Verify image boots the module
+        # queue-processor is a short-lived KEDA ScaledJob — it has no HTTP
+        # endpoint. With no JOB_QUEUE_URL / SQS_QUEUE_URL set, the module
+        # exits cleanly on startup. We check that by running the module
+        # directly and asserting a clean import path.
+        run: |
+          docker run --rm \
+            -e AWS_REGION=us-east-1 \
+            queue-processor:ci \
+            python -c "import gco.services.queue_processor as m; print('queue-processor import OK:', m.__name__)"
+
+  integration-docker-helm-installer:
+    name: "integration:docker:helm-installer"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: |
+          docker build -f lambda/helm-installer/Dockerfile \
+            -t helm-installer:ci lambda/helm-installer
+      - name: Verify helm + kubectl binaries
+        # This is a Lambda container, not a server. The meaningful check is
+        # that the image's helm and kubectl binaries are invocable at the
+        # pinned versions from the Dockerfile (helm v4.1.3, kubectl v1.35.4).
+        run: |
+          docker run --rm --entrypoint helm helm-installer:ci version --short
+          docker run --rm --entrypoint kubectl helm-installer:ci version --client=true
+
+  integration-docker-dev-container:
+    name: "integration:docker:dev-container"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build dev container
+        run: docker build -f Dockerfile.dev -t gco-dev .
+      - name: Exercise CLI inside dev container
+        run: |
+          docker run --rm -v "$PWD":/workspace -w /workspace gco-dev gco --help
+          docker run --rm -v "$PWD":/workspace -w /workspace gco-dev gco capacity --help
+          docker run --rm -v "$PWD":/workspace -w /workspace gco-dev gco stacks --help
+
+  # --------------------------------------------------------------------------
+  # Kind cluster E2E — uses Calico so NetworkPolicy is actually enforced.
+  # kindnet (the default kind CNI) does not enforce NetworkPolicy, so
+  # 03-network-policies.yaml would silently pass without exercise.
+  # --------------------------------------------------------------------------
+
+  integration-kind-cluster-e2e:
+    name: "integration:kind:cluster-e2e"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create kind cluster (no default CNI)
+        uses: helm/kind-action@a1b0e391336a6ee6713a0583f8c6240d70863de3 # v1.12.0
+        with:
+          version: "v0.24.0"
+          kubernetes_version: "v1.31.0"
+          cluster_name: "gco-ci"
+          config: ".github/kind/kind-calico.yaml"
+      - name: Install Calico for NetworkPolicy enforcement
+        # kind's default kindnet does not enforce NetworkPolicy. Calico does,
+        # so 03-network-policies.yaml is actually exercised here.
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.1/manifests/calico.yaml
+          kubectl -n kube-system wait --for=condition=Ready pods -l k8s-app=calico-node --timeout=5m
+          kubectl -n kube-system wait --for=condition=Ready pods -l k8s-app=calico-kube-controllers --timeout=5m
+      - name: Build service images
+        run: |
+          docker build -f dockerfiles/health-monitor-dockerfile -t health-monitor:ci .
+          docker build -f dockerfiles/manifest-processor-dockerfile -t manifest-processor:ci .
+      - name: Load images into kind
+        run: |
+          kind load docker-image health-monitor:ci --name gco-ci
+          kind load docker-image manifest-processor:ci --name gco-ci
+      - name: Apply namespaces + RBAC
+        run: |
+          kubectl apply -f lambda/kubectl-applier-simple/manifests/00-namespaces.yaml
+          kubectl apply -f lambda/kubectl-applier-simple/manifests/01-serviceaccounts.yaml
+          kubectl apply -f lambda/kubectl-applier-simple/manifests/02-rbac.yaml
+      - name: Render and apply deployments
+        # Substitute the image placeholders. Skip post-helm manifests since
+        # we haven't installed KEDA into this cluster.
+        run: |
+          set -euo pipefail
+          for manifest in \
+              lambda/kubectl-applier-simple/manifests/30-health-monitor.yaml \
+              lambda/kubectl-applier-simple/manifests/31-manifest-processor.yaml; do
+            case "$manifest" in
+              *30-health-monitor*)     image="health-monitor:ci"; key="HEALTH_MONITOR_IMAGE" ;;
+              *31-manifest-processor*) image="manifest-processor:ci"; key="MANIFEST_PROCESSOR_IMAGE" ;;
+            esac
+            sed "s|{{${key}}}|${image}|g; s|{{DEPLOYMENT_TIMESTAMP}}|$(date +%s)|g" "$manifest" \
+              | kubectl apply -f -
+          done
+      - name: Wait for rollouts
+        run: |
+          kubectl rollout status deploy/health-monitor     -n gco-system --timeout=5m
+          kubectl rollout status deploy/manifest-processor -n gco-system --timeout=5m
+      - name: Port-forward and hit /healthz
+        run: |
+          set -euo pipefail
+          kubectl port-forward -n gco-system svc/health-monitor 18080:80 &
+          pf_pid=$!
+          trap 'kill "$pf_pid" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:18080/healthz >/dev/null; then
+              echo "kind E2E /healthz OK after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "kind E2E /healthz never returned 200"
+          kubectl -n gco-system logs deploy/health-monitor || true
+          kubectl -n gco-system describe pods -l app=health-monitor || true
+          exit 1
+      - name: Collect diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide || true
+          kubectl -n gco-system describe deploy health-monitor manifest-processor || true
+          kubectl -n gco-system logs deploy/health-monitor --tail=200 || true
+          kubectl -n gco-system logs deploy/manifest-processor --tail=200 || true

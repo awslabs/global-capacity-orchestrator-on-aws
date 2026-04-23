@@ -1,0 +1,95 @@
+# AWS Trainium Job Example
+#
+# This example runs a job on an AWS Trainium instance (trn1 or trn2).
+# Trainium is a purpose-built ML accelerator designed by AWS, using the
+# Neuron SDK instead of CUDA. It's optimized for training deep learning
+# models at a lower cost than GPU instances.
+#
+# HOW IT WORKS:
+#   Pods request Neuron devices via aws.amazon.com/neuron. The Neuron
+#   device plugin (installed via Helm chart) advertises these resources.
+#   Karpenter provisions trn1/trn2 instances from the Trainium nodepool
+#   when a pod requests Neuron devices and tolerates the taints.
+#
+# USAGE:
+#   gco jobs submit examples/trainium-job.yaml --region us-east-1
+#   gco jobs logs trainium-test -r us-east-1
+#   gco jobs delete trainium-test -r us-east-1
+#
+# PREREQUISITES:
+#   - Neuron device plugin (installed by default via Helm chart)
+#   - Neuron nodepool (manifests/44-nodepool-neuron.yaml, applied by default)
+#
+# INSTANCE TYPES:
+#   trn1.2xlarge   — 1 Trainium chip,  2 NeuronCores, 32 GB
+#   trn1.32xlarge  — 16 Trainium chips, 32 NeuronCores, 512 GB (800 Gbps EFA)
+#   trn2.3xlarge   — 1 Trainium2 chip,  8 NeuronCores, 96 GB
+#   trn2.48xlarge  — 16 Trainium2 chips, 128 NeuronCores, 1.5 TB (3.2 Tbps EFA)
+#
+# NOTES:
+#   - Trainium uses the Neuron SDK, not CUDA. Your container images must
+#     include the Neuron runtime. Use images from public.ecr.aws/neuron/.
+#   - For distributed training across multiple nodes, use EFA with the
+#     Neuron Collective Communication Library (NCCL alternative).
+#   - The neuron-ls tool shows available Neuron devices on the node.
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: trainium-test
+  namespace: gco-jobs
+  labels:
+    app: trainium-example
+    accelerator: neuron
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: neuron-workload
+        # Neuron Monitor image includes neuron-ls and neuron-top tools
+        image: public.ecr.aws/g4h4h0b5/neuron-monitor:1.0.0
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "=== Trainium Job ==="
+          echo "Running on AWS Trainium with Neuron SDK"
+          echo ""
+          echo "Neuron devices:"
+          neuron-ls
+          echo ""
+          echo "Trainium job completed successfully."
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+            aws.amazon.com/neuron: 1
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+            aws.amazon.com/neuron: 1
+      restartPolicy: Never
+      tolerations:
+      - key: aws.amazon.com/neuron
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      # Target Trainium instances specifically (trn1 or trn2)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: eks.amazonaws.com/instance-family
+                operator: In
+                values: ["trn1", "trn2"]
+  backoffLimit: 3

@@ -1,0 +1,832 @@
+"""
+Lambda handler for applying Kubernetes manifests to EKS clusters.
+
+This Lambda function is triggered by CloudFormation Custom Resources during
+stack deployment. It applies Kubernetes manifests (namespaces, deployments,
+services, RBAC, Karpenter NodePools, etc.) to the EKS cluster.
+
+Key Features:
+- Pure Python implementation (no Docker/kubectl binary required)
+- Generates EKS authentication tokens using STS presigned URLs
+- Supports create/update operations with idempotent behavior
+- Handles placeholder replacement for dynamic values (image URIs, etc.)
+- Two-pass deployment: main pass then post-Helm pass for CRD-dependent resources
+
+Manifest Naming Convention:
+    NN-name.yaml        Applied in the main pass (before Helm)
+    post-helm-*.yaml    Applied in the post-Helm pass (after Helm installs CRDs)
+
+    Files with unreplaced {{PLACEHOLDER}} values are automatically skipped,
+    enabling optional features (FSx, Valkey, queue processor).
+
+Environment Variables:
+    CLUSTER_NAME: Name of the EKS cluster
+    REGION: AWS region where the cluster is deployed
+
+CloudFormation Properties:
+    ClusterName: EKS cluster name
+    Region: AWS region
+    ImageReplacements: Dict of placeholder -> value mappings
+    SkipDeletionOnStackDelete: If "true", don't delete resources on stack deletion
+    PostHelm: "true" to apply only post-helm-* manifests (after Helm installs CRDs)
+"""
+
+import base64
+import json
+import logging
+import os
+from datetime import UTC
+from typing import Any
+
+import boto3
+import urllib3
+import yaml
+from kubernetes import client
+from kubernetes.client.rest import ApiException
+
+# Configure logging for CloudWatch
+# In Lambda, the root logger is already configured, so we need to set the level explicitly
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Lazy-initialized AWS clients
+_eks_client = None
+
+# CloudFormation response status constants
+SUCCESS = "SUCCESS"
+FAILED = "FAILED"
+
+
+def get_eks_client() -> Any:
+    """Get EKS client with lazy initialization."""
+    global _eks_client
+    if _eks_client is None:
+        _eks_client = boto3.client("eks")
+    return _eks_client
+
+
+def send_response(
+    event: dict[str, Any],
+    context: Any,
+    response_status: str,
+    response_data: dict[str, Any],
+    physical_resource_id: str,
+    reason: str | None = None,
+) -> None:
+    """Send response to CloudFormation."""
+    response_body = {
+        "Status": response_status,
+        "Reason": reason or f"See CloudWatch Log Stream: {context.log_stream_name}",
+        "PhysicalResourceId": physical_resource_id,
+        "StackId": event["StackId"],
+        "RequestId": event["RequestId"],
+        "LogicalResourceId": event["LogicalResourceId"],
+        "Data": response_data,
+    }
+
+    logger.info(f"Sending response: {json.dumps(response_data)}")
+
+    # Timeout is for the CFN response callback (HTTP PUT to S3 presigned URL),
+    # not for manifest application. K8s API calls have their own timeouts.
+    http = urllib3.PoolManager()
+    try:
+        http.request(
+            "PUT",
+            event["ResponseURL"],
+            body=json.dumps(response_body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            timeout=10.0,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send response: {e}")
+
+
+def get_eks_token(cluster_name: str, region: str) -> str:
+    """Generate EKS authentication token using STS presigned URL."""
+    from botocore.signers import RequestSigner
+
+    # Create STS client
+    session = boto3.Session()
+    sts_client = session.client("sts", region_name=region)
+    service_id = sts_client.meta.service_model.service_id
+
+    # Create request signer
+    signer = RequestSigner(
+        service_id, region, "sts", "v4", session.get_credentials(), session.events
+    )
+
+    # Build the presigned URL for GetCallerIdentity
+    params = {
+        "method": "GET",
+        "url": f"https://sts.{region}.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15",
+        "body": {},
+        "headers": {"x-k8s-aws-id": cluster_name},
+        "context": {},
+    }
+
+    # Generate presigned URL (valid for 60 seconds)
+    url = signer.generate_presigned_url(
+        params, region_name=region, expires_in=60, operation_name=""
+    )
+
+    # Encode as base64 and create the k8s-aws-v1 token
+    token_b64 = base64.urlsafe_b64encode(url.encode("utf-8")).decode("utf-8").rstrip("=")
+    return f"k8s-aws-v1.{token_b64}"
+
+
+def configure_k8s_client(cluster_name: str, region: str) -> None:
+    """Configure Kubernetes client for EKS cluster."""
+    eks = get_eks_client()
+
+    # Get cluster info
+    cluster_info = eks.describe_cluster(name=cluster_name)
+    cluster = cluster_info["cluster"]
+
+    # Configure Kubernetes client
+    configuration = client.Configuration()
+    configuration.host = cluster["endpoint"]
+    configuration.verify_ssl = True
+
+    # Set connection timeouts (important for Lambda!)
+    configuration.connection_pool_maxsize = 1
+    configuration.retries = 3
+    # Set socket timeout to 30 seconds
+    import socket
+
+    socket.setdefaulttimeout(30)
+
+    # Decode and write CA certificate to temp file using secure method
+    ca_cert = base64.b64decode(cluster["certificateAuthority"]["data"])
+    import tempfile
+
+    fd, ca_cert_path = tempfile.mkstemp(suffix=".crt")
+    try:
+        with os.fdopen(fd, "wb") as ca_file:
+            ca_file.write(ca_cert)
+            ca_file.flush()
+        configuration.ssl_ca_cert = ca_cert_path
+    except Exception:
+        os.close(fd)
+        raise
+
+    # Generate EKS authentication token
+    eks_token = get_eks_token(cluster_name, region)
+
+    # Set the bearer token
+    configuration.api_key = {"authorization": f"Bearer {eks_token}"}
+
+    logger.info(
+        f"✓ Configured Kubernetes client for cluster {cluster_name} at {cluster['endpoint']}"
+    )
+
+    client.Configuration.set_default(configuration)
+
+
+def restart_deployments(namespace: str, deployment_names: list[str]) -> dict[str, Any]:
+    """
+    Restart deployments by patching their spec with a restart annotation.
+    This forces Kubernetes to roll out new pods with the latest image.
+    """
+    from datetime import datetime
+
+    apps_v1 = client.AppsV1Api()
+    restarted = []
+    failed = []
+
+    restart_time = datetime.now(UTC).isoformat()
+
+    for name in deployment_names:
+        try:
+            # Patch the deployment with a restart annotation
+            # This is equivalent to `kubectl rollout restart deployment`
+            patch = {
+                "spec": {
+                    "template": {
+                        "metadata": {
+                            "annotations": {"kubectl.kubernetes.io/restartedAt": restart_time}
+                        }
+                    }
+                }
+            }
+            apps_v1.patch_namespaced_deployment(name, namespace, body=patch)
+            restarted.append(name)
+            logger.info(f"✓ Restarted deployment {name} in namespace {namespace}")
+        except ApiException as e:
+            logger.error(f"Failed to restart deployment {name}: {e.status} - {e.reason}")
+            failed.append(name)
+
+    return {"restarted": restarted, "failed": failed}
+
+
+def _verify_workload_credentials(apps_v1: Any) -> list[str]:
+    """Verify that key GCO deployments have working IAM credential configuration.
+
+    Checks that:
+    1. Deployments use their dedicated service account (with IRSA annotation)
+    2. The projected service-account token volume is mounted
+    3. AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE env vars are set
+
+    Returns a list of warning strings (empty = all good).
+    """
+    warnings: list[str] = []
+    # Each deployment maps to its dedicated service account
+    expected_deployments = [
+        ("gco-system", "health-monitor", "gco-health-monitor-sa"),
+        ("gco-system", "manifest-processor", "gco-manifest-processor-sa"),
+        ("gco-system", "inference-monitor", "gco-inference-monitor-sa"),
+    ]
+
+    for namespace, name, expected_sa in expected_deployments:
+        try:
+            dep = apps_v1.read_namespaced_deployment(name, namespace)
+            spec = dep.spec.template.spec
+
+            # Check service account
+            if spec.service_account_name != expected_sa:
+                warnings.append(
+                    f"{namespace}/{name}: uses SA '{spec.service_account_name}' instead of {expected_sa}"
+                )
+
+            # Check for projected token volume
+            has_token_volume = False
+            if spec.volumes:
+                for vol in spec.volumes:
+                    if vol.projected and vol.projected.sources:
+                        for src in vol.projected.sources:
+                            if (
+                                src.service_account_token
+                                and src.service_account_token.audience == "sts.amazonaws.com"
+                            ):
+                                has_token_volume = True
+                                break
+
+            if not has_token_volume:
+                warnings.append(
+                    f"{namespace}/{name}: missing projected service-account token volume for IRSA"
+                )
+
+            # Check env vars on first container
+            container = spec.containers[0] if spec.containers else None
+            if container and container.env:
+                env_names = {e.name for e in container.env}
+                if "AWS_ROLE_ARN" not in env_names:
+                    warnings.append(f"{namespace}/{name}: missing AWS_ROLE_ARN env var")
+                if "AWS_WEB_IDENTITY_TOKEN_FILE" not in env_names:
+                    warnings.append(
+                        f"{namespace}/{name}: missing AWS_WEB_IDENTITY_TOKEN_FILE env var"
+                    )
+
+        except ApiException as e:
+            if e.status == 404:
+                warnings.append(f"{namespace}/{name}: deployment not found")
+            else:
+                warnings.append(f"{namespace}/{name}: failed to read ({e.status})")
+        except Exception as e:
+            warnings.append(f"{namespace}/{name}: verification error ({e})")
+
+    # Check that service accounts exist in all required namespaces
+    v1 = client.CoreV1Api()
+    # Platform service SAs in gco-system
+    platform_sas = [
+        ("gco-system", "gco-health-monitor-sa"),
+        ("gco-system", "gco-manifest-processor-sa"),
+        ("gco-system", "gco-inference-monitor-sa"),
+    ]
+    # User workload SAs in their respective namespaces
+    workload_sas = [
+        ("gco-jobs", "gco-service-account"),
+        ("gco-inference", "gco-service-account"),
+    ]
+    for namespace, sa_name in platform_sas + workload_sas:
+        try:
+            sa = v1.read_namespaced_service_account(sa_name, namespace)
+            annotations = sa.metadata.annotations or {}
+            if "eks.amazonaws.com/role-arn" not in annotations:
+                warnings.append(
+                    f"{namespace}/{sa_name}: missing eks.amazonaws.com/role-arn annotation"
+                )
+        except ApiException as e:
+            if e.status == 404:
+                warnings.append(f"{namespace}/{sa_name}: ServiceAccount not found")
+            else:
+                warnings.append(f"{namespace}/{sa_name}: failed to read ({e.status})")
+
+    if warnings:
+        for w in warnings:
+            logger.warning(f"⚠ Credential check: {w}")
+    else:
+        logger.info("✓ All workload IAM credential configurations verified")
+
+    return warnings
+
+
+def apply_manifests(
+    cluster_name: str,
+    region: str,
+    manifests_dir: str,
+    replacements: dict[str, str],
+    post_helm: bool = False,
+) -> dict[str, Any]:
+    """Apply Kubernetes manifests.
+
+    Args:
+        cluster_name: EKS cluster name
+        region: AWS region
+        manifests_dir: Directory containing manifest YAML files
+        replacements: Template variable substitutions
+        post_helm: If True, apply only post-helm-* files (run after Helm installs CRDs).
+                   If False (default), apply all other files and skip post-helm-* ones.
+    """
+    configure_k8s_client(cluster_name, region)
+    v1 = client.CoreV1Api()
+    apps_v1 = client.AppsV1Api()
+    rbac_v1 = client.RbacAuthorizationV1Api()
+    networking_v1 = client.NetworkingV1Api()
+    custom_api = client.CustomObjectsApi()
+
+    applied_count = 0
+    failed = []
+    skipped = []
+
+    # Load and apply manifests
+    # Files prefixed with "post-helm-" require Helm CRDs and are deferred to
+    # the post-Helm pass (AllowedKinds is set). In the main pass they are skipped.
+    # This convention means adding new CRD-dependent manifests never requires
+    # touching the handler — just name the file with the "post-helm-" prefix.
+    POST_HELM_PREFIX = "post-helm-"
+
+    for filename in sorted(os.listdir(manifests_dir)):
+        if not filename.endswith((".yaml", ".yml")):
+            continue
+
+        filepath = os.path.join(manifests_dir, filename)
+
+        # In the main pass, skip post-helm manifests (they need Helm CRDs).
+        # In the post-helm pass, skip everything else.
+        is_post_helm_file = os.path.basename(filename).startswith(POST_HELM_PREFIX)
+        if post_helm and not is_post_helm_file:
+            continue
+        if not post_helm and is_post_helm_file:
+            skipped.append(f"{filename}:deferred-to-post-helm")
+            continue
+
+        with open(filepath, encoding="utf-8") as f:
+            content = f.read()
+
+        # Replace placeholders
+        for key, value in replacements.items():
+            content = content.replace(key, value)
+
+        # Skip files that still have unreplaced placeholders (e.g., FSx manifest when FSx is disabled)
+        if "{{" in content and "}}" in content:
+            logger.info(
+                f"Skipping {filename} - contains unreplaced placeholders (feature not enabled)"
+            )
+            skipped.append(f"{filename}:unreplaced-placeholders")
+            continue
+
+        # Parse and apply
+        try:
+            for doc in yaml.safe_load_all(content):
+                if not doc:
+                    continue
+
+                kind = doc.get("kind")
+                api_version = doc.get("apiVersion", "")
+                namespace = doc.get("metadata", {}).get("namespace", "default")
+                name = doc.get("metadata", {}).get("name")
+
+                logger.info(f"Applying {kind}/{name} in namespace {namespace}")
+                try:
+                    # Apply based on kind
+                    if kind == "Namespace":
+                        try:
+                            v1.create_namespace(body=doc)
+                        except ApiException as e:
+                            if e.status == 409:  # Already exists
+                                v1.patch_namespace(name, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "ServiceAccount":
+                        try:
+                            v1.create_namespaced_service_account(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                v1.patch_namespaced_service_account(name, namespace, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "ClusterRole":
+                        try:
+                            rbac_v1.create_cluster_role(body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                rbac_v1.patch_cluster_role(name, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "ClusterRoleBinding":
+                        try:
+                            rbac_v1.create_cluster_role_binding(body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                rbac_v1.patch_cluster_role_binding(name, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "Role":
+                        try:
+                            rbac_v1.create_namespaced_role(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                rbac_v1.patch_namespaced_role(name, namespace, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "RoleBinding":
+                        try:
+                            rbac_v1.create_namespaced_role_binding(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                rbac_v1.patch_namespaced_role_binding(name, namespace, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "Deployment":
+                        try:
+                            apps_v1.create_namespaced_deployment(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                apps_v1.patch_namespaced_deployment(name, namespace, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "DaemonSet":
+                        try:
+                            apps_v1.create_namespaced_daemon_set(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                apps_v1.patch_namespaced_daemon_set(name, namespace, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "PodDisruptionBudget":
+                        policy_v1 = client.PolicyV1Api()
+                        try:
+                            policy_v1.create_namespaced_pod_disruption_budget(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                policy_v1.patch_namespaced_pod_disruption_budget(
+                                    name, namespace, body=doc
+                                )
+                            else:
+                                raise
+
+                    elif kind == "Service":
+                        try:
+                            v1.create_namespaced_service(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                v1.patch_namespaced_service(name, namespace, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "ConfigMap":
+                        try:
+                            v1.create_namespaced_config_map(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                v1.patch_namespaced_config_map(name, namespace, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "Secret":
+                        try:
+                            v1.create_namespaced_secret(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                v1.patch_namespaced_secret(name, namespace, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "IngressClassParams":
+                        # EKS Auto Mode IngressClassParams CRD
+                        group = "eks.amazonaws.com"
+                        version = api_version.split("/")[-1] if "/" in api_version else "v1"
+                        plural = "ingressclassparams"
+                        try:
+                            custom_api.create_cluster_custom_object(
+                                group, version, plural, body=doc
+                            )
+                        except ApiException as e:
+                            if e.status == 409:
+                                custom_api.patch_cluster_custom_object(
+                                    group, version, plural, name, body=doc
+                                )
+                            else:
+                                raise
+
+                    elif kind == "IngressClass":
+                        try:
+                            networking_v1.create_ingress_class(body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                networking_v1.patch_ingress_class(name, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "StorageClass":
+                        storage_v1 = client.StorageV1Api()
+                        try:
+                            storage_v1.create_storage_class(body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                # StorageClass already exists - skip patching as most fields are immutable
+                                logger.info(f"StorageClass {name} already exists, skipping update")
+                            else:
+                                raise
+
+                    elif kind == "PersistentVolume":
+                        try:
+                            v1.create_persistent_volume(body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                # PVs have immutable spec fields. Check if the existing PV
+                                # matches — if so, skip. If the volumeHandle changed (new
+                                # FSx file system), force-remove the old PV and recreate.
+                                existing = v1.read_persistent_volume(name)
+                                existing_handle = (
+                                    existing.spec.csi.volume_handle if existing.spec.csi else None
+                                )
+                                new_handle = doc.get("spec", {}).get("csi", {}).get("volumeHandle")
+
+                                if existing_handle == new_handle:
+                                    logger.info(f"PersistentVolume {name} unchanged, skipping")
+                                else:
+                                    logger.info(
+                                        f"PersistentVolume {name} volumeHandle changed "
+                                        f"({existing_handle} → {new_handle}), recreating"
+                                    )
+                                    # Remove the protection finalizer so the PV can be deleted
+                                    # even while bound to a PVC
+                                    v1.patch_persistent_volume(
+                                        name,
+                                        body={"metadata": {"finalizers": None}},
+                                    )
+                                    v1.delete_persistent_volume(name)
+                                    # Wait for the PV to actually disappear
+                                    import time as _time
+
+                                    for _wait in range(30):
+                                        try:
+                                            v1.read_persistent_volume(name)
+                                            _time.sleep(1)
+                                        except ApiException as read_e:
+                                            if read_e.status == 404:
+                                                break
+                                            raise
+                                    v1.create_persistent_volume(body=doc)
+                            else:
+                                raise
+
+                    elif kind == "PersistentVolumeClaim":
+                        try:
+                            v1.create_namespaced_persistent_volume_claim(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                v1.patch_namespaced_persistent_volume_claim(
+                                    name, namespace, body=doc
+                                )
+                            else:
+                                raise
+
+                    elif kind == "Ingress":
+                        try:
+                            networking_v1.create_namespaced_ingress(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                networking_v1.patch_namespaced_ingress(name, namespace, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "NodePool":
+                        # Karpenter NodePool CRD
+                        group = "karpenter.sh"
+                        version = api_version.split("/")[-1] if "/" in api_version else "v1"
+                        plural = "nodepools"
+                        try:
+                            custom_api.create_cluster_custom_object(
+                                group, version, plural, body=doc
+                            )
+                        except ApiException as e:
+                            if e.status == 409:
+                                custom_api.patch_cluster_custom_object(
+                                    group, version, plural, name, body=doc
+                                )
+                            else:
+                                raise
+
+                    elif kind == "EC2NodeClass":
+                        # Karpenter EC2NodeClass CRD
+                        group = "karpenter.k8s.aws"
+                        version = api_version.split("/")[-1] if "/" in api_version else "v1"
+                        plural = "ec2nodeclasses"
+                        try:
+                            custom_api.create_cluster_custom_object(
+                                group, version, plural, body=doc
+                            )
+                        except ApiException as e:
+                            if e.status == 409:
+                                custom_api.patch_cluster_custom_object(
+                                    group, version, plural, name, body=doc
+                                )
+                            else:
+                                raise
+
+                    elif kind == "APIService":
+                        # Kubernetes API aggregation layer
+                        api_reg_v1 = client.ApiregistrationV1Api()
+                        try:
+                            api_reg_v1.create_api_service(body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                api_reg_v1.patch_api_service(name, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "DeviceClass":
+                        # Kubernetes DRA DeviceClass (resource.k8s.io)
+                        group = "resource.k8s.io"
+                        version = api_version.split("/")[-1] if "/" in api_version else "v1"
+                        plural = "deviceclasses"
+                        try:
+                            custom_api.create_cluster_custom_object(
+                                group, version, plural, body=doc
+                            )
+                        except ApiException as e:
+                            if e.status == 409:
+                                custom_api.patch_cluster_custom_object(
+                                    group, version, plural, name, body=doc
+                                )
+                            else:
+                                raise
+
+                    elif kind == "NetworkPolicy":
+                        try:
+                            networking_v1.create_namespaced_network_policy(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                networking_v1.patch_namespaced_network_policy(
+                                    name, namespace, body=doc
+                                )
+                            else:
+                                raise
+
+                    elif kind == "ResourceQuota":
+                        try:
+                            v1.create_namespaced_resource_quota(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                v1.patch_namespaced_resource_quota(name, namespace, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "LimitRange":
+                        try:
+                            v1.create_namespaced_limit_range(namespace, body=doc)
+                        except ApiException as e:
+                            if e.status == 409:
+                                v1.patch_namespaced_limit_range(name, namespace, body=doc)
+                            else:
+                                raise
+
+                    elif kind == "ScaledJob":
+                        # KEDA ScaledJob CRD
+                        group = "keda.sh"
+                        version = api_version.split("/")[-1] if "/" in api_version else "v1alpha1"
+                        plural = "scaledjobs"
+                        try:
+                            custom_api.create_namespaced_custom_object(
+                                group, version, namespace, plural, body=doc
+                            )
+                        except ApiException as e:
+                            if e.status == 409:
+                                custom_api.patch_namespaced_custom_object(
+                                    group, version, namespace, plural, name, body=doc
+                                )
+                            else:
+                                raise
+
+                    elif kind == "ScaledObject":
+                        # KEDA ScaledObject CRD
+                        group = "keda.sh"
+                        version = api_version.split("/")[-1] if "/" in api_version else "v1alpha1"
+                        plural = "scaledobjects"
+                        try:
+                            custom_api.create_namespaced_custom_object(
+                                group, version, namespace, plural, body=doc
+                            )
+                        except ApiException as e:
+                            if e.status == 409:
+                                custom_api.patch_namespaced_custom_object(
+                                    group, version, namespace, plural, name, body=doc
+                                )
+                            else:
+                                raise
+
+                    else:
+                        logger.warning(f"Skipping unsupported kind: {kind}")
+                        skipped.append(f"{kind}/{name}")
+                        continue
+
+                    applied_count += 1
+                    logger.info(f"✓ Applied {kind}/{name}")
+
+                except ApiException as e:
+                    logger.error(f"API error applying {kind}/{name}: {e.status} - {e.reason}")
+                    failed.append(f"{filename}:{kind}/{name}")
+
+        except Exception as e:
+            logger.error(f"Failed to apply {filename}: {e}")
+            failed.append(filename)
+
+    # Restart deployments and verify credentials only on the main (full) pass,
+    # not on the post-Helm pass
+    if post_helm:
+        return {
+            "AppliedCount": applied_count,
+            "FailedCount": len(failed),
+            "SkippedCount": len(skipped),
+            "Failed": ",".join(failed) if failed else "None",
+            "Skipped": ",".join(skipped) if skipped else "None",
+        }
+
+    # Restart deployments in gco-system namespace to pick up new images
+    # This ensures that any updated container images are actually deployed
+    gco_deployments = ["health-monitor", "manifest-processor", "inference-monitor"]
+    logger.info(f"Restarting deployments in gco-system: {gco_deployments}")
+    restart_result = restart_deployments("gco-system", gco_deployments)
+
+    # Verify IAM credentials are available for workloads
+    # Check that the projected service-account token volume is configured
+    # on key deployments — if missing, IRSA won't work
+    credential_warnings = _verify_workload_credentials(apps_v1)
+
+    return {
+        "AppliedCount": applied_count,
+        "FailedCount": len(failed),
+        "SkippedCount": len(skipped),
+        "Failed": ",".join(failed) if failed else "None",
+        "Skipped": ",".join(skipped) if skipped else "None",
+        "RestartedDeployments": (
+            ",".join(restart_result["restarted"]) if restart_result["restarted"] else "None"
+        ),
+        "CredentialWarnings": ",".join(credential_warnings) if credential_warnings else "None",
+    }
+
+
+def lambda_handler(event: dict[str, Any], context: Any) -> None:
+    """Main Lambda handler."""
+    print(f"[HANDLER] Received event type: {event.get('RequestType')}")
+    logger.info(f"Received event: {json.dumps(event)}")
+
+    request_type = event["RequestType"]
+    physical_resource_id = event.get("PhysicalResourceId", f"kubectl-{event['LogicalResourceId']}")
+
+    try:
+        properties = event["ResourceProperties"]
+        cluster_name = properties["ClusterName"]
+        region = properties["Region"]
+
+        if request_type == "Create" or request_type == "Update":
+            manifests_dir = os.path.join(os.path.dirname(__file__), "manifests")
+            replacements = properties.get("ImageReplacements", {})
+            # PostHelm: "true" means this is the post-Helm pass — apply only post-helm-* files
+            post_helm = properties.get("PostHelm", "false").lower() == "true"
+            response_data = apply_manifests(
+                cluster_name, region, manifests_dir, replacements, post_helm
+            )
+            send_response(event, context, SUCCESS, response_data, physical_resource_id)
+
+        elif request_type == "Delete":
+            # Always succeed on delete to prevent stack from getting stuck
+            skip_deletion = properties.get("SkipDeletionOnStackDelete", "false").lower() == "true"
+            if skip_deletion:
+                logger.info("Skipping deletion (SkipDeletionOnStackDelete=true)")
+            response_data = {"Status": "Deleted"}
+            send_response(event, context, SUCCESS, response_data, physical_resource_id)
+
+    except Exception as e:
+        logger.error(f"Error: {e}", exc_info=True)
+        # On delete, always return success to prevent stack from getting stuck
+        if request_type == "Delete":
+            send_response(
+                event,
+                context,
+                SUCCESS,
+                {"Status": "Forced success on delete"},
+                physical_resource_id,
+            )
+        else:
+            send_response(event, context, FAILED, {}, physical_resource_id, str(e))

@@ -1,0 +1,159 @@
+# SQS Queue Processor — Automatically processes manifests submitted via gco jobs submit-sqs
+#
+# How it works:
+#   1. User runs: gco jobs submit-sqs manifest.yaml --region us-east-1
+#   2. CLI sends the manifest(s) as JSON to the regional SQS queue
+#   3. KEDA detects the message and creates a queue-processor Job pod
+#   4. The pod reads the message, validates manifests, applies them via K8s API
+#   5. On success → message deleted. On failure → message returns to queue after
+#      visibility timeout (5 min), then moves to DLQ after 3 failed attempts.
+#
+# Scaling: KEDA ScaledJob creates one pod per message batch (configurable).
+#   Scales to zero when the queue is empty, up to max_concurrent_jobs when busy.
+#   This is NOT an HPA — each pod is a short-lived Job, not a long-running Deployment.
+#
+# Disabling: Set queue_processor.enabled = false in cdk.json, then redeploy.
+#   See examples/keda-scaled-job.yaml for a starting point to build your own consumer.
+#
+# Configuration (cdk.json):
+#   queue_processor.enabled:                true/false — toggle the built-in consumer
+#   queue_processor.polling_interval:       how often KEDA checks the queue (seconds)
+#   queue_processor.max_concurrent_jobs:    max consumer pods running in parallel
+#   queue_processor.messages_per_job:       SQS messages that trigger one consumer pod
+#
+# Validation policy (shared with the REST manifest processor, cdk.json →
+# job_validation_policy):
+#   allowed_namespaces:        namespaces the consumer will apply manifests to
+#   resource_quotas.max_*:     max CPU / memory / GPU per submitted manifest
+#   trusted_registries/orgs:   image registry allowlist
+#   manifest_security_policy:  block_privileged, block_host_network, etc.
+#
+# Template variables are replaced by the kubectl-applier Lambda
+# during CDK deployment using values from the regional stack.
+
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: sqs-queue-processor
+  namespace: gco-system
+  labels:
+    app: queue-processor
+    project: gco
+spec:
+  jobTargetRef:
+    parallelism: 1                  # One worker per pod
+    completions: 1                  # Process one message batch and exit
+    backoffLimit: 2                 # Retry within the pod up to 2 times before marking failed
+    activeDeadlineSeconds: 300      # Kill the pod if it runs longer than 5 minutes
+    template:
+      metadata:
+        labels:
+          app: queue-processor
+          project: gco
+      spec:
+        # Uses the manifest-processor SA (IRSA for SQS + K8s manifest access)
+        serviceAccountName: gco-manifest-processor-sa
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          fsGroup: 1000
+        containers:
+        - name: queue-processor
+          image: {{QUEUE_PROCESSOR_IMAGE}}
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+              - ALL
+          env:
+          - name: JOB_QUEUE_URL
+            value: "{{JOB_QUEUE_URL}}"
+          - name: AWS_REGION
+            value: "{{REGION}}"
+          - name: AWS_DEFAULT_REGION
+            value: "{{REGION}}"
+          # IRSA credentials — EKS Auto Mode doesn't auto-inject these
+          - name: AWS_ROLE_ARN
+            value: "{{SERVICE_ACCOUNT_ROLE_ARN}}"
+          - name: AWS_WEB_IDENTITY_TOKEN_FILE
+            value: "/var/run/secrets/eks.amazonaws.com/serviceaccount/token"
+          - name: ALLOWED_NAMESPACES
+            value: "{{QP_ALLOWED_NAMESPACES}}"
+          - name: MAX_GPU_PER_MANIFEST
+            value: "{{QP_MAX_GPU_PER_MANIFEST}}"
+          - name: MAX_CPU_PER_MANIFEST
+            value: "{{QP_MAX_CPU_PER_MANIFEST}}"
+          - name: MAX_MEMORY_PER_MANIFEST
+            value: "{{QP_MAX_MEMORY_PER_MANIFEST}}"
+          - name: TRUSTED_REGISTRIES
+            value: "{{QP_TRUSTED_REGISTRIES}}"
+          - name: TRUSTED_DOCKERHUB_ORGS
+            value: "{{QP_TRUSTED_DOCKERHUB_ORGS}}"
+          # Security policy toggles — mirrored from
+          # cdk.json::job_validation_policy.manifest_security_policy so the SQS
+          # path enforces the same policy as the REST manifest_processor.
+          # Keep in sync with gco/services/queue_processor.py::BLOCK_* and
+          # gco/stacks/regional_stack.py image_replacements.
+          - name: BLOCK_PRIVILEGED
+            value: "{{QP_BLOCK_PRIVILEGED}}"
+          - name: BLOCK_PRIVILEGE_ESCALATION
+            value: "{{QP_BLOCK_PRIVILEGE_ESCALATION}}"
+          - name: BLOCK_HOST_NETWORK
+            value: "{{QP_BLOCK_HOST_NETWORK}}"
+          - name: BLOCK_HOST_PID
+            value: "{{QP_BLOCK_HOST_PID}}"
+          - name: BLOCK_HOST_IPC
+            value: "{{QP_BLOCK_HOST_IPC}}"
+          - name: BLOCK_HOST_PATH
+            value: "{{QP_BLOCK_HOST_PATH}}"
+          - name: BLOCK_ADDED_CAPABILITIES
+            value: "{{QP_BLOCK_ADDED_CAPABILITIES}}"
+          - name: BLOCK_RUN_AS_ROOT
+            value: "{{QP_BLOCK_RUN_AS_ROOT}}"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          volumeMounts:
+          - name: tmp
+            mountPath: /tmp
+          - name: aws-iam-token
+            mountPath: /var/run/secrets/eks.amazonaws.com/serviceaccount
+            readOnly: true
+        volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: aws-iam-token
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken:
+                  audience: sts.amazonaws.com
+                  expirationSeconds: 86400
+                  path: token
+        restartPolicy: Never
+
+  # KEDA scaling configuration
+  pollingInterval: {{QP_POLLING_INTERVAL}}                    # Seconds between SQS checks
+  successfulJobsHistoryLimit: {{QP_SUCCESSFUL_JOBS_HISTORY}}  # Completed pods to keep
+  failedJobsHistoryLimit: {{QP_FAILED_JOBS_HISTORY}}          # Failed pods to keep
+  maxReplicaCount: {{QP_MAX_CONCURRENT_JOBS}}                 # Max parallel consumer pods
+  minReplicaCount: 0                                          # Scale to zero when idle
+
+  # SQS trigger — KEDA operator polls the queue using its own IRSA role
+  # (no TriggerAuthentication CRD needed; identityOwner: operator tells KEDA
+  # to use its service account's IAM role for SQS access)
+  triggers:
+  - type: aws-sqs-queue
+    metadata:
+      queueURL: "{{JOB_QUEUE_URL}}"
+      queueLength: "{{QP_MESSAGES_PER_JOB}}"  # Messages per triggered pod
+      awsRegion: "{{REGION}}"
+      identityOwner: operator

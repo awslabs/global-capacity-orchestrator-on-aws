@@ -1,0 +1,208 @@
+# Manifest Processor — validates and applies Kubernetes manifests submitted via API
+# Deployment + PodDisruptionBudget + Service consolidated in one file.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manifest-processor
+  namespace: gco-system
+  labels:
+    app: manifest-processor
+    component: api
+    project: gco
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: manifest-processor
+  template:
+    metadata:
+      labels:
+        app: manifest-processor
+        component: api
+        project: gco
+      annotations:
+        gco.aws/deployment-timestamp: "{{DEPLOYMENT_TIMESTAMP}}"
+    spec:
+      serviceAccountName: gco-manifest-processor-sa
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: manifest-processor
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: manifest-processor
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: manifest-processor
+                topologyKey: kubernetes.io/hostname
+            - weight: 50
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: manifest-processor
+                topologyKey: topology.kubernetes.io/zone
+      containers:
+        - name: manifest-processor
+          image: {{MANIFEST_PROCESSOR_IMAGE}}
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: CLUSTER_NAME
+              value: "{{CLUSTER_NAME}}"
+            - name: REGION
+              value: "{{REGION}}"
+            - name: AUTH_SECRET_ARN
+              value: "{{AUTH_SECRET_ARN}}"
+            - name: AWS_ROLE_ARN
+              value: "{{SERVICE_ACCOUNT_ROLE_ARN}}"
+            - name: AWS_WEB_IDENTITY_TOKEN_FILE
+              value: "/var/run/secrets/eks.amazonaws.com/serviceaccount/token"
+            - name: CPU_THRESHOLD
+              value: "{{CPU_THRESHOLD}}"
+            - name: MEMORY_THRESHOLD
+              value: "{{MEMORY_THRESHOLD}}"
+            - name: GPU_THRESHOLD
+              value: "{{GPU_THRESHOLD}}"
+            - name: PENDING_PODS_THRESHOLD
+              value: "{{PENDING_PODS_THRESHOLD}}"
+            - name: PENDING_REQUESTED_CPU_VCPUS
+              value: "{{PENDING_REQUESTED_CPU_VCPUS}}"
+            - name: PENDING_REQUESTED_MEMORY_GB
+              value: "{{PENDING_REQUESTED_MEMORY_GB}}"
+            - name: PENDING_REQUESTED_GPUS
+              value: "{{PENDING_REQUESTED_GPUS}}"
+            - name: TEMPLATES_TABLE_NAME
+              value: "{{TEMPLATES_TABLE_NAME}}"
+            - name: WEBHOOKS_TABLE_NAME
+              value: "{{WEBHOOKS_TABLE_NAME}}"
+            - name: JOBS_TABLE_NAME
+              value: "{{JOBS_TABLE_NAME}}"
+            - name: DYNAMODB_REGION
+              value: "{{DYNAMODB_REGION}}"
+            - name: MAX_CPU_PER_MANIFEST
+              value: "{{MP_MAX_CPU_PER_MANIFEST}}"
+            - name: MAX_MEMORY_PER_MANIFEST
+              value: "{{MP_MAX_MEMORY_PER_MANIFEST}}"
+            - name: MAX_GPU_PER_MANIFEST
+              value: "{{MP_MAX_GPU_PER_MANIFEST}}"
+            - name: MAX_REQUEST_BODY_BYTES
+              value: "{{MP_MAX_REQUEST_BODY_BYTES}}"
+            # Namespace allowlist — shared with the queue processor via
+            # cdk.json::job_validation_policy.allowed_namespaces.
+            - name: ALLOWED_NAMESPACES
+              value: "{{MP_ALLOWED_NAMESPACES}}"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 0
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 10"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: aws-iam-token
+              mountPath: /var/run/secrets/eks.amazonaws.com/serviceaccount
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: aws-iam-token
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken:
+                  audience: sts.amazonaws.com
+                  expirationSeconds: 86400
+                  path: token
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: manifest-processor-pdb
+  namespace: gco-system
+  labels:
+    app: manifest-processor
+    project: gco
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: manifest-processor
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: manifest-processor
+  namespace: gco-system
+  labels:
+    app: manifest-processor
+    project: gco
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: manifest-processor

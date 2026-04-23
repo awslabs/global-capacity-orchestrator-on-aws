@@ -1,0 +1,219 @@
+# Network Policies — zero-trust networking for all GCO namespaces
+# Default-deny ingress in gco-system and gco-jobs, with explicit allow rules
+# for ALB traffic and DNS/HTTPS egress. gco-inference policies are included here
+# alongside the other namespace policies for a single source of truth.
+---
+# Default deny all ingress in gco-system
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: gco-system
+  labels:
+    project: gco
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# Default deny all ingress in gco-jobs
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: gco-jobs
+  labels:
+    project: gco
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# Allow ALB to reach health-monitor
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-alb-to-health-monitor
+  namespace: gco-system
+  labels:
+    project: gco
+spec:
+  podSelector:
+    matchLabels:
+      app: health-monitor
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+---
+# Allow ALB to reach manifest-processor
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-alb-to-manifest-processor
+  namespace: gco-system
+  labels:
+    project: gco
+spec:
+  podSelector:
+    matchLabels:
+      app: manifest-processor
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+---
+# Allow DNS egress in gco-system
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: gco-system
+  labels:
+    project: gco
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Allow DNS egress in gco-jobs
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: gco-jobs
+  labels:
+    project: gco
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Allow AWS API egress (HTTPS) in gco-system
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-aws-api-egress
+  namespace: gco-system
+  labels:
+    project: gco
+spec:
+  podSelector:
+    matchLabels:
+      project: gco
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 443
+---
+# Allow VPC endpoint egress in gco-jobs (image pulls, AWS APIs via VPC endpoints only)
+# CIDR values are substituted by the kubectl-applier Lambda at deploy time
+# from the vpc_endpoint_cidrs configuration in cdk.json.
+# The CIDR placeholder below is replaced with one or more ipBlock entries
+# generated from the vpc_endpoint_cidrs array.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-vpc-endpoint-egress
+  namespace: gco-jobs
+  labels:
+    project: gco
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        {{VPC_ENDPOINT_CIDR_BLOCKS}}
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# Allow DNS egress in gco-inference
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: gco-inference
+  labels:
+    project: gco
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Allow HTTPS egress in gco-inference (image pulls, AWS APIs)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-https-egress
+  namespace: gco-inference
+  labels:
+    project: gco
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 443
+---
+# Allow ALB ingress to inference pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-alb-ingress
+  namespace: gco-inference
+  labels:
+    project: gco
+spec:
+  podSelector:
+    matchLabels:
+      gco.io/type: inference
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 80

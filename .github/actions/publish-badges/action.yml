@@ -1,0 +1,86 @@
+name: "Publish badges"
+description: >
+  Writes shields.io `endpoint` JSON blobs to a dedicated `badges` orphan
+  branch. The README consumes them via:
+  `https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/<org>/<repo>/badges/<file>.json`.
+
+  This action only runs on `push: main` callers — the caller is responsible
+  for gating the step. Fork PRs cannot write to the protected `badges`
+  branch, and we explicitly do NOT use `pull_request_target` to work
+  around that — it's a well-known supply-chain footgun.
+
+inputs:
+  files:
+    description: >
+      Newline-separated list of `filename=<json>` pairs. Each filename is
+      written under `badges/<filename>` on the `badges` branch, overwriting
+      any existing content. Example:
+
+        files: |
+          pytest-count.json={"schemaVersion":1,"label":"pytest","message":"3610","color":"blue"}
+          coverage.json={"schemaVersion":1,"label":"coverage","message":"87%","color":"brightgreen"}
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Write badge JSON to badges branch
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        FILES_INPUT: ${{ inputs.files }}
+      run: |
+        set -euo pipefail
+
+        # Stage files in a clean workdir.
+        tmpdir="$(mktemp -d)"
+        mkdir -p "$tmpdir/badges"
+
+        # Parse `name=<json>` pairs one per line. Use a read loop that handles
+        # the last line even if it has no trailing newline.
+        while IFS= read -r line || [ -n "$line" ]; do
+          [ -z "$line" ] && continue
+          name="${line%%=*}"
+          content="${line#*=}"
+          if [ -z "$name" ] || [ "$name" = "$line" ]; then
+            echo "Skipping malformed entry: $line" >&2
+            continue
+          fi
+          printf '%s' "$content" > "$tmpdir/badges/$name"
+          echo "Staged badges/$name:"
+          cat "$tmpdir/badges/$name"
+          echo
+        done <<<"$FILES_INPUT"
+
+        # Check out (or create) the orphan `badges` branch in a worktree.
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        worktree="$(mktemp -d)"
+        rm -rf "$worktree"
+
+        if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
+          git fetch origin badges:badges
+          git worktree add "$worktree" badges
+        else
+          git worktree add --detach "$worktree"
+          (
+            cd "$worktree"
+            git checkout --orphan badges
+            git rm -rf . >/dev/null 2>&1 || true
+          )
+        fi
+
+        mkdir -p "$worktree/badges"
+        cp "$tmpdir"/badges/* "$worktree/badges/"
+
+        (
+          cd "$worktree"
+          git add badges/
+          if git diff --cached --quiet; then
+            echo "No badge changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(badges): update shields.io endpoints from ${GITHUB_WORKFLOW} (${GITHUB_SHA})"
+          git push origin HEAD:badges
+        )

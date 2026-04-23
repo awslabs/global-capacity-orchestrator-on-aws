@@ -1,0 +1,105 @@
+# Inference Monitor — reconciliation controller for inference endpoints
+# Polls DynamoDB for desired state and syncs K8s Deployments/Services/Ingress/HPA.
+# Deployment + PodDisruptionBudget consolidated in one file.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-monitor
+  namespace: gco-system
+  labels:
+    app: inference-monitor
+    project: gco
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: inference-monitor
+  template:
+    metadata:
+      labels:
+        app: inference-monitor
+        project: gco
+    spec:
+      serviceAccountName: gco-inference-monitor-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: inference-monitor
+          image: {{INFERENCE_MONITOR_IMAGE}}
+          env:
+            - name: CLUSTER_NAME
+              value: "{{CLUSTER_NAME}}"
+            - name: REGION
+              value: "{{REGION}}"
+            - name: AWS_ROLE_ARN
+              value: "{{SERVICE_ACCOUNT_ROLE_ARN}}"
+            - name: AWS_WEB_IDENTITY_TOKEN_FILE
+              value: "/var/run/secrets/eks.amazonaws.com/serviceaccount/token"
+            - name: INFERENCE_ENDPOINTS_TABLE_NAME
+              value: "gco-inference-endpoints"
+            - name: DYNAMODB_REGION
+              value: "{{DYNAMODB_REGION}}"
+            - name: INFERENCE_NAMESPACE
+              value: "gco-inference"
+            - name: RECONCILE_INTERVAL_SECONDS
+              value: "15"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import os; assert os.path.exists('/proc/1')"
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import os; assert os.path.exists('/proc/1')"
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          volumeMounts:
+            - name: aws-iam-token
+              mountPath: /var/run/secrets/eks.amazonaws.com/serviceaccount
+              readOnly: true
+      volumes:
+        - name: aws-iam-token
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken:
+                  audience: sts.amazonaws.com
+                  expirationSeconds: 86400
+                  path: token
+      restartPolicy: Always
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: inference-monitor-pdb
+  namespace: gco-system
+  labels:
+    app: inference-monitor
+    project: gco
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: inference-monitor

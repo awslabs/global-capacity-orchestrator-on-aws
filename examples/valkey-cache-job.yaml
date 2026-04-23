@@ -1,0 +1,87 @@
+# Valkey Cache Example Job
+# Demonstrates connecting to the regional Valkey Serverless cache
+# for K/V caching, session state, or feature stores.
+#
+# The Valkey endpoint is injected automatically via the gco-valkey
+# ConfigMap — no need to look up or hardcode endpoint URLs.
+# The same manifest works in any region.
+#
+# Submit with:
+#   gco jobs submit-direct examples/valkey-cache-job.yaml -r us-east-1
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: valkey-cache-example
+  namespace: gco-jobs
+  labels:
+    app: valkey-cache-example
+    project: gco
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: cache-worker
+        image: python:3.14-slim
+        command:
+        - python
+        - -c
+        - |
+          import os, subprocess, json, sys
+          subprocess.check_call([sys.executable, "-m", "pip", "install",
+                                 "--target", "/tmp/pylib", "valkey", "-q"])
+          sys.path.insert(0, "/tmp/pylib")
+          import valkey
+
+          endpoint = os.environ["VALKEY_ENDPOINT"]
+          port = int(os.environ.get("VALKEY_PORT", "6379"))
+          print(f"Connecting to Valkey at {endpoint}:{port}")
+
+          client = valkey.Valkey(host=endpoint, port=port, ssl=True)
+
+          # Prompt caching
+          client.set("model:llama3:prompt_cache:hello", "cached_response_for_hello")
+          print(f"Prompt cache: {client.get('model:llama3:prompt_cache:hello')}")
+
+          # Feature embedding storage
+          client.set("feature:user:123:embedding", json.dumps([0.1, 0.2, 0.3]))
+          print(f"Feature: {client.get('feature:user:123:embedding')}")
+
+          # Session state
+          client.hset("session:abc", mapping={"user": "demo", "model": "llama3", "tokens": "1024"})
+          print(f"Session: {client.hgetall('session:abc')}")
+
+          # TTL-based expiry
+          client.setex("ephemeral:key", 60, "expires in 60 seconds")
+          print(f"TTL key: {client.get('ephemeral:key')} (TTL: {client.ttl('ephemeral:key')}s)")
+
+          print("Valkey cache operations completed successfully!")
+        env:
+        - name: VALKEY_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: gco-valkey
+              key: endpoint
+        - name: VALKEY_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: gco-valkey
+              key: port
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+              - ALL
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+      restartPolicy: Never
+  backoffLimit: 2

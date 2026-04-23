@@ -1,0 +1,24 @@
+# Example DAG Pipeline
+# Run with: gco dag run examples/pipeline-dag.yaml -r us-east-1
+# Validate: gco dag validate examples/pipeline-dag.yaml
+# Dry run:  gco dag run examples/pipeline-dag.yaml --dry-run
+#
+# This pipeline runs two steps in sequence:
+# 1. preprocess - Generates training data on shared EFS
+# 2. train - Reads preprocess output, trains a model, writes results
+#
+# Each step uses the shared EFS volume at /mnt/shared to pass data.
+# Steps only run after their dependencies complete successfully.
+# If preprocess fails, train is automatically skipped.
+
+name: example-pipeline
+region: us-east-1
+namespace: gco-jobs
+
+steps:
+  - name: preprocess
+    manifest: examples/dag-step-preprocess.yaml
+
+  - name: train
+    manifest: examples/dag-step-train.yaml
+    depends_on: [preprocess]

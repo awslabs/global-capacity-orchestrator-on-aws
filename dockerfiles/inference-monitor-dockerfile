@@ -1,0 +1,33 @@
+# Inference Monitor Service
+# Reconciliation controller that polls DynamoDB for desired inference
+# endpoint state and creates/updates/deletes K8s resources accordingly.
+FROM python:3.14-slim
+
+# Create non-root user
+RUN groupadd -r gco && useradd -r -g gco -d /app -s /sbin/nologin gco
+
+WORKDIR /app
+
+# Copy project metadata and install inference-monitor dependencies only
+# Use the lockfile for reproducible transitive dependency versions,
+# then install the project with inference-monitor extras without re-resolving.
+COPY requirements-lock.txt ./
+COPY pyproject.toml ./
+COPY gco/ ./gco/
+RUN pip install --no-cache-dir -r requirements-lock.txt \
+    && pip install --no-cache-dir --no-deps ".[inference-monitor]"
+
+# Switch to non-root user
+USER gco
+
+# Set environment defaults
+ENV PYTHONUNBUFFERED=1
+ENV RECONCILE_INTERVAL_SECONDS=15
+ENV INFERENCE_NAMESPACE=gco-inference
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "print('ok')" || exit 1
+
+# Run the inference monitor
+CMD ["python", "-m", "gco.services.inference_monitor"]

@@ -1,0 +1,113 @@
+# KubeRay RayCluster Example
+# This example creates a Ray cluster for distributed computing
+# Supports distributed training, hyperparameter tuning, and model serving
+#
+# Prerequisites:
+#   - KubeRay operator must be installed (enabled by default in GCO)
+#
+# Usage:
+#   # Create the Ray cluster
+#   kubectl apply -f examples/ray-cluster.yaml
+#
+#   # Wait for cluster to be ready
+#   kubectl get raycluster -n gco-jobs
+#   kubectl get pods -n gco-jobs -l ray.io/cluster=ray-cluster
+#
+#   # Port-forward to Ray dashboard
+#   kubectl port-forward svc/ray-cluster-head-svc 8265:8265 -n gco-jobs
+#   # Open http://localhost:8265 in browser
+#
+#   # Submit a Ray job
+#   ray job submit --address http://localhost:8265 -- python -c "import ray; ray.init(); print(ray.cluster_resources())"
+#
+# Documentation: https://docs.ray.io/en/latest/cluster/kubernetes/index.html
+
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: ray-cluster
+  namespace: gco-jobs
+spec:
+  rayVersion: '2.54.1'
+
+  # Head node configuration
+  headGroupSpec:
+    rayStartParams:
+      dashboard-host: '0.0.0.0'
+      num-cpus: '0'  # Head node doesn't run tasks
+
+    template:
+      spec:
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          fsGroup: 1000
+        containers:
+        - name: ray-head
+          image: rayproject/ray:2.55.0-py312
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false  # Ray needs to write to /tmp
+            capabilities:
+              drop:
+              - ALL
+          ports:
+          - containerPort: 6379
+            name: gcs-server
+          - containerPort: 8265
+            name: dashboard
+          - containerPort: 10001
+            name: client
+          resources:
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          volumeMounts:
+          - name: ray-logs
+            mountPath: /tmp/ray
+        volumes:
+        - name: ray-logs
+          emptyDir: {}
+
+  # Worker nodes configuration
+  workerGroupSpecs:
+  - groupName: cpu-workers
+    replicas: 2
+    minReplicas: 1
+    maxReplicas: 5
+    rayStartParams:
+      num-cpus: '2'
+
+    template:
+      spec:
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          fsGroup: 1000
+        containers:
+        - name: ray-worker
+          image: rayproject/ray:2.55.0-py312
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false  # Ray needs to write to /tmp
+            capabilities:
+              drop:
+              - ALL
+          resources:
+            requests:
+              cpu: "2"
+              memory: "4Gi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+          volumeMounts:
+          - name: ray-logs
+            mountPath: /tmp/ray
+        volumes:
+        - name: ray-logs
+          emptyDir: {}

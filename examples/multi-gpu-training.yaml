@@ -1,0 +1,117 @@
+# Multi-GPU Distributed Training Example
+# This example demonstrates distributed training across multiple GPUs
+# Uses PyTorch with DistributedDataParallel (DDP)
+#
+# Prerequisites:
+#   - GPU nodes must be available
+#   - NVIDIA GPU Operator installed (enabled by default)
+#
+# Usage:
+#   kubectl apply -f examples/multi-gpu-training.yaml
+#   kubectl get pods -n gco-jobs -l job-name=pytorch-ddp-training
+#   kubectl logs -f job/pytorch-ddp-training -n gco-jobs
+#
+# For production training, mount EFS or FSx for checkpoints:
+#   - Add volumeMounts for /checkpoints
+#   - Use gco files download to retrieve results
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pytorch-ddp-training
+  namespace: gco-jobs
+  labels:
+    app: distributed-training
+    framework: pytorch
+spec:
+  parallelism: 2          # Number of worker pods
+  completions: 2          # Total completions needed
+  completionMode: Indexed # Each pod gets a unique index
+  template:
+    metadata:
+      labels:
+        app: distributed-training
+    spec:
+      subdomain: pytorch-ddp  # For DNS-based discovery
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: trainer
+        image: pytorch/pytorch:2.6.0-cuda12.6-cudnn9-runtime
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+        command:
+        - python
+        - -c
+        - |
+          import os
+          import socket
+          import torch
+          import torch.distributed as dist
+
+          # Get job index from Kubernetes
+          job_index = int(os.environ.get('JOB_COMPLETION_INDEX', '0'))
+          world_size = int(os.environ.get('WORLD_SIZE', '2'))
+
+          print(f"Worker {job_index}/{world_size} starting on {socket.gethostname()}")
+          print(f"CUDA available: {torch.cuda.is_available()}")
+
+          if torch.cuda.is_available():
+              device_count = torch.cuda.device_count()
+              print(f"GPU count: {device_count}")
+              for i in range(device_count):
+                  print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+
+              # Simple GPU computation
+              x = torch.randn(1000, 1000, device='cuda')
+              y = torch.matmul(x, x.T)
+              print(f"Matrix multiplication result shape: {y.shape}")
+
+          print(f"Worker {job_index} completed!")
+        env:
+        - name: WORLD_SIZE
+          value: "2"
+        - name: MASTER_ADDR
+          value: "pytorch-ddp-training-0.pytorch-ddp"
+        - name: MASTER_PORT
+          value: "29500"
+        - name: NCCL_DEBUG
+          value: "INFO"
+        resources:
+          requests:
+            cpu: "4"
+            memory: "16Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "8"
+            memory: "32Gi"
+            nvidia.com/gpu: "1"
+      restartPolicy: Never
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      nodeSelector:
+        eks.amazonaws.com/instance-gpu-count: "1"
+  backoffLimit: 3
+
+---
+# Headless service for pod DNS discovery
+apiVersion: v1
+kind: Service
+metadata:
+  name: pytorch-ddp
+  namespace: gco-jobs
+spec:
+  clusterIP: None  # Headless service
+  selector:
+    app: distributed-training
+  ports:
+  - port: 29500
+    name: nccl

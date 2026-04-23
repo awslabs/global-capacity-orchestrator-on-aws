@@ -1,0 +1,313 @@
+# =============================================================================
+# security.yml — Security & compliance scans
+# =============================================================================
+#
+# Maps to the "Security" row of the README badge table.
+#
+# Triggers: push: main, pull_request, workflow_dispatch.
+#
+# Jobs (alphabetical by display name):
+#   - security:bandit:sast           — bandit on gco/, cli/
+#   - security:checkov:iac           — checkov against the whole repo
+#   - security:gitleaks:secrets      — gitleaks on current files (no git history)
+#   - security:kics:iac              — KICS on cdk.out (needs CDK synth first)
+#   - security:pip-audit:deps        — pip-audit on requirements-lock.txt
+#   - security:safety:deps           — safety on a fresh resolve of pyproject
+#   - security:semgrep:sast          — semgrep scan --config auto
+#   - security:trivy:filesystem      — trivy fs on the source tree
+#   - security:trivy:container-scan  — trivy image on each built service image
+#   - security:trufflehog:secrets    — trufflehog filesystem scan
+#
+# All scans are strict: if a scan finds issues the job fails. Fix the code,
+# don't silence the tool — policy inherited from the retired GitLab pipeline.
+#
+# =============================================================================
+
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  security-bandit-sast:
+    name: "security:bandit:sast"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install security tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[security]"
+      - name: Run bandit
+        run: |
+          bandit -r gco/ cli/ -c pyproject.toml --severity-level medium \
+            -f json -o bandit-report.json
+      - name: Upload bandit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          retention-days: 30
+
+  security-safety-deps:
+    name: "security:safety:deps"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[security]"
+      - name: Run safety
+        run: |
+          pip-compile --no-emit-index-url --strip-extras \
+            -o /tmp/requirements-lock.txt pyproject.toml -q
+          safety check -r /tmp/requirements-lock.txt --output json > safety-report.json
+      - name: Upload safety report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: safety-report
+          path: safety-report.json
+          retention-days: 30
+
+  security-pip-audit-deps:
+    name: "security:pip-audit:deps"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+      - name: Run pip-audit
+        # First invocation writes the artifact even on failure; the second
+        # fails the job when vulnerabilities are present. Mirrors the
+        # retired GitLab pipeline.
+        run: |
+          set -uo pipefail
+          pip-audit -r requirements-lock.txt --format json \
+            --output pip-audit-report.json --desc || true
+          pip-audit -r requirements-lock.txt --desc
+      - name: Upload pip-audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit-report.json
+          retention-days: 30
+
+  security-trivy-filesystem:
+    name: "security:trivy:filesystem"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # 0.29.0
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          exit-code: "1"
+          severity: "HIGH,CRITICAL"
+          format: "json"
+          output: "trivy-fs-report.json"
+      - name: Upload trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs-report
+          path: trivy-fs-report.json
+          retention-days: 30
+
+  security-trivy-container-scan:
+    name: "security:trivy:container-scan"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # Rebuild the service images locally and scan each with Trivy. Fills a
+    # gap the AWS GitLab runner couldn't handle (docker builds were flaky).
+    # We rebuild here rather than passing images between workflows via
+    # `workflow_call` — simpler and the build time is modest.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: health-monitor
+            dockerfile: dockerfiles/health-monitor-dockerfile
+          - image: manifest-processor
+            dockerfile: dockerfiles/manifest-processor-dockerfile
+          - image: inference-monitor
+            dockerfile: dockerfiles/inference-monitor-dockerfile
+          - image: queue-processor
+            dockerfile: dockerfiles/queue-processor-dockerfile
+          - image: helm-installer
+            dockerfile: lambda/helm-installer/Dockerfile
+            context: lambda/helm-installer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: |
+          context="${{ matrix.context || '.' }}"
+          docker build -f "${{ matrix.dockerfile }}" -t "${{ matrix.image }}:scan" "$context"
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # 0.29.0
+        with:
+          image-ref: "${{ matrix.image }}:scan"
+          exit-code: "1"
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
+          format: "json"
+          output: "trivy-${{ matrix.image }}-report.json"
+      - name: Upload trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-${{ matrix.image }}
+          path: trivy-${{ matrix.image }}-report.json
+          retention-days: 30
+
+  security-trufflehog-secrets:
+    name: "security:trufflehog:secrets"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run TruffleHog
+        run: |
+          docker run --rm -v "$PWD":/repo \
+            trufflesecurity/trufflehog:3.94.3 \
+            filesystem /repo --only-verified --fail --json > trufflehog-report.json 2>&1
+      - name: Upload trufflehog report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trufflehog-report
+          path: trufflehog-report.json
+          retention-days: 30
+
+  security-gitleaks-secrets:
+    name: "security:gitleaks:secrets"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run gitleaks
+        run: |
+          docker run --rm -v "$PWD":/repo -w /repo \
+            zricethezav/gitleaks:v8.30.1 \
+            detect --source . --no-git \
+            --config .gitleaks.toml \
+            --report-format json --report-path gitleaks-report.json
+      - name: Upload gitleaks report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.json
+          retention-days: 30
+
+  security-semgrep-sast:
+    name: "security:semgrep:sast"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: semgrep/semgrep:1.160.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run semgrep
+        run: semgrep scan --config auto --error --json -o semgrep-report.json .
+      - name: Upload semgrep report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-report
+          path: semgrep-report.json
+          retention-days: 30
+
+  security-checkov-iac:
+    name: "security:checkov:iac"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run checkov
+        run: |
+          docker run --rm -v "$PWD":/repo -w /repo \
+            bridgecrew/checkov:3.2.500 \
+            -d . --config-file .checkov.yaml -o json > checkov-report.json
+      - name: Upload checkov report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-report
+          path: checkov-report.json
+          retention-days: 30
+
+  security-kics-iac:
+    name: "security:kics:iac"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install CDK + deps and synthesize
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[cdk]"
+          npm install -g aws-cdk
+      - uses: ./.github/actions/build-lambda-package
+      - name: cdk synth
+        run: cdk synth --quiet
+      - name: Run KICS
+        run: |
+          docker run --rm -v "$PWD":/repo -w /repo \
+            checkmarx/kics:v2.1.20 \
+            scan -p cdk.out -o . \
+            --report-formats json,html \
+            --output-name kics-report \
+            --config .kics.yaml --fail-on high
+      - name: Upload KICS report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kics-report
+          path: |
+            kics-report.json
+            kics-report.html
+          retention-days: 30

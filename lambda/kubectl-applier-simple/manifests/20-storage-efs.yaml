@@ -1,0 +1,79 @@
+# EFS Shared Storage — StorageClass and PVCs for all GCO namespaces
+# Uses dynamic provisioning: each PVC gets its own EFS access point automatically.
+# The EFS file system ID is injected at deploy time.
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: efs-sc
+  labels:
+    project: gco
+provisioner: efs.csi.aws.com
+parameters:
+  provisioningMode: efs-ap
+  fileSystemId: "{{EFS_FILE_SYSTEM_ID}}"
+  directoryPerms: "755"
+  uid: "1000"
+  gid: "1000"
+  basePath: "/dynamic"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gco-shared-storage
+  namespace: default
+  labels:
+    project: gco
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gco-shared-storage
+  namespace: gco-jobs
+  labels:
+    project: gco
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gco-shared-storage
+  namespace: gco-system
+  labels:
+    project: gco
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 100Gi
+---
+# PVC for model weights in gco-inference (shared EFS)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: efs-claim
+  namespace: gco-inference
+  labels:
+    project: gco
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 100Gi

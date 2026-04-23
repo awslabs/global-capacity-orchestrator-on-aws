@@ -1,0 +1,2 @@
+# Regional API proxy Lambda dependencies
+# Note: boto3 and urllib3 are included in Lambda runtime

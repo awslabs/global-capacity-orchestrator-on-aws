@@ -1,59 +1,664 @@
-# Contributing Guidelines
+# Contributing to GCO (Global Capacity Orchestrator on AWS)
 
-Thank you for your interest in contributing to our project. Whether it's a bug report, new feature, correction, or additional
-documentation, we greatly value feedback and contributions from our community.
+Thank you for contributing to GCO (Global Capacity Orchestrator on AWS)! This guide will help you get started.
 
-Please read through this document before submitting any issues or pull requests to ensure we have all the necessary
-information to effectively respond to your bug report or contribution.
+## Table of Contents
 
+- [Development Setup](#development-setup)
+  - [Prerequisites](#prerequisites)
+  - [Local Development Environment](#local-development-environment)
+- [Development Workflow](#development-workflow)
+  - [Dependency Management](#dependency-management)
+  - [Type Checking](#type-checking)
+  - [Authentication](#authentication)
+- [Code Organization](#code-organization)
+  - [Directory Structure](#directory-structure)
+  - [Adding New Features](#adding-new-features)
+- [Testing](#testing)
+  - [Running Tests Locally](#running-tests-locally)
+  - [CI/CD Pipeline](#cicd-pipeline)
+  - [Integration Tests](#integration-tests)
+- [Documentation](#documentation)
+- [Code Review Guidelines](#code-review-guidelines)
+- [Release Process](#release-process)
+- [Best Practices](#best-practices)
+- [Common Tasks](#common-tasks)
+- [Getting Help](#getting-help)
+- [Code of Conduct](#code-of-conduct)
 
-## Reporting Bugs/Feature Requests
+## Development Setup
 
-We welcome you to use the GitHub issue tracker to report bugs or suggest features.
+### Prerequisites
 
-When filing an issue, please check existing open, or recently closed, issues to make sure somebody else hasn't already
-reported the issue. Please try to include as much information as you can. Details like these are incredibly useful:
+- AWS account with appropriate permissions
+- Python 3.10+ (required for type union syntax `str | None`)
+- Node.js 20+ (for CDK)
+- Docker or Finch
+- kubectl
+- Git
 
-* A reproducible test case or series of steps
-* The version of our code being used
-* Any modifications you've made relevant to the bug
-* Anything unusual about your environment or deployment
+**Alternative: Use the Dev Container** (Python 3.14, Node.js 24, CDK, kubectl, AWS CLI) to avoid local dependency issues (see below).
 
+### Local Development Environment
 
-## Contributing via Pull Requests
-Contributions via pull requests are much appreciated. Before sending us a pull request, please ensure that:
+```bash
+# Clone repository
+git clone <repository-url>
+cd GCO
 
-1. You are working against the latest source on the *main* branch.
-2. You check existing open, and recently merged, pull requests to make sure someone else hasn't addressed the problem already.
-3. You open an issue to discuss any significant work - we would hate for your time to be wasted.
+# Create virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-To send us a pull request, please:
+# Install dependencies
+pip install -e ".[dev]"
+```
 
-1. Fork the repository.
-2. Modify the source; please focus on the specific change you are contributing. If you also reformat all the code, it will be hard for us to focus on your change.
-3. Ensure local tests pass.
-4. Commit to your fork using clear commit messages.
-5. Send us a pull request, answering any default questions in the pull request interface.
-6. Pay attention to any automated CI failures reported in the pull request, and stay involved in the conversation.
+### Using the Dev Container (Recommended)
 
-GitHub provides additional document on [forking a repository](https://help.github.com/articles/fork-a-repo/) and
-[creating a pull request](https://help.github.com/articles/creating-a-pull-request/).
+The dev container includes all dependencies pre-installed (Python 3.14, Node.js 24, CDK, kubectl, AWS CLI). This avoids "works on my machine" issues.
 
+```bash
+# Build the container
+docker build -f Dockerfile.dev -t gco-dev .
 
-## Finding contributions to work on
-Looking at the existing issues is a great way to find something to contribute on. As our projects, by default, use the default GitHub issue labels (enhancement/bug/duplicate/help wanted/invalid/question/wontfix), looking at any 'help wanted' issues is a great place to start.
+# Run an interactive shell
+docker run -it --rm \
+  -v ~/.aws:/root/.aws:ro \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  gco-dev
 
+# Or run a single command
+docker run --rm \
+  -v ~/.aws:/root/.aws:ro \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  gco-dev gco stacks list
+
+# Run CDK commands
+docker run --rm \
+  -v ~/.aws:/root/.aws:ro \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  -e CDK_DOCKER=docker \
+  gco-dev cdk synth
+
+# Run tests
+docker run --rm \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  gco-dev pytest tests/ -v
+```
+
+**Tip**: Create a shell alias for convenience:
+```bash
+alias gco-dev='docker run --rm -v ~/.aws:/root/.aws:ro -v $(pwd):/workspace -w /workspace gco-dev'
+# Then use: gco-dev gco stacks list
+```
+
+## Development Workflow
+
+### Dependency Management
+
+GCO uses exact-pinned dependencies in `pyproject.toml` and a committed lockfile (`requirements-lock.txt`) for reproducible builds.
+
+#### Dependency Groups
+
+| Group | Install command | What it includes |
+|-------|----------------|------------------|
+| Core | `pip install -e .` | CLI runtime deps (boto3, click, requests, etc.) |
+| CDK | `pip install -e ".[cdk]"` | AWS CDK, cdk-nag, constructs (for stack synthesis) |
+| Dev | `pip install -e ".[dev]"` | Everything: CDK + lint + typecheck + test + security |
+| MCP | `pip install -e ".[mcp]"` | FastMCP server |
+
+CDK dependencies are in a separate `[cdk]` extras group so operators who only use the CLI don't need to install the full CDK toolchain.
+
+#### Regenerating the Lockfile
+
+After updating any dependency version in `pyproject.toml`, regenerate the lockfile:
+
+```bash
+pip install pip-tools
+pip-compile --no-emit-index-url --strip-extras -o requirements-lock.txt pyproject.toml
+```
+
+Commit the updated `requirements-lock.txt` alongside your `pyproject.toml` changes. The lockfile pins all transitive dependencies to ensure reproducible builds across environments.
+
+#### Installing from the Lockfile
+
+For reproducible installs (CI, production containers):
+
+```bash
+pip install -r requirements-lock.txt
+pip install -e . --no-deps
+```
+
+### Type Checking
+
+mypy runs across the entire codebase with `--check-untyped-defs` enabled. The CI pipeline has two type-checking jobs:
+
+1. **`lint:typecheck`** — Checks `gco/config/`, `gco/models/`, `gco/services/`, and `cli/`. Installs only mypy + type stubs (fast, no CDK needed).
+2. **`lint:typecheck-stacks`** — Checks `gco/stacks/`. Installs CDK dependencies since stack code uses CDK types.
+
+To run locally:
+
+```bash
+# Check everything except stacks (fast, no CDK needed)
+mypy gco/config/ gco/models/ gco/services/ cli/ --ignore-missing-imports --check-untyped-defs
+
+# Check stacks (requires CDK: pip install -e ".[cdk,typecheck]")
+mypy gco/stacks/ --ignore-missing-imports --check-untyped-defs
+
+# Check everything at once (requires CDK installed)
+mypy gco/ cli/ --ignore-missing-imports --check-untyped-defs
+```
+
+### Authentication
+
+The in-cluster services use token-based authentication via AWS Secrets Manager. The auth middleware (`gco/services/auth_middleware.py`) validates an `X-GCO-Auth-Token` header on every request (except health checks).
+
+**Important:** The middleware is fail-closed by default. If `AUTH_SECRET_ARN` is not set and `GCO_DEV_MODE` is not enabled, all authenticated requests return 503. To run services locally without Secrets Manager:
+
+```bash
+export GCO_DEV_MODE=true
+```
+
+This is intentional — a missing `AUTH_SECRET_ARN` in production should fail loudly rather than silently allowing unauthenticated access.
+
+### 1. Create a Feature Branch
+
+```bash
+git checkout -b feature/your-feature-name
+```
+
+### 2. Make Changes
+
+Follow these guidelines:
+
+- **Code Style**: Follow PEP 8 for Python, use type hints
+- **Documentation**: Update docs for any user-facing changes
+- **Tests**: Add tests for new functionality
+- **Commits**: Use clear, descriptive commit messages
+
+### 3. Test Locally
+
+```bash
+# Synthesize CDK
+cdk synth
+
+# Deploy to dev account
+export AWS_PROFILE=dev
+gco stacks deploy-all -y
+
+# Run tests
+pytest tests/
+
+# Verify deployment
+kubectl get pods -n gco-system
+gco jobs list -r us-east-1
+```
+
+### 4. Submit Changes
+
+```bash
+# Commit changes
+git add .
+git commit -m "feat: add new feature"
+
+# Push to remote
+git push origin feature/your-feature-name
+
+# Create pull request
+# Follow your organization's PR process
+```
+
+## Code Organization
+
+### Directory Structure
+
+```
+gco/
+├── stacks/                  # CDK stack definitions
+├── services/                # Kubernetes services (Python/FastAPI)
+├── models/                  # Data models
+└── config/                  # Configuration management
+
+cli/                         # CLI commands and utilities
+  ├── commands/              # Per-group command modules (jobs, capacity, stacks, …)
+  ├── main.py                # Root CLI group and entry point
+  ├── kubectl_helpers.py     # Shared kubeconfig utilities
+
+lambda/
+├── kubectl-applier-simple/  # Lambda for kubectl operations
+├── helm-installer/          # Lambda for Helm chart installation
+├── api-gateway-proxy/       # API Gateway proxy Lambda
+├── ga-registration/         # Global Accelerator registration
+├── secret-rotation/         # Secret rotation Lambda
+└── alb-header-validator/    # ALB header validation
+
+dockerfiles/         # Dockerfiles for K8s services
+docs/                # Documentation
+examples/            # Example job manifests
+tests/               # Test suites
+scripts/             # Utility scripts
+```
+
+### Adding New Features
+
+#### New CDK Stack
+
+1. Create file in `gco/stacks/`
+2. Import in `app.py`
+3. Add to deployment workflow
+4. Document in `docs/ARCHITECTURE.md`
+
+#### New Kubernetes Service
+
+1. Create service code in `gco/services/`
+2. Create Dockerfile in `dockerfiles/`
+3. Add manifest to `lambda/kubectl-applier-simple/manifests/`
+4. Update `regional_stack.py` to build image
+5. Document in README
+
+#### New Region Support
+
+1. Update `cdk.json` context
+2. Test deployment
+3. Update documentation
+4. Verify Global Accelerator integration
+
+## Testing
+
+### Running Tests Locally
+
+```bash
+# Run all tests
+pytest tests/
+
+# Run specific test file
+pytest tests/test_integration.py
+
+# Run with coverage
+pytest --cov=gco --cov=cli tests/
+
+# Run with verbose output
+pytest tests/ -v
+
+# Run only unit tests
+pytest tests/ -m unit
+
+# Run only integration tests
+pytest tests/ -m integration
+```
+
+### CI/CD Pipeline
+
+The project uses GitHub Actions for automated testing. Every push and pull request runs four primary workflows in parallel, plus three satellites on schedule or manual trigger.
+
+#### Primary workflows (run on every push + PR)
+
+| Workflow file | README row | Purpose |
+|---------------|------------|---------|
+| `.github/workflows/unit-tests.yml` | Unit Tests | pytest with coverage, BATS, CLI smoke, CDK synth + config matrix, lockfile freshness, fresh install, workload import checks |
+| `.github/workflows/integration-tests.yml` | Integration Tests | Per-Dockerfile build + healthcheck, kind cluster E2E (with Calico for NetworkPolicy enforcement), K8s manifest schema, Lambda import validation, cross-module pytest, MCP server pytest |
+| `.github/workflows/security.yml` | Security | bandit, safety, pip-audit, trivy (filesystem + per-image), trufflehog, gitleaks, semgrep, checkov, KICS |
+| `.github/workflows/lint.yml` | Linting | actionlint, black, flake8, hadolint, isort, mypy (strict/stacks/lambda), ruff, shellcheck, yamllint |
+
+Each workflow file has a comment header documenting triggers and per-job purpose — that is the single source of truth. Every job uses `category:tool:test_name` display names (e.g., `unit:pytest:core`, `security:trivy:container-scan`) and `category-tool-test_name` job IDs.
+
+#### Satellite workflows
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `.github/workflows/release.yml` | Manual (`workflow_dispatch`) | Bump version, tag, and create a GitHub Release with auto-generated notes |
+| `.github/workflows/deps-scan.yml` | `cron: 0 9 1 * *` (monthly) | Check Python/Docker/Helm/EKS-addon versions; open an issue if drift detected |
+| `.github/workflows/cve-scan.yml` | `cron: 0 9 * * 1` (weekly) | Re-run Trivy + safety against current CVE databases |
+
+#### Auto-generated badges
+
+Three README badges update automatically from `push: main` runs:
+
+- `unit:pytest:core` test count
+- `unit:bats:count`
+- `unit:coverage` percentage
+
+Values are published to the orphan `badges` branch as shields.io endpoint JSON and consumed via `img.shields.io/endpoint?url=…`. Fork PRs cannot write to this branch — the publish step is gated on `push: main`.
+
+#### Running the pipeline locally
+
+You can simulate the CI pipeline locally:
+
+```bash
+# Install dev dependencies
+pip install -e ".[dev]"
+
+# Run linters (matches lint.yml jobs)
+black --check gco/ cli/ tests/ lambda/ scripts/
+ruff check gco/ cli/ tests/
+isort --check-only gco/ cli/ tests/ lambda/ scripts/
+flake8 gco/ cli/ tests/ lambda/ scripts/
+
+# Run type checks (everything except stacks — fast, no CDK needed)
+mypy gco/ cli/ mcp/ scripts/ --exclude 'gco/stacks/'
+
+# Run type checks on stacks (requires CDK)
+pip install -e ".[cdk,typecheck]"
+mypy gco/stacks/ app.py
+
+# Run security scans
+bandit -r gco/ cli/ -c pyproject.toml --severity-level medium
+
+# Run tests with coverage (matches unit:pytest:core)
+pytest tests/ --cov=gco --cov=cli --cov-report=html --cov-fail-under=85
+
+# Run CDK config matrix (matches unit:cdk:config-matrix)
+python scripts/test-cdk-synthesis.py
+
+# Regenerate the lockfile (after dependency changes)
+pip-compile --no-emit-index-url --strip-extras -o requirements-lock.txt pyproject.toml
+```
+
+#### Debugging a failing check
+
+The README badge label tells you the workflow and job. For example, `unit:pytest:core` maps to:
+
+- Workflow file: `.github/workflows/unit-tests.yml`
+- Job ID: `unit-pytest-core`
+- Actions UI: repo → Actions → "Unit Tests" → latest run → `unit:pytest:core`
+
+Click any badge to land on the workflow page; the Actions UI lists every job.
+
+#### Frozen GitLab pipeline
+
+`.gitlab-ci.yml` is kept as a frozen reference for anyone forking to GitLab. It is NOT maintained and may drift as tools evolve. GitHub Actions is authoritative.
+
+### Integration Tests
+
+```bash
+# Deploy to test environment
+export AWS_PROFILE=test
+gco stacks deploy-all -y
+
+# Run tests against deployed environment
+pytest tests/ -v
+
+# Clean up
+gco stacks destroy-all -y
+```
+
+## Documentation
+
+### When to Update Docs
+
+- New features or capabilities
+- Changes to deployment process
+- New configuration options
+- Breaking changes
+- Bug fixes that affect users
+
+### Documentation Files
+
+- `README.md`: Overview and quick start
+- `QUICKSTART.md`: Step-by-step setup guide
+- `docs/ARCHITECTURE.md`: Technical architecture
+- `docs/CLI.md`: CLI reference
+- `docs/API.md`: REST API reference
+- `docs/CONCEPTS.md`: Core concepts for new users
+- `docs/CUSTOMIZATION.md`: How to customize
+- `docs/TROUBLESHOOTING.md`: Common issues
+- `docs/RUNBOOKS.md`: Operational runbooks for incident response
+- `CONTRIBUTING.md`: This file
+
+### Documentation Style
+
+- Use clear, concise language
+- Include code examples
+- Add diagrams where helpful
+- Keep it up-to-date with code changes
+
+## Code Review Guidelines
+
+### For Authors
+
+- Keep PRs focused and reasonably sized
+- Write clear PR descriptions
+- Include tests
+- Update documentation
+- Respond to feedback promptly
+
+### For Reviewers
+
+- Be constructive and respectful
+- Focus on code quality and maintainability
+- Check for security issues
+- Verify documentation is updated
+- Test changes if possible
+
+## Release Process
+
+### Versioning
+
+We use semantic versioning (MAJOR.MINOR.PATCH):
+
+- MAJOR: Breaking changes
+- MINOR: New features (backward compatible)
+- PATCH: Bug fixes
+
+### CI/CD Token Setup
+
+No long-lived tokens are required for the GitHub Actions pipeline. Both the release and dependency-scan workflows use the built-in `GITHUB_TOKEN`:
+
+- `release.yml` needs `contents: write` to push the version commit, tag, and create the GitHub Release. The workflow declares this at the top of the file.
+- `deps-scan.yml` needs `issues: write` to open a dependency-drift issue. Also declared at the top of the file.
+
+If you fork and run your own copy, no setup is needed — the tokens are generated per-run by GitHub.
+
+### Creating a Release
+
+Releases are triggered from the Actions tab:
+
+1. Go to the repository on GitHub → Actions → Release.
+2. Click "Run workflow".
+3. Pick the bump type (`patch`, `minor`, or `major`) and click "Run workflow".
+
+The workflow will:
+
+- Run `scripts/bump_version.py` with the chosen bump type.
+- Commit the version change to `main` (as `github-actions[bot]`).
+- Create and push a `v<new-version>` git tag.
+- Create a GitHub Release with auto-generated notes (categorized per `.github/release.yml`).
+
+#### Manual Release (Alternative)
+
+If you need to release manually:
+
+```bash
+# Bump version
+python scripts/bump_version.py patch  # or minor/major
+
+# Commit and tag
+git add gco/_version.py cli/__init__.py
+git commit -m "Release v1.2.3"
+git tag -a v1.2.3 -m "Release v1.2.3"
+git push origin main
+git push origin v1.2.3
+
+# Create the GitHub Release with generated notes
+gh release create v1.2.3 --generate-notes
+```
+
+After releasing, update CHANGELOG.md and deploy to production environments.
+
+### Dependency Updates
+
+Dependency drift is tracked through three layers:
+
+1. **Dependabot (weekly PRs)** — GitHub Actions and Docker only. See `.github/dependabot.yml`. Python packages are intentionally excluded because `requirements-lock.txt` is managed through `pip-compile` and bumped intentionally.
+2. **`deps-scan` workflow (monthly issue)** — runs on the 1st of each month at 09:00 UTC. Checks Python packages, Docker images, Helm charts, and EKS add-on versions. If anything is out of date, it opens a GitHub issue labeled `dependencies, automated`.
+3. **`cve-scan` workflow (weekly job)** — runs Mondays at 09:00 UTC. Re-runs Trivy + safety against the latest CVE databases. A red run is the signal; the per-push `security.yml` workflow will catch the same issue on the next PR.
+
+#### What Gets Checked by `deps-scan`
+
+- **Python Packages**: all packages resolved from `pyproject.toml` are checked against PyPI for newer versions
+- **Docker Images**: semver-tagged images referenced in `.github/workflows/*.yml`, K8s manifests, examples, and Helm chart values
+- **Helm Charts**: from `lambda/helm-installer/charts.yaml`
+- **EKS Add-ons**: extracted from `gco/stacks/regional_stack.py` (requires AWS credentials via OIDC; falls back gracefully otherwise)
+
+#### Running the Dependency Check Manually
+
+The monthly scan is also wired to `workflow_dispatch`:
+
+1. Go to Actions → "Deps scan" → "Run workflow".
+2. Pick the `main` branch and click Run.
+3. On completion, either a new issue appears (if drift was found) or the workflow just turns green.
+
+#### Checking EKS Addon Versions
+
+EKS addon versions are checked by `deps-scan` when AWS credentials are configured. Without credentials, the addon section is skipped silently. To check manually at any time:
+
+```bash
+# Check latest versions for all addons used by GCO
+K8S_VERSION="1.35"  # Match your configured Kubernetes version
+
+for addon in metrics-server aws-efs-csi-driver amazon-cloudwatch-observability aws-fsx-csi-driver; do
+  echo "=== $addon ==="
+  aws eks describe-addon-versions \
+    --addon-name "$addon" \
+    --kubernetes-version "$K8S_VERSION" \
+    --query 'addons[0].addonVersions[0].addonVersion' \
+    --output text
+done
+```
+
+Current addon versions are defined in `gco/stacks/regional_stack.py`. To update:
+
+1. Run the command above to get latest versions
+2. Update the `addon_version` parameter for each addon in `regional_stack.py`
+3. Test the deployment in a non-production environment first
+4. Review the [EKS addon release notes](https://docs.aws.amazon.com/eks/latest/userguide/eks-add-ons.html) for breaking changes
+
+## Best Practices
+
+### Security
+
+- Never commit secrets or credentials
+- Use IAM roles, not access keys
+- Follow least-privilege principle
+- Encrypt sensitive data
+- Review security groups and network ACLs
+
+### Performance
+
+- Optimize Docker images (use slim base images)
+- Set appropriate resource limits
+- Use caching where possible
+- Monitor and profile performance
+
+### Cost Optimization
+
+- Use Spot instances for fault-tolerant workloads
+- Right-size resources
+- Clean up unused resources
+- Set up cost alerts
+
+### Reliability
+
+- Implement health checks
+- Use multiple replicas
+- Test failure scenarios
+- Monitor and alert on issues
+
+## Common Tasks
+
+### Adding a New Kubernetes Manifest
+
+```bash
+# 1. Create manifest file
+cat > lambda/kubectl-applier-simple/manifests/33-my-service.yaml << 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-service
+  namespace: gco-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: my-service
+  template:
+    metadata:
+      labels:
+        app: my-service
+    spec:
+      containers:
+        - name: my-service
+          image: {{MY_SERVICE_IMAGE}}
+          ports:
+            - containerPort: 8080
+EOF
+
+# 2. Update CDK stack to build image (if needed)
+# Edit gco/stacks/regional_stack.py
+
+# 3. Deploy
+gco stacks deploy-all -y
+```
+
+### Updating Service Code
+
+```bash
+# 1. Make changes to service
+vim gco/services/health_monitor.py
+
+# 2. Test locally (if possible)
+python gco/services/health_monitor.py
+
+# 3. Rebuild and deploy
+gco stacks deploy-all -y
+
+# 4. Verify deployment
+kubectl get pods -n gco-system
+gco jobs list -r us-east-1
+```
+
+### Debugging Issues
+
+```bash
+# Check CloudFormation events
+aws cloudformation describe-stack-events \
+  --stack-name gco-us-east-1 \
+  --region us-east-1 \
+  --max-items 20
+
+# Check Lambda logs
+aws logs tail /aws/lambda/gco-us-east-1-KubectlApplier* \
+  --region us-east-1 \
+  --since 30m
+
+# Check pod logs (requires kubectl for detailed pod inspection)
+kubectl logs -n gco-system deployment/health-monitor --tail=100
+
+# Describe pod for events (requires kubectl)
+kubectl describe pod POD-NAME -n gco-system
+
+# Check job logs via CLI
+gco jobs logs JOB-NAME -n gco-jobs -r us-east-1
+```
+
+## Getting Help
+
+- Check existing documentation
+- Search for similar issues
+- Open a GitHub issue
 
 ## Code of Conduct
-This project has adopted the [Amazon Open Source Code of Conduct](https://aws.github.io/code-of-conduct).
-For more information see the [Code of Conduct FAQ](https://aws.github.io/code-of-conduct-faq) or contact
-opensource-codeofconduct@amazon.com with any additional questions or comments.
 
+- Be respectful and professional
+- Welcome newcomers
+- Focus on constructive feedback
+- Collaborate openly
 
-## Security issue notifications
-If you discover a potential security issue in this project we ask that you notify AWS/Amazon Security via our [vulnerability reporting page](http://aws.amazon.com/security/vulnerability-reporting/). Please do **not** create a public github issue.
+---
 
-
-## Licensing
-
-See the [LICENSE](LICENSE) file for our project's licensing. We will ask you to confirm the licensing of your contribution.
+**Questions?** Open an issue on the [GCO GitHub repository](https://github.com/awslabs/global-capacity-orchestrator-on-aws/issues).
