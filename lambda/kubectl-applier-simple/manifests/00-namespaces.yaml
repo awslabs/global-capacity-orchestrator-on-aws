@@ -1,0 +1,35 @@
+# GCO Namespaces
+# All three namespaces are created here so subsequent manifests can reference them.
+#   gco-system  — system services (health-monitor, manifest-processor, inference-monitor)
+#   gco-jobs    — user batch workloads
+#   gco-inference — inference endpoints managed by inference-monitor
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gco-system
+  labels:
+    name: gco-system
+    project: gco
+    purpose: system-components
+    managed-by: eks-auto-mode-kubectl
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gco-jobs
+  labels:
+    name: gco-jobs
+    project: gco
+    purpose: user-workloads
+    managed-by: eks-auto-mode-kubectl
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gco-inference
+  labels:
+    name: gco-inference
+    project: gco
+    purpose: inference
+    managed-by: eks-auto-mode-kubectl

@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManifestFullAccess",
+      "Effect": "Allow",
+      "Action": "execute-api:Invoke",
+      "Resource": [
+        "arn:aws:execute-api:*:ACCOUNT_ID:API_ID/*/POST/api/v1/manifests",
+        "arn:aws:execute-api:*:ACCOUNT_ID:API_ID/*/GET/api/v1/manifests",
+        "arn:aws:execute-api:*:ACCOUNT_ID:API_ID/*/GET/api/v1/manifests/*",
+        "arn:aws:execute-api:*:ACCOUNT_ID:API_ID/*/DELETE/api/v1/manifests/*"
+      ]
+    }
+  ]
+}

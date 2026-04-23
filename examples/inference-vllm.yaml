@@ -1,0 +1,118 @@
+# vLLM Inference Endpoint Example
+# Deploy with: gco inference deploy vllm-llama3 \
+#   -i vllm/vllm-openai:v0.19.1 \
+#   --gpu-count 1 --replicas 1 \
+#   -e MODEL=meta-llama/Llama-3.1-8B-Instruct \
+#   -e MAX_MODEL_LEN=4096
+#
+# Deploy with autoscaling:
+#   gco inference deploy vllm-llama3 \
+#     -i vllm/vllm-openai:v0.19.1 \
+#     --gpu-count 1 --replicas 2 \
+#     --min-replicas 1 --max-replicas 8 \
+#     --autoscale-metric cpu:70 --autoscale-metric memory:80 \
+#     -e MODEL=meta-llama/Llama-3.1-8B-Instruct
+#
+# Or deploy this manifest directly (single region):
+#   gco jobs submit-direct examples/inference-vllm.yaml -r us-east-1
+#
+# Test the endpoint:
+#   curl https://<GA-endpoint>/inference/vllm-llama3/v1/completions \
+#     -H "Content-Type: application/json" \
+#     -d '{"model": "meta-llama/Llama-3.1-8B-Instruct", "prompt": "Hello", "max_tokens": 50}'
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-llama3
+  namespace: gco-inference
+  labels:
+    app: vllm-llama3
+    project: gco
+    gco.io/type: inference
+    framework: vllm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-llama3
+  template:
+    metadata:
+      labels:
+        app: vllm-llama3
+        project: gco
+        gco.io/type: inference
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: vllm
+        image: vllm/vllm-openai:v0.19.1
+        securityContext:
+          allowPrivilegeEscalation: false
+        ports:
+        - containerPort: 8000
+        env:
+        - name: MODEL
+          value: "meta-llama/Llama-3.1-8B-Instruct"
+        - name: MAX_MODEL_LEN
+          value: "4096"
+        - name: DTYPE
+          value: "auto"
+        args:
+        - "--model"
+        - "$(MODEL)"
+        - "--max-model-len"
+        - "$(MAX_MODEL_LEN)"
+        - "--dtype"
+        - "$(DTYPE)"
+        - "--port"
+        - "8000"
+        resources:
+          requests:
+            cpu: "4"
+            memory: "16Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "8"
+            memory: "32Gi"
+            nvidia.com/gpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 120
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 10
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      nodeSelector:
+        eks.amazonaws.com/instance-gpu-manufacturer: nvidia
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-llama3
+  namespace: gco-inference
+  labels:
+    app: vllm-llama3
+    project: gco
+spec:
+  selector:
+    app: vllm-llama3
+  ports:
+  - port: 80
+    targetPort: 8000
+    protocol: TCP
+  type: ClusterIP

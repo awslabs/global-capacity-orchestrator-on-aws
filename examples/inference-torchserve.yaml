@@ -1,0 +1,122 @@
+# TorchServe Inference Endpoint Example
+# PyTorch's native model serving framework
+#
+# Deploy with: gco inference deploy torchserve-resnet \
+#   -i pytorch/torchserve:0.12.0-gpu \
+#   --gpu-count 1 --replicas 1 \
+#   --model-path /mnt/gco/models/torchserve \
+#   --health-path /ping \
+#   --port 8080
+#
+# Pre-requisite: Package your model as a .mar file and upload to EFS:
+#   torch-model-archiver --model-name resnet50 \
+#     --version 1.0 --serialized-file model.pt \
+#     --handler image_classifier --export-path /mnt/gco/models/torchserve/model-store
+#
+# Test the endpoint:
+#   curl https://<GA-endpoint>/inference/torchserve-resnet/predictions/resnet50 \
+#     -T image.jpg
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torchserve-resnet
+  namespace: gco-inference
+  labels:
+    app: torchserve-resnet
+    project: gco
+    gco.io/type: inference
+    framework: torchserve
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: torchserve-resnet
+  template:
+    metadata:
+      labels:
+        app: torchserve-resnet
+        project: gco
+        gco.io/type: inference
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: torchserve
+        image: pytorch/torchserve:0.12.0-gpu
+        securityContext:
+          allowPrivilegeEscalation: false
+        ports:
+        - containerPort: 8080
+          name: inference
+        - containerPort: 8081
+          name: management
+        - containerPort: 8082
+          name: metrics
+        args:
+        - "torchserve"
+        - "--start"
+        - "--model-store=/models/model-store"
+        - "--ts-config=/models/config.properties"
+        - "--ncs"
+        resources:
+          requests:
+            cpu: "2"
+            memory: "8Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "4"
+            memory: "16Gi"
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - name: model-storage
+          mountPath: /models
+          subPath: torchserve
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      nodeSelector:
+        eks.amazonaws.com/instance-gpu-manufacturer: nvidia
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: efs-claim
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: torchserve-resnet
+  namespace: gco-inference
+  labels:
+    app: torchserve-resnet
+    project: gco
+spec:
+  selector:
+    app: torchserve-resnet
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: inference
+  - port: 8081
+    targetPort: 8081
+    protocol: TCP
+    name: management
+  type: ClusterIP

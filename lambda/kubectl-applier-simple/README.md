@@ -1,0 +1,63 @@
+# Kubectl Applier Simple
+
+Applies Kubernetes manifests to EKS clusters during CDK deployment. Pure Python implementation using the `kubernetes` client library — no Docker or kubectl binary required.
+
+## Trigger
+
+CloudFormation Custom Resource — runs on stack Create, Update, and Delete.
+
+## How It Works
+
+### Create/Update
+1. Configures a Kubernetes client with EKS token authentication
+2. Reads all YAML files from the `manifests/` directory (sorted by filename)
+3. Replaces placeholders (e.g., image URIs) with values from CloudFormation properties
+4. Applies each resource with create-or-patch idempotency
+5. Restarts key deployments in `gco-system` to pick up new images
+
+### Delete
+Always returns SUCCESS to prevent stuck stacks. Optionally skips resource deletion via `SkipDeletionOnStackDelete`.
+
+## Supported Resource Kinds
+
+Namespace, ServiceAccount, ClusterRole, ClusterRoleBinding, Role, RoleBinding, Deployment, DaemonSet, Service, ConfigMap, Secret, Ingress, IngressClass, IngressClassParams, StorageClass, PersistentVolume, PersistentVolumeClaim, PodDisruptionBudget, NetworkPolicy, NodePool, EC2NodeClass, APIService, DeviceClass, ScaledJob, ScaledObject.
+
+## CloudFormation Properties
+
+| Property | Required | Description |
+|----------|----------|-------------|
+| `ClusterName` | Yes | EKS cluster name |
+| `Region` | Yes | AWS region |
+| `ImageReplacements` | No | Dict of placeholder → value mappings |
+| `SkipDeletionOnStackDelete` | No | If `"true"`, skip resource deletion on stack delete |
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CLUSTER_NAME` | Yes | EKS cluster name |
+| `REGION` | Yes | AWS region |
+
+## IAM Permissions
+
+- `eks:DescribeCluster` on the EKS cluster
+- `sts:GetCallerIdentity` (for EKS token generation)
+- Kubernetes RBAC: cluster-admin or equivalent for manifest application
+
+## Dependencies
+
+- `boto3`, `kubernetes`, `PyYAML`, `urllib3` (see `requirements.txt`)
+
+## Build
+
+Requires a build step to package dependencies into `kubectl-applier-simple-build/`:
+
+```bash
+rm -rf lambda/kubectl-applier-simple-build
+mkdir -p lambda/kubectl-applier-simple-build
+cp lambda/kubectl-applier-simple/handler.py lambda/kubectl-applier-simple-build/
+cp -r lambda/kubectl-applier-simple/manifests lambda/kubectl-applier-simple-build/
+pip3 install kubernetes pyyaml urllib3 -t lambda/kubectl-applier-simple-build/
+```
+
+The GCO CLI handles this automatically during `gco stacks deploy`.

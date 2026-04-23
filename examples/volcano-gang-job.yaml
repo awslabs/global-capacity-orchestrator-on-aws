@@ -1,0 +1,164 @@
+# Volcano Gang Scheduling Example
+# This example demonstrates gang scheduling for distributed training
+# All pods in the job must be scheduled together or none at all
+#
+# Prerequisites:
+#   - Volcano must be installed (enabled by default in GCO)
+#
+# Usage:
+#   kubectl apply -f examples/volcano-gang-job.yaml
+#   kubectl get vcjob -n gco-jobs
+#   kubectl get pods -n gco-jobs -l volcano.sh/job-name=distributed-training
+#
+# Documentation: https://volcano.sh/en/docs/
+
+---
+# Volcano Job with gang scheduling
+apiVersion: batch.volcano.sh/v1alpha1
+kind: Job
+metadata:
+  name: distributed-training
+  namespace: gco-jobs
+spec:
+  # Minimum pods required to start (gang scheduling)
+  minAvailable: 3
+
+  # Scheduler to use
+  schedulerName: volcano
+
+  # Queue for fair-share scheduling
+  queue: default
+
+  # Job policies
+  policies:
+    - event: PodEvicted
+      action: RestartJob
+    - event: PodFailed
+      action: RestartJob
+
+  # Task definitions
+  tasks:
+  # Master task (1 replica)
+  - name: master
+    replicas: 1
+    template:
+      spec:
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          fsGroup: 1000
+        containers:
+        - name: master
+          image: python:3.14-slim
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+              - ALL
+          command:
+          - python
+          - -c
+          - |
+            import os
+            import time
+            import socket
+
+            hostname = socket.gethostname()
+            print(f"Master started on {hostname}")
+            print(f"Rank: {os.environ.get('VK_TASK_INDEX', 'unknown')}")
+
+            # Simulate distributed training coordination
+            print("Coordinating with workers...")
+            time.sleep(30)
+            print("Training complete!")
+          env:
+          - name: MASTER_ADDR
+            value: "distributed-training-master-0"
+          - name: MASTER_PORT
+            value: "23456"
+          - name: WORLD_SIZE
+            value: "3"
+          - name: RANK
+            value: "0"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          ports:
+          - containerPort: 23456
+            name: master-port
+        restartPolicy: OnFailure
+
+  # Worker tasks (2 replicas)
+  - name: worker
+    replicas: 2
+    template:
+      spec:
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          fsGroup: 1000
+        containers:
+        - name: worker
+          image: python:3.14-slim
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+              - ALL
+          command:
+          - python
+          - -c
+          - |
+            import os
+            import time
+            import socket
+
+            hostname = socket.gethostname()
+            task_index = os.environ.get('VK_TASK_INDEX', 'unknown')
+            print(f"Worker started on {hostname}")
+            print(f"Task index: {task_index}")
+
+            # Simulate distributed training work
+            print("Connecting to master...")
+            time.sleep(5)
+            print("Training in progress...")
+            time.sleep(25)
+            print("Worker finished!")
+          env:
+          - name: MASTER_ADDR
+            value: "distributed-training-master-0"
+          - name: MASTER_PORT
+            value: "23456"
+          - name: WORLD_SIZE
+            value: "3"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+        restartPolicy: OnFailure
+
+---
+# Volcano Queue for resource management (optional)
+# Uncomment to create a dedicated queue with resource quotas
+#
+# apiVersion: scheduling.volcano.sh/v1beta1
+# kind: Queue
+# metadata:
+#   name: ml-training
+# spec:
+#   weight: 1
+#   capability:
+#     cpu: "100"
+#     memory: "200Gi"
+#     nvidia.com/gpu: "8"

@@ -1,0 +1,35 @@
+# Simple Kubernetes Job Example
+# This job runs a simple command and completes
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hello-gco
+  namespace: gco-jobs
+spec:
+  ttlSecondsAfterFinished: 120  # Auto-delete 2 minutes after completion
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: hello
+        image: busybox:1.37.0
+        command: ['sh', '-c', 'echo "Hello from GCO!" && sleep 10 && echo "Job completed!"']
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      restartPolicy: Never
+  backoffLimit: 3

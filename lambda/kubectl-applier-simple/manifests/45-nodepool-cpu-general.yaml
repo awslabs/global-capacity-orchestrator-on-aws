@@ -1,0 +1,44 @@
+# General-purpose CPU NodePool for non-GPU workloads
+# Covers CPU batch jobs, data preprocessing, and any workload that doesn't
+# need a GPU. Includes both x86_64 and arm64 (Graviton) instances for
+# maximum availability and cost efficiency — Graviton instances (c7g, m7g, r7g)
+# offer better price/performance for CPU-bound workloads.
+# Spot is preferred; on-demand is the fallback.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: cpu-general-pool
+spec:
+  template:
+    metadata:
+      labels:
+        workload-type: cpu
+        arch: x86_64
+        project: gco
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: default
+      requirements:
+        - key: "eks.amazonaws.com/instance-category"
+          operator: In
+          values: ["c", "m", "r"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64", "arm64"]
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["spot", "on-demand"]
+        # Exclude GPU instances from this pool
+        - key: "eks.amazonaws.com/instance-gpu-count"
+          operator: In
+          values: ["0"]
+  limits:
+    cpu: "2000"
+    memory: 8000Gi
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s
+    budgets:
+      - nodes: "20%"

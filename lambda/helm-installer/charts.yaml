@@ -1,0 +1,583 @@
+# Helm Charts Configuration for GCO
+# This file defines the Helm charts to be installed by the helm-installer Lambda
+#
+# Charts are installed in the order they appear below.
+# Dependencies: GPU Operator should be installed before DRA Driver.
+#
+# IMPORTANT: The "enabled" flag in each chart below is the default value.
+# It can be overridden by the "helm" section in cdk.json. For example,
+# to enable Slurm, set "helm": { "slurm": { "enabled": true } } in cdk.json.
+# The cdk.json setting always takes precedence over the value here.
+#
+# Last updated: 2026-04-07
+# Version check sources:
+#   - KEDA: https://artifacthub.io/packages/helm/kedacore/keda
+#   - GPU Operator: https://github.com/NVIDIA/gpu-operator/releases
+#   - DRA Driver: https://github.com/NVIDIA/k8s-dra-driver-gpu/releases
+#   - Network Operator: https://github.com/Mellanox/network-operator/releases
+#   - Volcano: https://github.com/volcano-sh/volcano/releases
+#   - KubeRay: https://github.com/ray-project/kuberay/releases
+#   - Kueue: https://github.com/kubernetes-sigs/kueue/releases
+#   - Neuron Helm Chart: https://github.com/aws-neuron/neuron-helm-charts/releases
+#   - Slinky Slurm Operator: https://github.com/SlinkyProject/slurm-operator/tags
+#   - cert-manager: https://github.com/cert-manager/cert-manager/releases
+#   - Apache YuniKorn: https://github.com/apache/yunikorn-release/releases
+
+charts:
+  # KEDA - Kubernetes Event-Driven Autoscaling
+  # Enables autoscaling based on external metrics (SQS, Kafka, Prometheus, etc.)
+  # https://keda.sh/
+  keda:
+    enabled: true
+    repo_name: kedacore
+    repo_url: https://kedacore.github.io/charts
+    chart: keda
+    version: "2.19.0"
+    namespace: keda
+    create_namespace: true
+    values:
+      # Use GitHub Container Registry (ghcr.io) - official KEDA images
+      image:
+        keda:
+          registry: ghcr.io
+          repository: kedacore/keda
+          # tag defaults to chart appVersion
+        metricsApiServer:
+          registry: ghcr.io
+          repository: kedacore/keda-metrics-apiserver
+        webhooks:
+          registry: ghcr.io
+          repository: kedacore/keda-admission-webhooks
+      # Watch all namespaces (empty string = all namespaces)
+      watchNamespace: ""
+      # Service account configuration for IRSA (IAM Roles for Service Accounts)
+      # The operator service account needs IAM permissions to access SQS for scaling
+      serviceAccount:
+        operator:
+          create: true
+          name: keda-operator
+      # Resource configuration
+      resources:
+        operator:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+        metricServer:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 1000m
+            memory: 512Mi
+      # Prometheus metrics
+      prometheus:
+        metricServer:
+          enabled: true
+        operator:
+          enabled: true
+      # Prevent Karpenter from evicting KEDA pods during node consolidation
+      podAnnotations:
+        keda:
+          karpenter.sh/do-not-disrupt: "true"
+        metricsApiServer:
+          karpenter.sh/do-not-disrupt: "true"
+        webhooks:
+          karpenter.sh/do-not-disrupt: "true"
+
+  # NVIDIA GPU Operator - Automates GPU driver and toolkit management
+  # Required for NVIDIA DRA Driver and provides device plugin, container runtime, etc.
+  # https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/
+  nvidia-gpu-operator:
+    enabled: true
+    repo_name: nvidia
+    repo_url: https://helm.ngc.nvidia.com/nvidia
+    chart: gpu-operator
+    version: "v26.3.1"
+    namespace: gpu-operator
+    create_namespace: true
+    values:
+      # Use pre-installed drivers on EKS GPU AMIs (EKS Auto Mode handles drivers)
+      driver:
+        enabled: false
+      toolkit:
+        enabled: true
+      # Disabled: standalone NVIDIA device plugin DaemonSet (manifest 12) handles this.
+      # Enabling both would cause two device plugins to compete for the same GPU resources.
+      devicePlugin:
+        enabled: false
+      # Enable DCGM for GPU monitoring
+      dcgm:
+        enabled: true
+      dcgmExporter:
+        enabled: true
+      # Node Feature Discovery for GPU detection
+      nfd:
+        enabled: true
+      # MIG (Multi-Instance GPU) manager
+      migManager:
+        enabled: true
+      # GFD (GPU Feature Discovery)
+      gfd:
+        enabled: true
+
+  # NVIDIA DRA Driver - Dynamic Resource Allocation for GPUs
+  # Enables flexible GPU allocation with structured parameters (Kubernetes 1.32+)
+  # https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/dra-intro-install.html
+  nvidia-dra-driver:
+    enabled: true
+    repo_name: nvidia
+    repo_url: https://helm.ngc.nvidia.com/nvidia
+    chart: nvidia-dra-driver-gpu
+    version: "25.12.0"
+    namespace: nvidia-dra-driver
+    create_namespace: true
+    values:
+      # For Operator-provided GPU driver (recommended with GPU Operator)
+      nvidiaDriverRoot: /run/nvidia/driver
+      # Enable both GPU and ComputeDomain resources
+      # Note: resources.gpus.enabled=true requires gpuResourcesEnabledOverride=true
+      # until full support is available in the chart
+      gpuResourcesEnabledOverride: true
+      resources:
+        gpus:
+          enabled: true
+        computeDomains:
+          enabled: true
+      # Controller configuration - override default tolerations/affinity
+      # that use restricted labels in EKS Auto Mode (node-role.kubernetes.io/control-plane)
+      controller:
+        # Empty tolerations - removes the default control-plane toleration
+        tolerations: []
+        # Override affinity to run on any Linux node (EKS Auto Mode doesn't have control-plane nodes)
+        affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+              - matchExpressions:
+                - key: kubernetes.io/os
+                  operator: In
+                  values:
+                  - linux
+
+  # NVIDIA Network Operator - High-performance networking for GPU workloads
+  # Enables RDMA and GPUDirect for distributed training
+  # https://docs.nvidia.com/networking/display/kubernetes/
+  nvidia-network-operator:
+    enabled: false  # Toggled on by cdk.json nvidia_network_operator.enabled (enabled by default)
+    repo_name: nvidia
+    repo_url: https://helm.ngc.nvidia.com/nvidia
+    chart: network-operator
+    version: "26.1.0"
+    namespace: nvidia-network-operator
+    create_namespace: true
+    values:
+      # RDMA shared device plugin
+      rdmaSharedDevicePlugin:
+        deploy: true
+      # SR-IOV device plugin (for SR-IOV capable NICs)
+      sriovDevicePlugin:
+        deploy: false
+      # Secondary network support
+      secondaryNetwork:
+        deploy: true
+
+  # AWS EFA Kubernetes Device Plugin - Manages EFA devices in EKS clusters
+  # Enables high-performance inter-node communication for distributed training
+  # and high-performance inference (NIXL + EFA for KV-cache transfer)
+  # https://github.com/aws/eks-charts/tree/master/stable/aws-efa-k8s-device-plugin
+  aws-efa-device-plugin:
+    enabled: false  # Toggled on by cdk.json nvidia_network_operator.enabled (enabled by default)
+    repo_name: eks
+    repo_url: https://aws.github.io/eks-charts
+    chart: aws-efa-k8s-device-plugin
+    version: "0.5.25"
+    namespace: kube-system
+    create_namespace: false
+    values:
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: vpc.amazonaws.com/efa
+          operator: Exists
+          effect: NoSchedule
+        - key: aws.amazon.com/neuron
+          operator: Exists
+          effect: NoSchedule
+
+  # AWS Neuron Device Plugin - Manages Neuron devices for Trainium/Inferentia
+  # Advertises aws.amazon.com/neuron and aws.amazon.com/neuroncore resources
+  # https://github.com/aws-neuron/aws-neuron-sdk
+  aws-neuron-device-plugin:
+    enabled: true
+    repo_name: neuron-oci
+    repo_url: oci://public.ecr.aws/neuron
+    chart: neuron-helm-chart
+    version: "1.6.0"
+    namespace: kube-system
+    create_namespace: false
+    use_oci: true
+    values:
+      npd:
+        enabled: false
+      scheduler:
+        enabled: false
+      devicePlugin:
+        tolerations:
+          - key: aws.amazon.com/neuron
+            operator: Exists
+            effect: NoSchedule
+          - key: vpc.amazonaws.com/efa
+            operator: Exists
+            effect: NoSchedule
+
+  # Volcano - Kubernetes-native batch scheduler for AI/ML workloads
+  # Provides gang scheduling, fair-share, and queue management for batch jobs
+  # https://volcano.sh/
+  volcano:
+    enabled: true
+    repo_name: volcano-sh
+    repo_url: https://volcano-sh.github.io/helm-charts
+    chart: volcano
+    version: "1.14.1"
+    namespace: volcano-system
+    create_namespace: true
+    values:
+      # Basic configuration - Volcano works well with defaults
+      basic:
+        controller_image_name: volcanosh/vc-controller-manager
+        scheduler_image_name: volcanosh/vc-scheduler
+        admission_image_name: volcanosh/vc-webhook-manager
+        controller_podAnnotations:
+          karpenter.sh/do-not-disrupt: "true"
+        scheduler_podAnnotations:
+          karpenter.sh/do-not-disrupt: "true"
+        admission_podAnnotations:
+          karpenter.sh/do-not-disrupt: "true"
+      # Enable all plugins for comprehensive scheduling
+      custom:
+        scheduler_config:
+          actions: "enqueue, allocate, backfill"
+          tiers:
+            - plugins:
+                - name: priority
+                - name: gang
+                - name: conformance
+            - plugins:
+                - name: drf
+                - name: predicates
+                - name: proportion
+                - name: nodeorder
+                - name: binpack
+
+  # KubeRay - Kubernetes operator for Ray distributed computing
+  # Enables distributed training, hyperparameter tuning, and model serving with Ray
+  # https://ray-project.github.io/kuberay/
+  kuberay-operator:
+    enabled: true
+    repo_name: kuberay
+    repo_url: https://ray-project.github.io/kuberay-helm
+    chart: kuberay-operator
+    version: "1.6.0"
+    namespace: ray-system
+    create_namespace: true
+    values:
+      # Use Quay.io images (official KubeRay images)
+      image:
+        repository: quay.io/kuberay/operator
+        tag: v1.6.0
+      # Resource configuration
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      # Watch all namespaces for RayCluster CRs
+      watchNamespace: ""
+      # Prevent Karpenter from evicting the operator during node consolidation
+      podAnnotations:
+        karpenter.sh/do-not-disrupt: "true"
+
+  # cert-manager - Automatic TLS certificate management for Kubernetes
+  # Required by the Slinky Slurm Operator webhook for TLS certificates.
+  # Also useful for any workload that needs automated certificate issuance.
+  # https://cert-manager.io/
+  cert-manager:
+    enabled: true
+    repo_name: jetstack
+    repo_url: https://charts.jetstack.io
+    chart: cert-manager
+    version: "v1.20.2"
+    namespace: cert-manager
+    create_namespace: true
+    values:
+      # Install CRDs with the chart
+      crds:
+        enabled: true
+      # Prevent Karpenter from evicting cert-manager pods during node consolidation
+      podAnnotations:
+        karpenter.sh/do-not-disrupt: "true"
+      # Resource configuration
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+      webhook:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+      cainjector:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+
+  # Slinky Slurm Operator - Run Slurm on Kubernetes
+  # Deploys the Kubernetes operator for managing Slurm cluster lifecycles (creation,
+  # upgrade, graceful shutdown). Enables HPC-style batch scheduling alongside
+  # Kubernetes-native workloads on the same cluster.
+  # https://github.com/SlinkyProject/slurm-operator
+  slinky-slurm-operator:
+    enabled: false
+    repo_name: slinky-oci
+    repo_url: oci://ghcr.io/slinkyproject/charts
+    chart: slurm-operator
+    version: "1.1.0"
+    namespace: slurm-operator
+    create_namespace: true
+    use_oci: true
+    values:
+      # CRD management — let the chart install and upgrade CRDs
+      crds:
+        enabled: true
+      # Operator configuration
+      operator:
+        enabled: true
+        replicas: 1
+        image:
+          repository: ghcr.io/slinkyproject/slurm-operator
+          tag: "1.1.0"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        tolerations: []
+        # Prevent Karpenter from evicting the operator during node consolidation
+        podAnnotations:
+          karpenter.sh/do-not-disrupt: "true"
+      # Webhook for validation and defaulting of Slurm CRDs
+      webhook:
+        enabled: true
+        image:
+          repository: ghcr.io/slinkyproject/slurm-operator-webhook
+          tag: "1.1.0"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+      # cert-manager is required for webhook TLS certificates
+      certManager:
+        enabled: true
+
+  # Slinky Slurm Cluster - Deploys a ready-to-use Slurm cluster on Kubernetes
+  # Installs after the operator and creates controller, workers, login, and REST API pods.
+  # Users can immediately submit jobs via sbatch/srun from the login pod.
+  # https://github.com/SlinkyProject/slurm-operator/tree/main/helm/slurm
+  slinky-slurm:
+    enabled: false
+    repo_name: slinky-oci
+    repo_url: oci://ghcr.io/slinkyproject/charts
+    chart: slurm
+    version: "1.1.0"
+    namespace: gco-jobs
+    create_namespace: false
+    use_oci: true
+    values:
+      # Slurm cluster name
+      clusterName: gco-slurm
+      # Controller (slurmctld) — head node
+      controller:
+        # Use the pre-provisioned EFS PVC for controller state persistence.
+        # This avoids dynamic EFS provisioning which requires additional IAM permissions.
+        persistence:
+          existingClaim: gco-shared-storage
+        slurmctld:
+          image:
+            repository: ghcr.io/slinkyproject/slurmctld
+            tag: "25.11-ubuntu24.04"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+        podSpec:
+          nodeSelector:
+            kubernetes.io/os: linux
+      # Worker nodes (slurmd)
+      nodeSets:
+        - name: workers
+          replicas: 2
+          slurmd:
+            image:
+              repository: ghcr.io/slinkyproject/slurmd
+              tag: "25.11-ubuntu24.04"
+            resources:
+              requests:
+                cpu: "1"
+                memory: 2Gi
+              limits:
+                cpu: "2"
+                memory: 4Gi
+          podSpec:
+            nodeSelector:
+              kubernetes.io/os: linux
+      # Login pods — disabled by default. GCO submits Slurm jobs via the
+      # Kubernetes API (gco jobs submit-direct), not via SSH. Enabling the
+      # login set creates a LoadBalancer (NLB) which adds cost and can
+      # interfere with Global Accelerator endpoint registration.
+      # For interactive access, use: kubectl exec -it <controller-pod> -- bash
+      loginsets:
+        slinky:
+          enabled: false
+      # REST API (slurmrestd) — used by operator for lifecycle management
+      restapi:
+        slurmrestd:
+          image:
+            repository: ghcr.io/slinkyproject/slurmrestd
+            tag: "25.11-ubuntu24.04"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+        podSpec:
+          nodeSelector:
+            kubernetes.io/os: linux
+      # Disable accounting (MariaDB) by default
+      accounting:
+        enabled: false
+
+  # Apache YuniKorn - Universal resource scheduler for Kubernetes
+  # Provides app-aware scheduling, hierarchical queues, resource quotas,
+  # fair-sharing, and preemption for multi-tenant AI/ML clusters.
+  # https://yunikorn.apache.org/
+  yunikorn:
+    enabled: false
+    repo_name: yunikorn
+    repo_url: https://apache.github.io/yunikorn-release
+    chart: yunikorn
+    version: "1.8.0"
+    namespace: yunikorn
+    create_namespace: true
+    values:
+      # Disable the admission controller — YuniKorn only schedules pods that
+      # explicitly set schedulerName: yunikorn. This prevents interference with
+      # other schedulers (Volcano, Kueue) and system pods (keda, cert-manager).
+      embedAdmissionController: false
+      admissionController:
+        replicaCount: 0
+      # Prevent Karpenter from evicting the scheduler during node consolidation
+      podAnnotations:
+        karpenter.sh/do-not-disrupt: "true"
+      # YuniKorn scheduler configuration
+      yunikornDefaults:
+        # Default queue configuration with a root queue and child queues
+        # for GPU and CPU workloads with resource quotas
+        queues.yaml: |
+          partitions:
+            - name: default
+              placementrules:
+                - name: tag
+                  value: namespace
+                  create: true
+              queues:
+                - name: root
+                  submitacl: '*'
+                  queues:
+                    - name: gpu-workloads
+                      resources:
+                        guaranteed:
+                          memory: 64G
+                          vcore: 32
+                        max:
+                          memory: 256G
+                          vcore: 128
+                    - name: cpu-workloads
+                      resources:
+                        guaranteed:
+                          memory: 32G
+                          vcore: 16
+                        max:
+                          memory: 128G
+                          vcore: 64
+                    - name: default
+                      resources:
+                        max:
+                          memory: 64G
+                          vcore: 32
+
+  # Kueue - Kubernetes-native job queueing for batch workloads
+  # Provides quota management, fair sharing, and priority scheduling
+  # IMPORTANT: Kueue must be installed LAST because its mutating webhook
+  # intercepts all Job and Deployment creates/updates cluster-wide. If Kueue
+  # installs before other charts, its webhook can block their upgrades when
+  # the webhook pod is temporarily unavailable during rollouts.
+  # https://kueue.sigs.k8s.io/
+  kueue:
+    enabled: true
+    repo_name: kueue-oci
+    repo_url: oci://registry.k8s.io/kueue/charts
+    chart: kueue
+    version: "0.17.1"
+    namespace: kueue-system
+    create_namespace: true
+    use_oci: true
+    values:
+      # Enable integration with common job types
+      enablePlainPod: true
+      # Prevent Karpenter from evicting Kueue pods during node consolidation
+      podAnnotations:
+        karpenter.sh/do-not-disrupt: "true"
+      # Controller configuration
+      controller:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      # Webhook configuration
+      webhook:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi

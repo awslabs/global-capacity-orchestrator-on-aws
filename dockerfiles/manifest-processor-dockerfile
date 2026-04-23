@@ -1,0 +1,46 @@
+# Dockerfile for Manifest Processor Service
+# Validates and applies Kubernetes manifests submitted via API Gateway.
+# Enforces namespace restrictions, resource limits, and security policies.
+# Runs as a Deployment in gco-system behind the ALB.
+FROM python:3.14-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN groupadd -r gco && useradd -r -g gco -u 1000 gco
+
+# Copy project metadata and install Python dependencies
+# Use the lockfile for reproducible transitive dependency versions,
+# then install the project itself without re-resolving.
+COPY requirements-lock.txt ./
+COPY pyproject.toml ./
+COPY gco/ ./gco/
+COPY cli/ ./cli/
+RUN pip install --no-cache-dir -r requirements-lock.txt \
+    && pip install --no-cache-dir --no-deps .
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Create tmp directory for non-root user
+RUN mkdir -p /tmp && chown gco:gco /tmp
+
+# Switch to non-root user
+USER gco
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8080/healthz || exit 1
+
+# Run the application
+CMD ["python", "-m", "gco.services.manifest_api"]

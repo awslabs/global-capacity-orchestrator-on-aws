@@ -1,0 +1,56 @@
+# DAG Pipeline Step 2: Train
+# Reads preprocess output from EFS, writes model artifacts.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dag-train
+  namespace: gco-jobs
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: train
+        image: busybox:1.37.0
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        command:
+        - sh
+        - -c
+        - |
+          echo "=== Train Step ==="
+          echo "Reading preprocess output..."
+          if [ ! -f /mnt/shared/pipeline-output/preprocess/config.json ]; then
+            echo "ERROR: Preprocess output not found!"
+            exit 1
+          fi
+          cat /mnt/shared/pipeline-output/preprocess/config.json
+          echo "Training model..."
+          sleep 5
+          mkdir -p /mnt/shared/pipeline-output/train
+          echo '{"model": "linear_regression", "accuracy": 0.94, "epochs": 10}' > /mnt/shared/pipeline-output/train/metrics.json
+          echo "model_weights_placeholder" > /mnt/shared/pipeline-output/train/model.bin
+          echo "Train complete. Output:"
+          ls -la /mnt/shared/pipeline-output/train/
+          cat /mnt/shared/pipeline-output/train/metrics.json
+        volumeMounts:
+        - name: shared-storage
+          mountPath: /mnt/shared
+      volumes:
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: gco-shared-storage
+      restartPolicy: Never

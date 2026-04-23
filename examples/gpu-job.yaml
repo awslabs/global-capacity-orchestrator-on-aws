@@ -1,0 +1,44 @@
+# GPU Job Example
+# This job requests GPU resources and runs on GPU nodes
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpu-test-job
+  namespace: gco-jobs
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: gpu-test
+        image: nvidia/cuda:12.6.3-base-ubuntu24.04
+        command: ['sh', '-c', 'nvidia-smi && echo "GPU job completed!"']
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+            nvidia.com/gpu: 1
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+            nvidia.com/gpu: 1
+      restartPolicy: Never
+      # Tolerate GPU node taints
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      # Select GPU nodes
+      nodeSelector:
+        eks.amazonaws.com/instance-gpu-count: "1"
+  backoffLimit: 3
