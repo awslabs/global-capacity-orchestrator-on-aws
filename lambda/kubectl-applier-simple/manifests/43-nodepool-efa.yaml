@@ -1,0 +1,50 @@
+# EFA NodePool — high-performance distributed training (p4d, p5, p6)
+# EFA (Elastic Fabric Adapter) enables low-latency, high-bandwidth inter-node
+# communication for large-scale distributed training jobs.
+# Uses WhenEmpty consolidation to avoid interrupting long-running training runs.
+# Requires: EFA device plugin (helm.aws_efa_device_plugin.enabled = true in cdk.json)
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu-efa-pool
+spec:
+  template:
+    metadata:
+      labels:
+        workload-type: gpu-efa
+        arch: x86_64
+        project: gco
+        efa: "true"
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: default
+      requirements:
+        - key: "eks.amazonaws.com/instance-family"
+          operator: In
+          values: ["p4d", "p5", "p6"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"]
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand", "spot"]
+        - key: "eks.amazonaws.com/instance-gpu-manufacturer"
+          operator: In
+          values: ["nvidia"]
+      taints:
+        - key: nvidia.com/gpu
+          value: "true"
+          effect: NoSchedule
+        - key: vpc.amazonaws.com/efa
+          value: "true"
+          effect: NoSchedule
+  limits:
+    cpu: "2000"
+    memory: 8000Gi
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 300s
+    budgets:
+      - nodes: "10%"

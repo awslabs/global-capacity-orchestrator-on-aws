@@ -1,0 +1,114 @@
+# NVIDIA Triton Inference Server Example
+# Supports multiple frameworks: TensorRT, ONNX, PyTorch, TensorFlow
+#
+# Deploy with: gco inference deploy triton-models \
+#   -i nvcr.io/nvidia/tritonserver:25.01-py3 \
+#   --gpu-count 1 --replicas 2 \
+#   --model-path /mnt/gco/models/triton-repo \
+#   --health-path /v2/health/ready
+#
+# Test the endpoint:
+#   curl https://<GA-endpoint>/inference/triton-models/v2/models
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: triton-models
+  namespace: gco-inference
+  labels:
+    app: triton-models
+    project: gco
+    gco.io/type: inference
+    framework: triton
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: triton-models
+  template:
+    metadata:
+      labels:
+        app: triton-models
+        project: gco
+        gco.io/type: inference
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: triton
+        image: nvcr.io/nvidia/tritonserver:25.01-py3
+        securityContext:
+          allowPrivilegeEscalation: false
+        ports:
+        - containerPort: 8000
+          name: http
+        - containerPort: 8001
+          name: grpc
+        - containerPort: 8002
+          name: metrics
+        args:
+        - "tritonserver"
+        - "--model-repository=/models"
+        - "--strict-model-config=false"
+        - "--log-verbose=0"
+        resources:
+          requests:
+            cpu: "4"
+            memory: "8Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "8"
+            memory: "16Gi"
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - name: model-storage
+          mountPath: /models
+          subPath: triton-repo
+        livenessProbe:
+          httpGet:
+            path: /v2/health/live
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /v2/health/ready
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      nodeSelector:
+        eks.amazonaws.com/instance-gpu-manufacturer: nvidia
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: efs-claim
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: triton-models
+  namespace: gco-inference
+  labels:
+    app: triton-models
+    project: gco
+spec:
+  selector:
+    app: triton-models
+  ports:
+  - port: 80
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  - port: 8001
+    targetPort: 8001
+    protocol: TCP
+    name: grpc
+  type: ClusterIP

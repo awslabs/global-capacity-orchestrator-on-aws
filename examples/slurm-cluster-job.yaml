@@ -1,0 +1,174 @@
+# Slurm Job Example — Submit a batch job to the GCO Slurm cluster
+#
+# This example generates a JWT token from the Slurm auth secret, submits
+# a batch job via the Slurm REST API, waits for completion, and prints
+# the result. Fully automated — works via kubectl or API Gateway.
+#
+# Prerequisites:
+#   - Enable Slurm in cdk.json: "helm": { "slurm": { "enabled": true } }
+#   - Deploy: gco stacks deploy-all -y
+#   - Verify: kubectl get pods -n gco-jobs -l app.kubernetes.io/part-of=slurm
+#
+# Usage:
+#   kubectl apply -f examples/slurm-cluster-job.yaml
+#   kubectl logs job/slurm-test -n gco-jobs -f
+#
+# For interactive Slurm access:
+#   kubectl exec -it -n gco-jobs deploy/slinky-slurm-controller -- bash
+#   sinfo && srun hostname && sbatch --wrap="echo Hello"
+#
+# Documentation: docs/SLURM_OPERATOR.md
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: slurm-test
+  namespace: gco-jobs
+  labels:
+    project: gco
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: slurm-test
+        image: python:3.14-slim
+        command: ["python3", "-c"]
+        args:
+        - |
+          import base64, hashlib, hmac, json, time, socket
+          import urllib.request, urllib.error
+
+          RESTAPI = "http://slinky-slurm-restapi.gco-jobs.svc.cluster.local:6820"
+          API_VER = "v0.0.44"
+
+          print("=== GCO Slurm Integration Test ===")
+          print(f"Date: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}")
+          print()
+
+          # Generate JWT token from the mounted secret key
+          with open("/etc/slurm-jwt/jwt.key") as f:
+              key = f.read().strip().encode()
+
+          def make_jwt(user="slurm", lifespan=600):
+              header = base64.urlsafe_b64encode(json.dumps(
+                  {"alg": "HS256", "typ": "JWT"}).encode()).rstrip(b"=")
+              now = int(time.time())
+              payload = base64.urlsafe_b64encode(json.dumps(
+                  {"exp": now + lifespan, "iat": now, "sun": user}).encode()).rstrip(b"=")
+              sig = base64.urlsafe_b64encode(hmac.new(
+                  key, header + b"." + payload, hashlib.sha256).digest()).rstrip(b"=")
+              return (header + b"." + payload + b"." + sig).decode()
+
+          token = make_jwt()
+          headers = {
+              "X-SLURM-USER-NAME": "slurm",
+              "X-SLURM-USER-TOKEN": token,
+              "Content-Type": "application/json",
+          }
+
+          def api_call(path, data=None, method="GET"):
+              req = urllib.request.Request(
+                  f"{RESTAPI}/slurm/{API_VER}/{path}",
+                  data=data, headers=headers, method=method)
+              resp = urllib.request.urlopen(req, timeout=15)
+              return json.loads(resp.read())
+
+          # 1. Check cluster status
+          print("=== Cluster Status ===")
+          try:
+              nodes = api_call("nodes/")
+              for n in nodes.get("nodes", []):
+                  name = n.get("name", "?")
+                  state = n.get("state", ["?"])
+                  cpus = n.get("cpus", 0)
+                  print(f"  Node: {name}  State: {state}  CPUs: {cpus}")
+          except Exception as e:
+              print(f"  Could not get nodes: {e}")
+
+          # 2. Submit a job
+          print()
+          print("=== Submitting Job ===")
+          job_data = json.dumps({
+              "job": {
+                  "name": "gco-hello",
+                  "current_working_directory": "/tmp",
+                  "standard_output": "/tmp/gco-hello.out",
+                  "environment": ["PATH=/usr/bin:/bin"],
+              },
+              "script": "#!/bin/bash\necho 'Hello from Slurm on GCO!'\nhostname\ndate\necho 'Job completed'",
+          }).encode()
+
+          try:
+              result = api_call("job/submit", data=job_data, method="POST")
+              job_id = result.get("job_id")
+              print(f"  Job submitted! ID: {job_id}")
+          except urllib.error.HTTPError as e:
+              print(f"  Submit failed ({e.code}): {e.read().decode()[:200]}")
+              job_id = None
+          except Exception as e:
+              print(f"  Submit failed: {e}")
+              job_id = None
+
+          # 3. Wait and check result
+          if job_id:
+              print()
+              print("=== Waiting for Job ===")
+              for attempt in range(6):
+                  time.sleep(5)
+                  try:
+                      status = api_call(f"job/{job_id}")
+                      jobs = status.get("jobs", [])
+                      if jobs:
+                          state = jobs[0].get("job_state", [])
+                          if "COMPLETED" in state or "FAILED" in state:
+                              break
+                  except Exception:
+                      pass
+
+              print()
+              print("=== Job Result ===")
+              try:
+                  status = api_call(f"job/{job_id}")
+                  jobs = status.get("jobs", [])
+                  if jobs:
+                      j = jobs[0]
+                      print(f"  Name:      {j.get('name', '?')}")
+                      print(f"  State:     {j.get('job_state', ['unknown'])}")
+                      print(f"  Node:      {j.get('nodes', 'pending')}")
+                      print(f"  Exit code: {j.get('exit_code', {}).get('return_code', {}).get('number', '?')}")
+                      print(f"  Output:    {j.get('standard_output', '?')}")
+                  else:
+                      print("  Job not found")
+              except Exception as e:
+                  print(f"  Could not check status: {e}")
+
+          print()
+          print("=== Test Complete ===")
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+        volumeMounts:
+        - name: slurm-jwt
+          mountPath: /etc/slurm-jwt
+          readOnly: true
+      volumes:
+      - name: slurm-jwt
+        secret:
+          secretName: slinky-slurm-auth-jwt
+      restartPolicy: Never
+  backoffLimit: 2

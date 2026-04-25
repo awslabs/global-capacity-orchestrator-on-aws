@@ -1,0 +1,51 @@
+# DAG Pipeline Step 1: Preprocess
+# Writes output to shared EFS for the next step to consume.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dag-preprocess
+  namespace: gco-jobs
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: preprocess
+        image: busybox:1.37.0
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        command:
+        - sh
+        - -c
+        - |
+          echo "=== Preprocess Step ==="
+          echo "Generating training data..."
+          mkdir -p /mnt/shared/pipeline-output/preprocess
+          echo '{"samples": 1000, "features": 128, "split": "80/20"}' > /mnt/shared/pipeline-output/preprocess/config.json
+          for i in $(seq 1 5); do
+            echo "batch_${i}: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /mnt/shared/pipeline-output/preprocess/data.csv
+          done
+          echo "Preprocess complete. Output:"
+          ls -la /mnt/shared/pipeline-output/preprocess/
+          cat /mnt/shared/pipeline-output/preprocess/config.json
+        volumeMounts:
+        - name: shared-storage
+          mountPath: /mnt/shared
+      volumes:
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: gco-shared-storage
+      restartPolicy: Never

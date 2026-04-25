@@ -1,0 +1,174 @@
+# Kueue Job Queueing Example
+# This example demonstrates job queueing with quotas and fair-sharing
+# Jobs are queued and scheduled based on available cluster resources
+#
+# Prerequisites:
+#   - Kueue must be installed (enabled by default in GCO)
+#
+# Usage:
+#   # First, create the ClusterQueue and LocalQueue
+#   kubectl apply -f examples/kueue-job.yaml
+#
+#   # Submit jobs (they will be queued if resources are limited)
+#   kubectl create job test-job-1 --image=python:3.14-slim -n gco-jobs -- sleep 60
+#   kubectl create job test-job-2 --image=python:3.14-slim -n gco-jobs -- sleep 60
+#
+#   # Check queue status
+#   kubectl get clusterqueue
+#   kubectl get localqueue -n gco-jobs
+#   kubectl get workloads -n gco-jobs
+#
+# Documentation: https://kueue.sigs.k8s.io/docs/
+
+---
+# ResourceFlavor - defines the type of resources available
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: default-flavor
+spec:
+  nodeLabels: {}  # Matches all nodes
+
+---
+# ResourceFlavor for GPU nodes
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: gpu-flavor
+spec:
+  nodeLabels:
+    eks.amazonaws.com/instance-gpu-count: "1"
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Equal
+    value: "true"
+    effect: NoSchedule
+
+---
+# ClusterQueue - defines cluster-wide resource quotas
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: cluster-queue
+spec:
+  namespaceSelector: {}  # Accept from all namespaces
+  queueingStrategy: BestEffortFIFO
+  cohort: default-cohort  # Required for borrowingLimit
+
+  resourceGroups:
+  - coveredResources: ["cpu", "memory"]
+    flavors:
+    - name: default-flavor
+      resources:
+      - name: "cpu"
+        nominalQuota: 100      # 100 CPU cores
+      - name: "memory"
+        nominalQuota: 200Gi    # 200 GB memory
+
+  - coveredResources: ["nvidia.com/gpu"]
+    flavors:
+    - name: gpu-flavor
+      resources:
+      - name: "nvidia.com/gpu"
+        nominalQuota: 8        # 8 GPUs
+
+---
+# LocalQueue - namespace-scoped queue that points to ClusterQueue
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: LocalQueue
+metadata:
+  name: user-queue
+  namespace: gco-jobs
+spec:
+  clusterQueue: cluster-queue
+
+---
+# Example Job that uses Kueue queueing
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kueue-sample-job
+  namespace: gco-jobs
+  labels:
+    kueue.x-k8s.io/queue-name: user-queue  # Assign to LocalQueue
+spec:
+  parallelism: 3
+  completions: 3
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: worker
+        image: python:3.14-slim
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+        command:
+        - python
+        - -c
+        - |
+          import os
+          import time
+          import socket
+
+          hostname = socket.gethostname()
+          print(f"Job running on {hostname}")
+          print("Processing workload...")
+          time.sleep(30)
+          print("Job completed successfully!")
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+      restartPolicy: Never
+  backoffLimit: 3
+
+---
+# GPU Job with Kueue queueing
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kueue-gpu-job
+  namespace: gco-jobs
+  labels:
+    kueue.x-k8s.io/queue-name: user-queue
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: gpu-worker
+        image: nvidia/cuda:12.6.3-base-ubuntu24.04
+        command: ['sh', '-c', 'nvidia-smi && sleep 30 && echo "GPU job done!"']
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+        resources:
+          requests:
+            cpu: "1"
+            memory: "4Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+            nvidia.com/gpu: "1"
+      restartPolicy: Never
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+  backoffLimit: 3

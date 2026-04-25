@@ -1,0 +1,25 @@
+[flake8]
+max-line-length = 100
+extend-ignore =
+    # E501: line too long (handled by black)
+    E501,
+    # W503: line break before binary operator (conflicts with black)
+    W503,
+    # E203: whitespace before ':' (conflicts with black)
+    E203,
+    # B008: function calls in argument defaults (intentional with FastAPI Query/Depends)
+    B008,
+exclude =
+    .git,
+    .venv,
+    .mypy_cache,
+    .pytest_cache,
+    __pycache__,
+    cdk.out,
+    dist,
+    build,
+    lambda/kubectl-applier-simple-build,
+    lambda/helm-installer-build,
+per-file-ignores =
+    tests/*:S101,E402
+    lambda/*:E402

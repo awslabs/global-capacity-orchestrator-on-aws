@@ -1,0 +1,76 @@
+# EFA-Enabled Distributed Training Example
+# Uses Elastic Fabric Adapter for high-bandwidth inter-node communication
+#
+# Prerequisites:
+#   1. EFA is enabled by default via the helm config in cdk.json.
+#      If disabled, re-enable: "helm": { "nvidia_network_operator": { "enabled": true } }
+#      and redeploy: gco stacks deploy-all -y
+#
+# Deploy with:
+#   gco jobs submit-direct examples/efa-distributed-training.yaml -r us-east-1
+#
+# Supported instance types: p4d.24xlarge (4x EFA), p5.48xlarge (32x EFA), p6 (B200/B300)
+# Each EFA interface provides 100 Gbps bandwidth
+# EKS Auto Mode uses EKS-optimized AMIs which include host-level EFA components
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: efa-training-job
+  namespace: gco-jobs
+spec:
+  completions: 2
+  parallelism: 2
+  template:
+    metadata:
+      labels:
+        app: efa-training
+        project: gco
+    spec:
+      containers:
+      - name: trainer
+        image: python:3.14-slim
+        securityContext:
+          allowPrivilegeEscalation: false
+        command: ["python3", "-c"]
+        args:
+        - |
+          import os
+          import socket
+          hostname = socket.gethostname()
+          efa_devices = os.environ.get("EFA_DEVICE_COUNT", "unknown")
+          print(f"Node: {hostname}")
+          print(f"EFA devices available: {efa_devices}")
+          print(f"NCCL socket interface: {os.environ.get('NCCL_SOCKET_IFNAME', 'not set')}")
+          print(f"FI_PROVIDER: {os.environ.get('FI_PROVIDER', 'not set')}")
+          print("EFA distributed training job completed successfully")
+        env:
+        - name: FI_PROVIDER
+          value: "efa"
+        - name: NCCL_SOCKET_IFNAME
+          value: "eth0"
+        - name: FI_EFA_USE_DEVICE_RDMA
+          value: "1"
+        resources:
+          requests:
+            cpu: "8"
+            memory: "64Gi"
+            nvidia.com/gpu: "8"
+            vpc.amazonaws.com/efa: "4"
+          limits:
+            cpu: "16"
+            memory: "128Gi"
+            nvidia.com/gpu: "8"
+            vpc.amazonaws.com/efa: "4"
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      - key: vpc.amazonaws.com/efa
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      nodeSelector:
+        eks.amazonaws.com/instance-gpu-manufacturer: nvidia
+      restartPolicy: Never
+  backoffLimit: 2

@@ -1,0 +1,137 @@
+# FSx for Lustre Storage — StorageClass and PVs for high-performance I/O
+# Only applied when FSx is enabled (cdk.json fsx_lustre.enabled = true).
+# The handler automatically skips this file when placeholders are unreplaced.
+#
+# PVs use static provisioning with the FSx file system ID injected at deploy time.
+# On redeploy with a new FSx file system, the handler deletes and recreates PVs
+# because csi.volumeHandle is immutable.
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fsx-sc
+  labels:
+    project: gco
+provisioner: fsx.csi.aws.com
+volumeBindingMode: Immediate
+reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gco-fsx-pv-default
+  labels:
+    project: gco
+    namespace: default
+spec:
+  capacity:
+    storage: 1200Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: fsx-sc
+  claimRef:
+    namespace: default
+    name: gco-fsx-storage
+  csi:
+    driver: fsx.csi.aws.com
+    volumeHandle: "{{FSX_FILE_SYSTEM_ID}}"
+    volumeAttributes:
+      dnsname: "{{FSX_DNS_NAME}}"
+      mountname: "{{FSX_MOUNT_NAME}}"
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gco-fsx-pv-jobs
+  labels:
+    project: gco
+    namespace: gco-jobs
+spec:
+  capacity:
+    storage: 1200Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: fsx-sc
+  claimRef:
+    namespace: gco-jobs
+    name: gco-fsx-storage
+  csi:
+    driver: fsx.csi.aws.com
+    volumeHandle: "{{FSX_FILE_SYSTEM_ID}}-jobs"
+    volumeAttributes:
+      dnsname: "{{FSX_DNS_NAME}}"
+      mountname: "{{FSX_MOUNT_NAME}}"
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gco-fsx-pv-system
+  labels:
+    project: gco
+    namespace: gco-system
+spec:
+  capacity:
+    storage: 1200Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: fsx-sc
+  claimRef:
+    namespace: gco-system
+    name: gco-fsx-storage
+  csi:
+    driver: fsx.csi.aws.com
+    volumeHandle: "{{FSX_FILE_SYSTEM_ID}}-system"
+    volumeAttributes:
+      dnsname: "{{FSX_DNS_NAME}}"
+      mountname: "{{FSX_MOUNT_NAME}}"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gco-fsx-storage
+  namespace: default
+  labels:
+    project: gco
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: fsx-sc
+  resources:
+    requests:
+      storage: 1200Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gco-fsx-storage
+  namespace: gco-jobs
+  labels:
+    project: gco
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: fsx-sc
+  resources:
+    requests:
+      storage: 1200Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gco-fsx-storage
+  namespace: gco-system
+  labels:
+    project: gco
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: fsx-sc
+  resources:
+    requests:
+      storage: 1200Gi

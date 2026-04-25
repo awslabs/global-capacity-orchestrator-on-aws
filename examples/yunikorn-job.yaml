@@ -1,0 +1,214 @@
+# Apache YuniKorn Scheduling Example
+# Demonstrates app-aware scheduling with hierarchical queues and resource quotas.
+# YuniKorn provides fair-sharing, preemption, and gang scheduling for multi-tenant
+# AI/ML clusters.
+#
+# Prerequisites:
+#   1. YuniKorn is opt-in. Enable it in cdk.json:
+#        "helm": { "yunikorn": { "enabled": true } }
+#   2. Deploy: gco stacks deploy-all -y
+#
+# Usage:
+#   kubectl apply -f examples/yunikorn-job.yaml
+#
+#   # Check queue status via YuniKorn REST API
+#   kubectl port-forward svc/yunikorn-service -n yunikorn 9889:9889
+#   curl http://localhost:9889/ws/v1/queues
+#
+#   # Check application status
+#   curl http://localhost:9889/ws/v1/apps
+#
+#   # Monitor pods
+#   kubectl get pods -n gco-jobs -l app=yunikorn-demo -w
+#
+# Documentation:
+#   - YuniKorn: https://yunikorn.apache.org/docs/
+#   - GCO guide: docs/YUNIKORN.md
+
+---
+# Job using YuniKorn scheduling with queue placement
+# The applicationId and queue annotations tell YuniKorn how to schedule this app.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: yunikorn-sample-job
+  namespace: gco-jobs
+  labels:
+    app: yunikorn-demo
+    applicationId: yunikorn-sample-job
+  annotations:
+    yunikorn.apache.org/app-id: yunikorn-sample-job
+    yunikorn.apache.org/queue: root.default
+spec:
+  parallelism: 3
+  completions: 3
+  template:
+    metadata:
+      labels:
+        app: yunikorn-demo
+        applicationId: yunikorn-sample-job
+      annotations:
+        yunikorn.apache.org/app-id: yunikorn-sample-job
+        yunikorn.apache.org/queue: root.default
+    spec:
+      schedulerName: yunikorn
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: worker
+        image: python:3.14-slim
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        command:
+        - python
+        - -c
+        - |
+          import os, time, socket
+          hostname = socket.gethostname()
+          print(f"YuniKorn scheduled job on {hostname}")
+          print(f"Queue: root.default")
+          print("Processing workload...")
+          time.sleep(30)
+          print("Job completed successfully!")
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+      restartPolicy: Never
+  backoffLimit: 3
+
+---
+# GPU job with YuniKorn queue placement
+# Placed in the gpu-workloads queue for resource quota enforcement
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: yunikorn-gpu-job
+  namespace: gco-jobs
+  labels:
+    app: yunikorn-gpu-demo
+    applicationId: yunikorn-gpu-job
+  annotations:
+    yunikorn.apache.org/app-id: yunikorn-gpu-job
+    yunikorn.apache.org/queue: root.gpu-workloads
+spec:
+  template:
+    metadata:
+      labels:
+        app: yunikorn-gpu-demo
+        applicationId: yunikorn-gpu-job
+      annotations:
+        yunikorn.apache.org/app-id: yunikorn-gpu-job
+        yunikorn.apache.org/queue: root.gpu-workloads
+    spec:
+      schedulerName: yunikorn
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: gpu-worker
+        image: nvidia/cuda:12.6.3-base-ubuntu24.04
+        command: ['sh', '-c', 'nvidia-smi && sleep 30 && echo "YuniKorn GPU job done!"']
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: "1"
+            memory: "4Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+            nvidia.com/gpu: "1"
+      restartPolicy: Never
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+  backoffLimit: 3
+
+---
+# Gang scheduling example — all pods must be schedulable together
+# Uses YuniKorn's task-group annotation for gang scheduling
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: yunikorn-gang-job
+  namespace: gco-jobs
+  labels:
+    app: yunikorn-gang-demo
+    applicationId: yunikorn-gang-job
+  annotations:
+    yunikorn.apache.org/app-id: yunikorn-gang-job
+    yunikorn.apache.org/queue: root.default
+spec:
+  parallelism: 4
+  completions: 4
+  template:
+    metadata:
+      labels:
+        app: yunikorn-gang-demo
+        applicationId: yunikorn-gang-job
+      annotations:
+        yunikorn.apache.org/app-id: yunikorn-gang-job
+        yunikorn.apache.org/queue: root.default
+        yunikorn.apache.org/task-group-name: gang-group
+        yunikorn.apache.org/task-groups: |
+          [{
+            "name": "gang-group",
+            "minMember": 4,
+            "minResource": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            }
+          }]
+        yunikorn.apache.org/schedulingPolicyParameters: "placeholderTimeoutInSeconds=120"
+    spec:
+      schedulerName: yunikorn
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: gang-worker
+        image: python:3.14-slim
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        command:
+        - python
+        - -c
+        - |
+          import os, time, socket
+          hostname = socket.gethostname()
+          print(f"Gang-scheduled pod on {hostname}")
+          print("All 4 pods started together (gang scheduling)")
+          print("Simulating distributed training...")
+          time.sleep(30)
+          print("Gang job completed!")
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+      restartPolicy: Never
+  backoffLimit: 2

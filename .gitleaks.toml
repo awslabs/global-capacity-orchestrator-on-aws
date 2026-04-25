@@ -1,0 +1,30 @@
+# Gitleaks Configuration
+# https://github.com/gitleaks/gitleaks
+
+title = "GCO Gitleaks Config"
+
+# Paths to ignore (test files, examples, build artifacts)
+[allowlist]
+paths = [
+    '''tests/.*''',
+    '''docs/client-examples/.*''',
+    '''examples/.*''',
+    '''cdk\.out/.*''',
+    '''\.venv/.*''',
+    '''lambda/kubectl-applier-simple-build/.*''',
+    '''lambda/helm-installer-build/.*''',
+    '''htmlcov/.*''',
+]
+
+# Regex patterns to allow (false positives)
+regexes = [
+    # Mock AWS account IDs used in tests
+    '''123456789012''',
+    '''987654321098''',
+    # Mock resource IDs
+    '''fs-[a-f0-9]{8}''',
+    '''fsap-[a-f0-9]{8}''',
+    # Example placeholder values
+    '''your-.*-here''',
+    '''example\.com''',
+]

@@ -1,0 +1,280 @@
+#!/usr/bin/env bats
+# ─────────────────────────────────────────────────────────────────────────────
+# BATS tests for demo/live_demo.sh and demo/lib_demo.sh
+# ─────────────────────────────────────────────────────────────────────────────
+# These tests source the actual lib_demo.sh library and call its real
+# functions, so the tests exercise the same code the demo runs.
+#
+# Run:  bats tests/BATS/test_live_demo.bats
+# ─────────────────────────────────────────────────────────────────────────────
+
+SCRIPT="demo/live_demo.sh"
+LIB="demo/lib_demo.sh"
+
+# ── Syntax & Structure ───────────────────────────────────────────────────────
+
+@test "live_demo.sh exists and is executable" {
+    [ -f "$SCRIPT" ]
+    [ -x "$SCRIPT" ]
+}
+
+@test "lib_demo.sh exists" {
+    [ -f "$LIB" ]
+}
+
+@test "live_demo.sh passes bash -n syntax check" {
+    bash -n "$SCRIPT"
+}
+
+@test "lib_demo.sh passes bash -n syntax check" {
+    bash -n "$LIB"
+}
+
+@test "live_demo.sh passes shellcheck" {
+    command -v shellcheck &>/dev/null || skip "shellcheck not installed"
+    # -x follows `source` directives so shellcheck can resolve lib_demo.sh
+    # and suppress the SC1091 info warning. Matches the lint workflow.
+    shellcheck -x "$SCRIPT"
+}
+
+@test "lib_demo.sh passes shellcheck" {
+    command -v shellcheck &>/dev/null || skip "shellcheck not installed"
+    # -x kept consistent with the sibling shellcheck tests in this repo,
+    # including the repo-wide lint:shellcheck:shell job.
+    shellcheck -x "$LIB"
+}
+
+# ── Source the library for all functional tests ──────────────────────────────
+
+setup() {
+    # Source the real library — all functions below call the actual code.
+    # Force no-color mode so output assertions are predictable.
+    export TERM=dumb
+    source "$LIB"
+    setup_colors  # Will set all color vars to "" because TERM=dumb
+}
+
+# ── Display Helpers (calling real functions from lib_demo.sh) ─────────────────
+
+@test "feature_status returns 'enabled' for true" {
+    result=$(feature_status "true")
+    [[ "$result" == *"enabled"* ]]
+}
+
+@test "feature_status returns 'disabled' for false" {
+    result=$(feature_status "false")
+    [[ "$result" == *"disabled"* ]]
+}
+
+@test "narrate outputs indented text" {
+    result=$(narrate "hello world")
+    [ "$result" = "  hello world" ]
+}
+
+@test "highlight includes arrow marker" {
+    result=$(highlight "test item")
+    [[ "$result" == *"▸"* ]]
+    [[ "$result" == *"test item"* ]]
+}
+
+@test "success includes checkmark" {
+    result=$(success "it worked")
+    [[ "$result" == *"✓"* ]]
+    [[ "$result" == *"it worked"* ]]
+}
+
+@test "warn includes warning symbol" {
+    result=$(warn "something broke")
+    [[ "$result" == *"⚠"* ]]
+    [[ "$result" == *"something broke"* ]]
+}
+
+@test "spacer outputs an empty line" {
+    result=$(spacer)
+    [ "$result" = "" ]
+}
+
+@test "banner contains the title text" {
+    result=$(banner "Test Title")
+    [[ "$result" == *"Test Title"* ]]
+}
+
+@test "section_header contains number and title" {
+    result=$(section_header "3" "MY SECTION")
+    [[ "$result" == *"[3]"* ]]
+    [[ "$result" == *"MY SECTION"* ]]
+}
+
+@test "section counter increments correctly with inline arithmetic" {
+    run bash -c '
+        SECTION=0
+        SECTION=$((SECTION + 1)); echo "$SECTION"
+        SECTION=$((SECTION + 1)); echo "$SECTION"
+        SECTION=$((SECTION + 1)); echo "$SECTION"
+    '
+    [ "$status" -eq 0 ]
+    result_lines=($output)
+    [ "${result_lines[0]}" = "1" ]
+    [ "${result_lines[1]}" = "2" ]
+    [ "${result_lines[2]}" = "3" ]
+}
+
+# ── Pause Duration Logic (calling real setup_pauses) ──────────────────────────
+
+@test "setup_pauses defaults to 3/5 without GCO_DEMO_FAST" {
+    unset GCO_DEMO_FAST
+    setup_pauses
+    [ "$PAUSE_SHORT" = "3" ]
+    [ "$PAUSE_LONG" = "5" ]
+}
+
+@test "setup_pauses uses 1/2 with GCO_DEMO_FAST=1" {
+    export GCO_DEMO_FAST=1
+    setup_pauses
+    [ "$PAUSE_SHORT" = "1" ]
+    [ "$PAUSE_LONG" = "2" ]
+    unset GCO_DEMO_FAST
+}
+
+# ── Color Setup (calling real setup_colors) ──────────────────────────────────
+
+@test "setup_colors sets empty strings when TERM=dumb" {
+    export TERM=dumb
+    setup_colors
+    [ "$BOLD" = "" ]
+    [ "$RED" = "" ]
+    [ "$GREEN" = "" ]
+    [ "$RESET" = "" ]
+}
+
+# ── Feature Detection (calling real detect_features against cdk.json) ─────────
+
+@test "detect_features sets all scheduler flags from cdk.json" {
+    detect_features "cdk.json"
+    [ "$VOLCANO_ENABLED" = "true" ] || [ "$VOLCANO_ENABLED" = "false" ]
+    [ "$KUEUE_ENABLED" = "true" ] || [ "$KUEUE_ENABLED" = "false" ]
+    [ "$YUNIKORN_ENABLED" = "true" ] || [ "$YUNIKORN_ENABLED" = "false" ]
+    [ "$SLURM_ENABLED" = "true" ] || [ "$SLURM_ENABLED" = "false" ]
+}
+
+@test "detect_features sets storage flags from cdk.json" {
+    detect_features "cdk.json"
+    [ "$FSX_ENABLED" = "true" ] || [ "$FSX_ENABLED" = "false" ]
+    [ "$VALKEY_ENABLED" = "true" ] || [ "$VALKEY_ENABLED" = "false" ]
+}
+
+@test "detect_region reads a valid AWS region" {
+    unset GCO_DEMO_REGION
+    detect_region "cdk.json"
+    [[ "$REGION" =~ ^[a-z]{2}-[a-z]+-[0-9]+$ ]]
+}
+
+@test "detect_region respects GCO_DEMO_REGION override" {
+    export GCO_DEMO_REGION=ap-southeast-1
+    detect_region "cdk.json"
+    [ "$REGION" = "ap-southeast-1" ]
+    unset GCO_DEMO_REGION
+}
+
+@test "detect_endpoint_access returns a valid EKS value" {
+    detect_endpoint_access "cdk.json"
+    [[ "$ENDPOINT_ACCESS" =~ ^(PRIVATE|PUBLIC|PUBLIC_AND_PRIVATE)$ ]]
+}
+
+# ── ARN Helpers (calling real functions from lib_demo.sh) ─────────────────────
+
+@test "is_assumed_role matches assumed-role ARNs" {
+    is_assumed_role "arn:aws:sts::123456789012:assumed-role/MyRole/session"
+}
+
+@test "is_assumed_role rejects IAM user ARNs" {
+    ! is_assumed_role "arn:aws:iam::123456789012:user/developer"
+}
+
+@test "is_assumed_role rejects IAM role ARNs" {
+    ! is_assumed_role "arn:aws:iam::123456789012:role/MyRole"
+}
+
+@test "extract_role_name gets role from assumed-role ARN" {
+    result=$(extract_role_name "arn:aws:sts::123456789012:assumed-role/MyAdminRole/session")
+    [ "$result" = "MyAdminRole" ]
+}
+
+@test "extract_role_name handles hyphens and underscores" {
+    result=$(extract_role_name "arn:aws:sts::111111111111:assumed-role/My_Complex-Role/user@corp.com")
+    [ "$result" = "My_Complex-Role" ]
+}
+
+@test "build_role_arn constructs correct IAM role ARN" {
+    result=$(build_role_arn "MyRole" "123456789012")
+    [ "$result" = "arn:aws:iam::123456789012:role/MyRole" ]
+}
+
+# ── Manifest Integrity (validates real files) ─────────────────────────────────
+
+@test "all referenced example manifests exist on disk" {
+    for f in \
+        examples/volcano-gang-job.yaml \
+        examples/kueue-job.yaml \
+        examples/yunikorn-job.yaml \
+        examples/slurm-cluster-job.yaml \
+        examples/fsx-lustre-job.yaml \
+        examples/valkey-cache-job.yaml \
+        examples/efs-output-job.yaml; do
+        [ -f "$f" ]
+    done
+}
+
+@test "all referenced manifests parse as valid YAML" {
+    command -v python3 &>/dev/null || skip "python3 not installed"
+    for f in \
+        examples/volcano-gang-job.yaml \
+        examples/kueue-job.yaml \
+        examples/yunikorn-job.yaml \
+        examples/slurm-cluster-job.yaml \
+        examples/fsx-lustre-job.yaml \
+        examples/valkey-cache-job.yaml \
+        examples/efs-output-job.yaml; do
+        python3 -c "import yaml; list(yaml.safe_load_all(open('$f')))"
+    done
+}
+
+@test "all referenced manifests target gco-jobs namespace" {
+    for f in \
+        examples/volcano-gang-job.yaml \
+        examples/kueue-job.yaml \
+        examples/yunikorn-job.yaml \
+        examples/slurm-cluster-job.yaml \
+        examples/fsx-lustre-job.yaml \
+        examples/valkey-cache-job.yaml \
+        examples/efs-output-job.yaml; do
+        grep -q "namespace: gco-jobs" "$f"
+    done
+}
+
+# ── Script Completeness ──────────────────────────────────────────────────────
+
+@test "script contains all expected demo sections" {
+    for section in "COST VISIBILITY" "CAPACITY DISCOVERY" "VOLCANO" "KUEUE" "YUNIKORN" "SLURM" \
+                   "FSx FOR LUSTRE" "VALKEY" "INFERENCE" "EFS" "Demo Complete"; do
+        grep -q "$section" "$SCRIPT"
+    done
+}
+
+@test "inference section has deploy, invoke, and delete lifecycle" {
+    grep -q "gco inference deploy" "$SCRIPT"
+    grep -q "gco inference invoke" "$SCRIPT"
+    grep -q "gco inference delete" "$SCRIPT"
+}
+
+@test "inference polling loop has a bounded retry count" {
+    grep -q "seq 1 50" "$SCRIPT"
+}
+
+@test "cleanup handles Volcano vcjob custom resource type" {
+    grep -q "kubectl delete vcjob" "$SCRIPT"
+}
+
+@test "live_demo.sh sources lib_demo.sh" {
+    grep -q "source.*lib_demo.sh" "$SCRIPT"
+}

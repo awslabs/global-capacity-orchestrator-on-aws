@@ -1,0 +1,32 @@
+# ALB IngressClass and IngressClassParams for EKS Auto Mode
+#
+# All Ingresses (platform services, inference endpoints) share a single ALB
+# via the 'gco' group. The inference health watchdog in the inference monitor
+# removes Ingresses for unhealthy endpoints, preventing bad target groups
+# from tanking the ALB's health in Global Accelerator.
+#
+# Note: EKS Auto Mode requires the group.name to be set here in
+# IngressClassParams, not via annotation on individual Ingress objects.
+
+---
+apiVersion: eks.amazonaws.com/v1
+kind: IngressClassParams
+metadata:
+  name: alb
+spec:
+  scheme: internet-facing
+  group:
+    name: gco
+---
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: alb
+  annotations:
+    ingressclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: eks.amazonaws.com/alb
+  parameters:
+    apiGroup: eks.amazonaws.com
+    kind: IngressClassParams
+    name: alb

@@ -1,0 +1,93 @@
+# =============================================================================
+# deps-scan.yml — Monthly dependency scan
+# =============================================================================
+#
+# Schedule: 09:00 UTC on the 1st of each month. Replaces
+# `dependency-scan:monthly` from the retired GitLab pipeline.
+#
+# Checks for outdated versions of:
+#   - Python packages pinned in pyproject.toml
+#   - Docker images referenced from .github/workflows/*, K8s manifests, examples,
+#     and Helm chart values in lambda/helm-installer/charts.yaml
+#   - Helm chart versions from charts.yaml
+#   - EKS add-on versions from gco/stacks/regional_stack.py (requires AWS creds
+#     via OIDC; falls back gracefully when no creds are configured)
+#
+# If any are outdated, opens a GitHub issue with the details. Uses the
+# built-in GITHUB_TOKEN with `issues: write` — no long-lived PAT needed.
+#
+# =============================================================================
+
+name: Deps scan
+
+on:
+  schedule:
+    # 09:00 UTC on the 1st of every month
+    - cron: "0 9 1 * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  HELM_VERSION: "v4.1.4"
+  KUBECTL_VERSION: "v1.35.4"
+
+jobs:
+  deps-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install system tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends jq skopeo curl
+      - name: Install Python security tooling + AWS CLI
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[security]"
+          pip install awscli
+      - name: Install pinned Helm
+        run: |
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar xz -C /tmp
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+          rm -rf /tmp/linux-amd64
+          helm version --short
+      - name: Install pinned kubectl
+        run: |
+          curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client --output=yaml | head -5
+      - name: Run dependency scan
+        id: scan
+        env:
+          WORKFLOWS_DIR: .github/workflows
+        run: bash .github/scripts/dependency-scan.sh
+      - name: Open issue if drift detected
+        if: steps.scan.outputs.has_drift == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_PATH: ${{ steps.scan.outputs.report_path }}
+        run: |
+          set -euo pipefail
+          # Self-provision the labels we use so `gh issue create --label`
+          # doesn't fail on a fresh repo where no one has set them up.
+          # `gh label create --force` creates-or-updates idempotently.
+          gh label create dependencies --color "0366d6" --description "Dependency updates" --force
+          gh label create automated    --color "ededed" --description "Opened by an automated workflow" --force
+          title="[Automated] Dependency Updates Available ($(date -u +%Y-%m-%d))"
+          gh issue create \
+            --title "$title" \
+            --label "dependencies,automated" \
+            --body-file "$REPORT_PATH"

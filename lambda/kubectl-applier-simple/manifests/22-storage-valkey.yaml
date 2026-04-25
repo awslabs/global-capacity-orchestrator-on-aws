@@ -1,0 +1,39 @@
+# Valkey ConfigMap — provides the cache endpoint to pods via configMapKeyRef
+# Only applied when Valkey is enabled (cdk.json valkey.enabled = true).
+# The handler automatically skips this file when placeholders are unreplaced.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gco-valkey
+  namespace: gco-system
+  labels:
+    app: gco
+    project: gco
+data:
+  endpoint: "{{VALKEY_ENDPOINT}}"
+  port: "{{VALKEY_PORT}}"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gco-valkey
+  namespace: gco-jobs
+  labels:
+    app: gco
+    project: gco
+data:
+  endpoint: "{{VALKEY_ENDPOINT}}"
+  port: "{{VALKEY_PORT}}"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gco-valkey
+  namespace: gco-inference
+  labels:
+    app: gco
+    project: gco
+data:
+  endpoint: "{{VALKEY_ENDPOINT}}"
+  port: "{{VALKEY_PORT}}"

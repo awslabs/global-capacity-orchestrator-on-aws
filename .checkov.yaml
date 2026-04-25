@@ -1,0 +1,42 @@
+# Checkov Configuration
+# Security scanning configuration with documented exemptions
+
+# Directories to skip
+skip-path:
+  - cdk.out
+  - .venv
+  - lambda/kubectl-applier-simple-build
+  - lambda/helm-installer-build
+  - htmlcov
+  - .mypy_cache
+  - .pytest_cache
+  - .ruff_cache
+  # Example manifests are documentation/templates, not production code
+  - examples
+  # dockerfiles/ contains Dockerfiles for K8s services
+  - dockerfiles
+
+# Frameworks to scan
+framework:
+  - kubernetes
+  - dockerfile
+
+# Compact output
+compact: true
+
+# Skip specific checks globally with justification:
+#
+# === Dockerfile Checks ===
+# CKV_DOCKER_2: HEALTHCHECK not needed for Lambda containers (Lambda manages health)
+#               or development containers (Dockerfile.dev)
+# CKV_DOCKER_3: USER directive not needed for Lambda containers (runs as Lambda runtime user)
+#               Dockerfile.dev is for local development only
+#
+# === Kubernetes Checks ===
+# Kubernetes check skips for NVIDIA device plugin are defined inline in the manifest
+# (lambda/kubectl-applier-simple/manifests/50-nvidia-device-plugin.yaml)
+# using checkov:skip comments for better traceability.
+skip-check:
+  # Dockerfile checks
+  - CKV_DOCKER_2  # HEALTHCHECK - not applicable for Lambda/dev containers
+  - CKV_DOCKER_3  # USER - Lambda runtime handles user, dev container runs locally

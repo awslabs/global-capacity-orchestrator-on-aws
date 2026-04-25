@@ -1,0 +1,156 @@
+# SQS-Based Job Submission Example
+#
+# Submit Kubernetes manifests to the regional SQS queue for processing.
+# The built-in queue processor (KEDA ScaledJob) automatically picks up
+# messages and applies the manifests to the cluster.
+#
+# This is the recommended submission method because:
+#   - Decoupled: submission returns immediately, processing happens async
+#   - Fault-tolerant: messages persist in SQS if processing fails (DLQ after 3 retries)
+#   - Auto-scaling: KEDA scales consumer pods based on queue depth
+#   - Priority support: higher-priority jobs can be processed first
+#
+# This file contains two examples:
+#   1. CPU job — simple Python training simulation
+#   2. GPU job — PyTorch GPU computation (requires GPU compute)
+#
+# Usage:
+#   gco jobs submit-sqs examples/sqs-job-submission.yaml --region us-east-1
+#   gco jobs submit-sqs examples/sqs-job-submission.yaml --auto-region
+#   gco jobs submit-sqs examples/sqs-job-submission.yaml --priority 10
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sqs-submitted-job
+  namespace: gco-jobs
+  labels:
+    app: ml-training
+    gco.io/submission-method: sqs
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600  # Clean up after 1 hour
+  template:
+    metadata:
+      labels:
+        app: ml-training
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: trainer
+        image: python:3.14-slim
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        command:
+        - python
+        - -c
+        - |
+          import time
+
+          print("=" * 50)
+          print("SQS-Submitted Job Starting")
+          print("=" * 50)
+          print()
+
+          # Simulate ML training workload
+          for epoch in range(5):
+              print(f"Epoch {epoch + 1}/5: Training...")
+              time.sleep(2)
+              print(f"Epoch {epoch + 1}/5: Loss = {0.5 - epoch * 0.1:.3f}")
+
+          print()
+          print("Training complete!")
+          print("=" * 50)
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+
+---
+# GPU Job Example - submitted via SQS
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sqs-gpu-training-job
+  namespace: gco-jobs
+  labels:
+    app: gpu-training
+    gco.io/submission-method: sqs
+    gco.io/gpu-required: "true"
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels:
+        app: gpu-training
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      nodeSelector:
+        eks.amazonaws.com/instance-gpu-count: "1"
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: gpu-trainer
+        image: nvcr.io/nvidia/pytorch:24.01-py3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # PyTorch needs writable filesystem
+          capabilities:
+            drop:
+            - ALL
+        command:
+        - python
+        - -c
+        - |
+          import torch
+          import os
+
+          print("=" * 50)
+          print("GPU Training Job (SQS-Submitted)")
+          print("=" * 50)
+
+          # Check GPU availability
+          if torch.cuda.is_available():
+              gpu_count = torch.cuda.device_count()
+              gpu_name = torch.cuda.get_device_name(0)
+              print(f"GPUs available: {gpu_count}")
+              print(f"GPU type: {gpu_name}")
+
+              # Simple GPU computation
+              x = torch.randn(1000, 1000, device='cuda')
+              y = torch.matmul(x, x.T)
+              print(f"GPU computation successful: {y.shape}")
+          else:
+              print("WARNING: No GPU available!")
+
+          print("=" * 50)
+        resources:
+          requests:
+            cpu: "2"
+            memory: "8Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "4"
+            memory: "16Gi"
+            nvidia.com/gpu: "1"

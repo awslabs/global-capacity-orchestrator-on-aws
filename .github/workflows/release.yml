@@ -1,0 +1,94 @@
+# =============================================================================
+# release.yml — Manual version bump + GitHub Release
+# =============================================================================
+#
+# Replaces the GitLab "release:patch/minor/major" manual jobs. Triggered
+# from Actions → Release → Run workflow, with a `bump` input (patch/minor/major).
+#
+# Why no concurrency cancellation:
+#   A half-run release is worse than a slow one. We do NOT set
+#   `cancel-in-progress` here.
+#
+# Permissions model:
+#   `contents: write` on the built-in GITHUB_TOKEN is enough for the push
+#   and the release creation. No long-lived PAT is required (unlike the
+#   retired GitLab RELEASE_TOKEN).
+#
+# =============================================================================
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+# Intentionally NO concurrency block — releases are serialized by the fact
+# that workflow_dispatch runs are rare and we don't want a second click to
+# cancel a mid-release run.
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Need full history + tags so git tag -a can see them, and the
+          # token must persist so the subsequent push is authenticated.
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Bump version
+        id: bump
+        env:
+          # Pass the workflow_dispatch input through `env:` rather than
+          # interpolating `${{ inputs.bump }}` directly in the `run:` block.
+          # The value is already constrained to patch/minor/major by the
+          # `choice` input, but semgrep's shell-injection rule flags
+          # `${{ ... }}` in `run:` steps unconditionally and the `env:`
+          # approach is the documented safe pattern.
+          BUMP_TYPE: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          python scripts/bump_version.py "$BUMP_TYPE"
+          new_version=$(python -c "from gco._version import __version__; print(__version__)")
+          echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
+          echo "Bumped to v$new_version"
+      - name: Commit, tag, push
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+        run: |
+          set -euo pipefail
+          git add VERSION gco/_version.py cli/__init__.py
+          git commit -m "Release v${NEW_VERSION}"
+          git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+          git push origin HEAD:"${GITHUB_REF_NAME}"
+          git push origin "v${NEW_VERSION}"
+      - name: Create GitHub Release with generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+        # Release notes are categorized by PR label per .github/release.yml.
+        run: |
+          gh release create "v${NEW_VERSION}" \
+            --title "v${NEW_VERSION}" \
+            --generate-notes

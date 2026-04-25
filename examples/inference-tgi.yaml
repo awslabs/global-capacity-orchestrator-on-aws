@@ -1,0 +1,103 @@
+# Text Generation Inference (TGI) Endpoint Example
+# HuggingFace's optimized inference server for LLMs
+#
+# Deploy with: gco inference deploy tgi-mistral \
+#   -i ghcr.io/huggingface/text-generation-inference:3.3.7 \
+#   --gpu-count 1 --replicas 1 \
+#   -e MODEL_ID=mistralai/Mistral-7B-Instruct-v0.3 \
+#   -e MAX_INPUT_TOKENS=2048 \
+#   -e MAX_TOTAL_TOKENS=4096
+#
+# Test the endpoint:
+#   curl https://<GA-endpoint>/inference/tgi-mistral/generate \
+#     -H "Content-Type: application/json" \
+#     -d '{"inputs": "What is deep learning?", "parameters": {"max_new_tokens": 100}}'
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tgi-mistral
+  namespace: gco-inference
+  labels:
+    app: tgi-mistral
+    project: gco
+    gco.io/type: inference
+    framework: tgi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tgi-mistral
+  template:
+    metadata:
+      labels:
+        app: tgi-mistral
+        project: gco
+        gco.io/type: inference
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: tgi
+        image: ghcr.io/huggingface/text-generation-inference:3.3.7
+        securityContext:
+          allowPrivilegeEscalation: false
+        ports:
+        - containerPort: 80
+        env:
+        - name: MODEL_ID
+          value: "mistralai/Mistral-7B-Instruct-v0.3"
+        - name: MAX_INPUT_TOKENS
+          value: "2048"
+        - name: MAX_TOTAL_TOKENS
+          value: "4096"
+        - name: QUANTIZE
+          value: "awq"
+        resources:
+          requests:
+            cpu: "4"
+            memory: "16Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "8"
+            memory: "32Gi"
+            nvidia.com/gpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 180
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 90
+          periodSeconds: 10
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      nodeSelector:
+        eks.amazonaws.com/instance-gpu-manufacturer: nvidia
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tgi-mistral
+  namespace: gco-inference
+  labels:
+    app: tgi-mistral
+    project: gco
+spec:
+  selector:
+    app: tgi-mistral
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+  type: ClusterIP

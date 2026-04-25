@@ -1,0 +1,70 @@
+# GCO Development Container
+# Use this container to run CDK and CLI commands with all dependencies pre-installed
+#
+# Build:
+#   docker build -f Dockerfile.dev -t gco-dev .
+#
+# Run (interactive):
+#   docker run -it --rm \
+#     -v ~/.aws:/root/.aws:ro \
+#     -v $(pwd):/workspace \
+#     -w /workspace \
+#     gco-dev
+#
+# Run a command:
+#   docker run --rm \
+#     -v ~/.aws:/root/.aws:ro \
+#     -v $(pwd):/workspace \
+#     -w /workspace \
+#     gco-dev gco stacks list
+
+FROM python:3.14.4-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    unzip \
+    groff \
+    less \
+    && rm -rf /var/lib/apt/lists/*
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Install Node.js 24 (for CDK)
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install AWS CDK CLI
+RUN npm install -g aws-cdk@2
+
+# Install kubectl
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+    && chmod +x kubectl \
+    && mv kubectl /usr/local/bin/
+
+# Install AWS CLI v2
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+    && unzip awscliv2.zip \
+    && ./aws/install \
+    && rm -rf awscliv2.zip aws
+
+# Set working directory
+WORKDIR /workspace
+
+# Copy project metadata first for better caching
+COPY pyproject.toml ./
+COPY gco/_version.py ./gco/_version.py
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -e ".[dev,mcp]"
+
+# Copy the rest of the project
+COPY . .
+
+# Install the CLI in editable mode
+RUN pip install --no-cache-dir -e .
+
+# Default command
+CMD ["/bin/bash"]

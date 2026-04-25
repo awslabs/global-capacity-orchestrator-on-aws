@@ -1,0 +1,230 @@
+{
+  "app": "python3 app.py",
+  "watch": {
+    "include": [
+      "**"
+    ],
+    "exclude": [
+      "README.md",
+      "cdk*.json",
+      "requirements*.txt",
+      "source.bat",
+      "**/__pycache__",
+      "**/.venv"
+    ]
+  },
+  "context": {
+    "project_name": "gco",
+    "deployment_regions": {
+      "global": "us-east-2",
+      "api_gateway": "us-east-2",
+      "monitoring": "us-east-2",
+      "regional": [
+        "us-east-1"
+      ]
+    },
+    "kubernetes_version": "1.35",
+    "resource_thresholds": {
+      "cpu_threshold": 60,
+      "memory_threshold": 60,
+      "gpu_threshold": -1,
+      "pending_pods_threshold": 10,
+      "pending_requested_cpu_vcpus": 100,
+      "pending_requested_memory_gb": 200,
+      "pending_requested_gpus": -1
+    },
+    "node_groups": {
+      "gpu_instances": [
+        "g4dn.xlarge",
+        "g4dn.2xlarge",
+        "p3.2xlarge"
+      ],
+      "min_size": 0,
+      "max_size": 100,
+      "desired_size": 2
+    },
+    "global_accelerator": {
+      "name": "gco-accelerator",
+      "health_check_grace_period": 30,
+      "health_check_interval": 30,
+      "health_check_timeout": 5,
+      "health_check_path": "/api/v1/health"
+    },
+    "manifest_processor": {
+      "image": "gco/manifest-processor:latest",
+      "replicas": 3,
+      "resource_limits": {
+        "cpu": "1000m",
+        "memory": "2Gi"
+      },
+      "validation_enabled": true,
+      "max_request_body_bytes": 1048576,
+      "yaml_max_depth": 50,
+      "yaml_allow_aliases": false
+    },
+    "alb_config": {
+      "health_check_interval": 30,
+      "health_check_timeout": 5,
+      "healthy_threshold": 2,
+      "unhealthy_threshold": 2
+    },
+    "api_gateway": {
+      "throttle_rate_limit": 1000,
+      "throttle_burst_limit": 2000,
+      "log_level": "INFO",
+      "metrics_enabled": true,
+      "tracing_enabled": true
+    },
+    "vpc_endpoint_cidrs": ["10.0.0.0/16"],
+    "resource_quota": {
+      "max_cpu": "100",
+      "max_memory": "512Gi",
+      "max_gpu": "32",
+      "max_pods": "50",
+      "container_max_cpu": "10",
+      "container_max_memory": "64Gi",
+      "container_max_gpu": "4"
+    },
+    "eks_cluster": {
+      "endpoint_access": "PRIVATE"
+    },
+    "fsx_lustre": {
+      "enabled": false,
+      "storage_capacity_gib": 1200,
+      "deployment_type": "SCRATCH_2",
+      "file_system_type_version": "2.15",
+      "per_unit_storage_throughput": 200,
+      "data_compression_type": "LZ4",
+      "import_path": null,
+      "export_path": null,
+      "auto_import_policy": "NEW_CHANGED_DELETED"
+    },
+    "valkey": {
+      "enabled": false,
+      "max_data_storage_gb": 5,
+      "max_ecpu_per_second": 5000,
+      "snapshot_retention_limit": 1
+    },
+    "helm": {
+      "keda": { "enabled": true },
+      "nvidia_gpu_operator": { "enabled": true },
+      "nvidia_dra_driver": { "enabled": true },
+      "nvidia_network_operator": { "enabled": true },
+      "aws_efa_device_plugin": { "enabled": true },
+      "aws_neuron_device_plugin": { "enabled": true },
+      "volcano": { "enabled": true },
+      "kuberay": { "enabled": true },
+      "cert_manager": { "enabled": true },
+      "slurm": { "enabled": false },
+      "yunikorn": { "enabled": false },
+      "kueue": { "enabled": true }
+    },
+    "queue_processor": {
+      "enabled": true,
+      "polling_interval": 10,
+      "max_concurrent_jobs": 10,
+      "messages_per_job": 1,
+      "successful_jobs_history": 20,
+      "failed_jobs_history": 10
+    },
+    "job_validation_policy": {
+      "_comment": "Shared validation policy applied by BOTH the REST manifest_processor (POST /api/v1/manifests) and the SQS queue_processor (gco jobs submit-sqs). CDK wires these values into both services at deploy time so a single change applies uniformly. An attacker holding sqs:SendMessage cannot bypass checks the REST path enforces.",
+      "allowed_namespaces": [
+        "default",
+        "gco-jobs"
+      ],
+      "resource_quotas": {
+        "max_cpu_per_manifest": "10",
+        "max_memory_per_manifest": "32Gi",
+        "max_gpu_per_manifest": 4
+      },
+      "trusted_registries": [
+        "docker.io",
+        "gcr.io",
+        "quay.io",
+        "registry.k8s.io",
+        "k8s.gcr.io",
+        "public.ecr.aws",
+        "nvcr.io"
+      ],
+      "trusted_dockerhub_orgs": [
+        "nvidia",
+        "pytorch",
+        "rayproject",
+        "tensorflow",
+        "huggingface",
+        "amazon",
+        "bitnami",
+        "lmsysorg",
+        "gco"
+      ],
+      "manifest_security_policy": {
+        "block_privileged": true,
+        "block_privilege_escalation": true,
+        "block_host_network": true,
+        "block_host_pid": true,
+        "block_host_ipc": true,
+        "block_host_path": true,
+        "block_added_capabilities": true,
+        "block_run_as_root": false
+      },
+      "allowed_kinds": ["Job", "CronJob", "Deployment", "StatefulSet", "DaemonSet", "Service", "ConfigMap", "Pod"]
+    },
+    "inference_monitor": {
+      "reconcile_interval": 15,
+      "unhealthy_threshold_seconds": 300
+    },
+    "webhook_security": {
+      "allowed_domains": []
+    },
+    "waf": {
+      "per_ip_rate_limit": 100
+    },
+    "s3_access_logs": {
+      "retention_days": 90
+    },
+    "drift_detection": {
+      "enabled": true,
+      "schedule_hours": 24
+    },
+    "mcp_server": {
+      "enabled": true,
+      "role_arn": ""
+    },
+    "tags": {
+      "Project": "GCO",
+      "Environment": "production",
+      "Owner": "platform-team"
+    },
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/core:target": "aws-cdk-lib",
+    "aws-cdk:enableDiffNoFail": true,
+    "@aws-cdk/core:stackRelativeExports": true,
+    "@aws-cdk/aws-rds:lowercaseDbIdentifier": true,
+    "@aws-cdk/aws-lambda:recognizeVersionProps": true,
+    "@aws-cdk/aws-cloudfront:defaultSecurityPolicyTLSv1.2_2021": true,
+    "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
+    "@aws-cdk/aws-codepipeline:crossAccountKeyAliasStackSafeResourceName": true,
+    "@aws-cdk/aws-s3:createDefaultLoggingPolicy": true,
+    "@aws-cdk/aws-sns-subscriptions:restrictSqsDescryption": true,
+    "@aws-cdk/aws-apigateway:disableCloudWatchRole": true,
+    "@aws-cdk/core:enablePartitionLiterals": true,
+    "@aws-cdk/aws-events:eventsTargetQueueSameAccount": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/aws-apigateway:requestValidatorUniqueId": true,
+    "@aws-cdk/aws-kms:aliasNameRef": true,
+    "@aws-cdk/aws-autoscaling:generateLaunchTemplateInsteadOfLaunchConfig": true,
+    "@aws-cdk/core:includePrefixInUniqueNameGeneration": true,
+    "@aws-cdk/aws-efs:denyAnonymousAccess": true,
+    "@aws-cdk/aws-opensearchservice:enableLogging": true,
+    "@aws-cdk/aws-s3:serverAccessLogsUseBucketPolicy": true,
+    "@aws-cdk/customresources:installLatestAwsSdkDefault": false,
+    "@aws-cdk/aws-rds:databaseProxyUniqueResourceName": true,
+    "@aws-cdk/aws-codedeploy:removeAlarmsFromDeploymentGroup": true,
+    "@aws-cdk/aws-apigateway:authorizerChangeDeploymentLogicalId": true,
+    "@aws-cdk/aws-ec2:launchTemplateDefaultUserData": true,
+    "@aws-cdk/aws-stepfunctions-tasks:enableLogging": true,
+    "@aws-cdk/aws-ec2:restrictDefaultSecurityGroup": true
+  }
+}

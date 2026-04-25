@@ -1,0 +1,318 @@
+# =============================================================================
+# lint.yml — Linting & static style checks
+# =============================================================================
+#
+# Maps to the "Linting" row of the README badge table.
+#
+# Triggers:
+#   - push to main
+#   - pull_request
+#   - workflow_dispatch (manual)
+#
+# Jobs (display names are colon-delimited, job IDs are hyphen-delimited):
+#   - lint:actionlint:workflows   — validates .github/workflows/*.yml
+#   - lint:black:format           — black --check
+#   - lint:flake8:python          — flake8 across gco/, cli/, tests/, lambda/, scripts/
+#   - lint:hadolint:dockerfile    — hadolint on every Dockerfile
+#   - lint:isort:imports          — isort --check-only
+#   - lint:mypy:strict            — mypy on gco/ (excluding stacks), cli/, mcp/, scripts/
+#   - lint:mypy:stacks            — mypy on gco/stacks/ + app.py (requires CDK)
+#   - lint:mypy:lambda            — mypy on each lambda/ subdir independently
+#   - lint:ruff:python            — ruff check
+#   - lint:shellcheck:shell       — shellcheck -x on every .sh file
+#   - lint:yamllint:yaml          — yamllint on the repo per .yamllint.yml
+#
+# Every job has `timeout-minutes` to cap runaway runs.
+# Concurrency control cancels in-flight runs when a newer commit lands on the
+# same ref (safe for CI, off for release.yml).
+#
+# =============================================================================
+
+name: Linting
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint-actionlint-workflows:
+    name: "lint:actionlint:workflows"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install actionlint
+        # Invoke the upstream install script directly — the third-party
+        # `raven-actions/actionlint` action had compatibility issues with
+        # the current `@actions/tool-cache` runtime.
+        run: |
+          set -euo pipefail
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -version
+      - name: Run actionlint
+        run: ./actionlint -color
+
+  lint-black-format:
+    name: "lint:black:format"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install lint dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[lint]"
+      - name: Run black --check
+        run: |
+          black --check --diff \
+            --exclude '/(\.venv|cdk\.out|lambda/kubectl-applier-simple-build|lambda/helm-installer-build)/' \
+            gco/ cli/ tests/ lambda/ scripts/
+
+  lint-isort-imports:
+    name: "lint:isort:imports"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install lint dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[lint]"
+      - name: Run isort --check-only
+        run: |
+          isort --check-only --diff \
+            --skip-glob 'cdk.out*' \
+            --skip-glob 'lambda/kubectl-applier-simple-build*' \
+            --skip-glob 'lambda/helm-installer-build*' \
+            gco/ cli/ tests/ lambda/ scripts/
+
+  lint-ruff-python:
+    name: "lint:ruff:python"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install lint dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[lint]"
+      - name: Run ruff
+        run: |
+          ruff check gco/ cli/ tests/ \
+            --exclude lambda/kubectl-applier-simple-build \
+            --exclude lambda/helm-installer-build
+
+  lint-flake8-python:
+    name: "lint:flake8:python"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install lint dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[lint]"
+      - name: Run flake8
+        run: |
+          flake8 gco/ cli/ tests/ lambda/ scripts/ \
+            --exclude lambda/kubectl-applier-simple-build,lambda/helm-installer-build
+
+  lint-yamllint-yaml:
+    name: "lint:yamllint:yaml"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install yamllint
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[lint]"
+      - name: Run yamllint
+        run: yamllint .
+
+  lint-hadolint-dockerfile:
+    name: "lint:hadolint:dockerfile"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run hadolint on every Dockerfile
+        # DL3008 (apt pin) and DL3013 (pip pin) are ignored to match the
+        # policy inherited from the GitLab pipeline. Revisit once all base
+        # images switch to pip-tools-style pinning.
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD":/repo -w /repo \
+            hadolint/hadolint:v2.14.0-debian \
+            bash -c '
+              set -euo pipefail
+              FOUND=0
+              while IFS= read -r df; do
+                FOUND=1
+                echo "=== Linting $df ==="
+                hadolint "$df" --ignore DL3008 --ignore DL3013
+              done < <(find . -type f \( -name "Dockerfile*" -o -name "*dockerfile" -o -name "*Dockerfile" \) \
+                -not -path "./.git/*" \
+                -not -path "./cdk.out/*" \
+                -not -path "./.venv/*" \
+                -not -path "./lambda/kubectl-applier-simple-build/*" \
+                -not -path "./lambda/helm-installer-build/*")
+              if [ "$FOUND" -eq 0 ]; then
+                echo "No Dockerfiles found — failing to avoid silent pass."
+                exit 1
+              fi
+            '
+
+  lint-shellcheck-shell:
+    name: "lint:shellcheck:shell"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run shellcheck
+        # -x follows source directives so sourced files are resolved.
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD":/repo -w /repo \
+            koalaman/shellcheck-alpine:v0.11.0 \
+            sh -c '
+              set -eu
+              FOUND=0
+              find . -name "*.sh" \
+                -not -path "./.git/*" \
+                -not -path "./cdk.out/*" \
+                -not -path "./.venv/*" \
+                -not -path "./lambda/kubectl-applier-simple-build/*" \
+                -not -path "./lambda/helm-installer-build/*" \
+                > /tmp/shellfiles
+              while IFS= read -r sh; do
+                FOUND=1
+                echo "=== Checking $sh ==="
+                shellcheck -x "$sh"
+              done < /tmp/shellfiles
+              if [ "$FOUND" -eq 0 ]; then
+                echo "No shell scripts found — failing to avoid silent pass."
+                exit 1
+              fi
+            '
+
+  lint-mypy-strict:
+    name: "lint:mypy:strict"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install typecheck dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Install full project + mcp extras so mypy can resolve real types
+          # for boto3, kubernetes, fastapi, click, fastmcp. CDK is intentionally
+          # NOT installed here — gco/stacks/ is checked in lint-mypy-stacks.
+          pip install -e ".[typecheck,mcp]"
+      - name: Cache mypy results
+        uses: actions/cache@v5
+        with:
+          path: .mypy_cache
+          key: mypy-strict-${{ hashFiles('pyproject.toml', 'requirements-lock.txt') }}
+      - name: Run mypy
+        run: mypy gco/ cli/ mcp/ scripts/ --exclude 'gco/stacks/'
+
+  lint-mypy-stacks:
+    name: "lint:mypy:stacks"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install typecheck + cdk dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[cdk,typecheck]"
+      - name: Cache mypy results
+        uses: actions/cache@v5
+        with:
+          path: .mypy_cache
+          key: mypy-stacks-${{ hashFiles('pyproject.toml', 'requirements-lock.txt') }}
+      - name: Run mypy on stacks + app.py
+        run: mypy gco/stacks/ app.py
+
+  lint-mypy-lambda:
+    name: "lint:mypy:lambda"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install typecheck dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[typecheck]"
+      - name: Cache mypy results
+        uses: actions/cache@v5
+        with:
+          path: .mypy_cache
+          key: mypy-lambda-${{ hashFiles('pyproject.toml', 'requirements-lock.txt') }}
+      - name: Run mypy on each Lambda dir
+        # Each Lambda ships its own handler.py; check them one at a time so
+        # mypy's module resolver doesn't treat them as duplicates.
+        run: |
+          set -uo pipefail
+          FAILED=0
+          for d in lambda/alb-header-validator lambda/api-gateway-proxy \
+                   lambda/cross-region-aggregator lambda/drift-detection \
+                   lambda/ga-registration lambda/helm-installer \
+                   lambda/kubectl-applier-simple lambda/proxy-shared \
+                   lambda/regional-api-proxy lambda/secret-rotation; do
+            echo "=== typecheck: $d ==="
+            if ! mypy "$d"; then
+              FAILED=1
+            fi
+          done
+          exit "$FAILED"

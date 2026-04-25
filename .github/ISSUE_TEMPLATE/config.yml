@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/awslabs/global-capacity-orchestrator-on-aws/tree/main/docs
+    about: Check the docs first — especially TROUBLESHOOTING.md and RUNBOOKS.md
+  - name: Quick Start
+    url: https://github.com/awslabs/global-capacity-orchestrator-on-aws/blob/main/QUICKSTART.md
+    about: Step-by-step setup guide

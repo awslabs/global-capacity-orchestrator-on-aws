@@ -1,0 +1,60 @@
+# Resource governance for the gco-jobs namespace.
+#
+# ResourceQuota caps the total aggregate requests that can be reserved by all
+# pods in the namespace, giving a hard upper bound on the cluster capacity that
+# user-submitted jobs can consume in a single namespace.
+#
+# LimitRange provides per-container defaults (so users don't have to specify
+# requests on every container) and caps the maximum size a single container
+# can request, preventing a single mis-configured pod from consuming the
+# entire namespace quota.
+#
+# All values are configurable via the `resource_quota` context in cdk.json
+# and substituted by the kubectl-applier Lambda at deploy time.
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gco-jobs-quota
+  namespace: gco-jobs
+  labels:
+    project: gco
+spec:
+  hard:
+    requests.cpu: "{{QUOTA_MAX_CPU}}"
+    requests.memory: "{{QUOTA_MAX_MEMORY}}"
+    requests.nvidia.com/gpu: "{{QUOTA_MAX_GPU}}"
+    pods: "{{QUOTA_MAX_PODS}}"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: gco-jobs-limits
+  namespace: gco-jobs
+  labels:
+    project: gco
+spec:
+  limits:
+    - type: Container
+      # ``default`` / ``defaultRequest`` apply to containers that do not set
+      # requests/limits. We explicitly set ``nvidia.com/gpu: "0"`` in both
+      # because Kubernetes auto-propagates ``max`` to ``default`` when
+      # ``default`` is unspecified for the same resource. Without the
+      # explicit zero, a multi-container control-plane pod (e.g. the Slinky
+      # Slurm controller with slurmctld + log sidecar + OTel sidecar) picks
+      # up the max as an implicit request on every container and demands a
+      # single node with N × max GPUs — unsatisfiable on any g4dn/g5/g6/p3/
+      # p4/p5 instance. Pods that actually need GPUs must request them
+      # explicitly; ``max`` still caps each container.
+      default:
+        cpu: "1"
+        memory: "4Gi"
+        nvidia.com/gpu: "0"
+      defaultRequest:
+        cpu: "100m"
+        memory: "256Mi"
+        nvidia.com/gpu: "0"
+      max:
+        cpu: "{{LIMIT_MAX_CPU}}"
+        memory: "{{LIMIT_MAX_MEMORY}}"
+        nvidia.com/gpu: "{{LIMIT_MAX_GPU}}"

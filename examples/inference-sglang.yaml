@@ -1,0 +1,115 @@
+# SGLang Inference Endpoint Example
+# Uses Phi-3.5-mini-instruct (ungated, no HF token required)
+#
+# Deploy with: gco inference deploy sglang-phi3 \
+#   -i lmsysorg/sglang:v0.5.10 \
+#   --gpu-count 1 --replicas 1 \
+#   -e MODEL=microsoft/Phi-3.5-mini-instruct
+#
+# Deploy with autoscaling:
+#   gco inference deploy sglang-phi3 \
+#     -i lmsysorg/sglang:v0.5.10 \
+#     --gpu-count 1 --replicas 2 \
+#     --min-replicas 1 --max-replicas 8 \
+#     --autoscale-metric cpu:70 --autoscale-metric memory:80 \
+#     -e MODEL=microsoft/Phi-3.5-mini-instruct
+#
+# Or deploy this manifest directly (single region):
+#   gco jobs submit-direct examples/inference-sglang.yaml -r us-east-1
+#
+# Test the endpoint (OpenAI-compatible):
+#   curl https://<API-Gateway-endpoint>/inference/sglang-phi3/v1/completions \
+#     -H "Content-Type: application/json" \
+#     -d '{"model": "microsoft/Phi-3.5-mini-instruct", "prompt": "Hello", "max_tokens": 50}'
+#
+# For gated models (e.g. Llama), add HF_TOKEN env var:
+#   -e HF_TOKEN=hf_your_token_here
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sglang-phi3
+  namespace: gco-inference
+  labels:
+    app: sglang-phi3
+    project: gco
+    gco.io/type: inference
+    framework: sglang
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sglang-phi3
+  template:
+    metadata:
+      labels:
+        app: sglang-phi3
+        project: gco
+        gco.io/type: inference
+    spec:
+      containers:
+      - name: sglang
+        image: lmsysorg/sglang:v0.5.10
+        securityContext:
+          allowPrivilegeEscalation: false
+        ports:
+        - containerPort: 30000
+        env:
+        - name: MODEL
+          value: "microsoft/Phi-3.5-mini-instruct"
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          python3 -m sglang.launch_server \
+            --model-path $MODEL \
+            --port 30000 \
+            --host 0.0.0.0 \
+            --attention-backend triton \
+            --disable-cuda-graph
+        resources:
+          requests:
+            cpu: "4"
+            memory: "16Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "8"
+            memory: "32Gi"
+            nvidia.com/gpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 30000
+          initialDelaySeconds: 300
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 30000
+          initialDelaySeconds: 120
+          periodSeconds: 10
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+      nodeSelector:
+        eks.amazonaws.com/instance-gpu-manufacturer: nvidia
+        eks.amazonaws.com/instance-family: g5
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sglang-phi3
+  namespace: gco-inference
+  labels:
+    app: sglang-phi3
+    project: gco
+spec:
+  selector:
+    app: sglang-phi3
+  ports:
+  - port: 80
+    targetPort: 30000
+    protocol: TCP
+  type: ClusterIP

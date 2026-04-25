@@ -1,0 +1,925 @@
+"""Inference endpoint commands."""
+
+import sys
+from typing import Any
+
+import click
+
+from ..config import GCOConfig
+from ..output import get_output_formatter
+
+pass_config = click.make_pass_decorator(GCOConfig, ensure=True)
+
+
+@click.group()
+@pass_config
+def inference(config: Any) -> None:
+    """Manage multi-region inference endpoints."""
+    pass
+
+
+@inference.command("deploy")
+@click.argument("endpoint_name")
+@click.option("--image", "-i", required=True, help="Container image (e.g. vllm/vllm-openai:v0.8.0)")
+@click.option(
+    "--region",
+    "-r",
+    multiple=True,
+    help="Target region(s). Repeatable. Default: all deployed regions",
+)
+@click.option("--replicas", default=1, help="Replicas per region (default: 1)")
+@click.option("--gpu-count", default=1, help="GPUs per replica (default: 1)")
+@click.option("--gpu-type", help="GPU instance type hint (e.g. g5.xlarge)")
+@click.option("--port", default=8000, help="Container port (default: 8000)")
+@click.option("--model-path", help="EFS path for model weights")
+@click.option(
+    "--model-source",
+    help="S3 URI for model weights (e.g. s3://bucket/models/llama3). "
+    "Auto-synced to each region via init container.",
+)
+@click.option("--health-path", default="/health", help="Health check path (default: /health)")
+@click.option("--env", "-e", multiple=True, help="Environment variable (KEY=VALUE). Repeatable")
+@click.option("--namespace", "-n", default="gco-inference", help="Kubernetes namespace")
+@click.option("--label", "-l", multiple=True, help="Label (key=value). Repeatable")
+@click.option("--min-replicas", type=int, default=None, help="Autoscaling: minimum replicas")
+@click.option("--max-replicas", type=int, default=None, help="Autoscaling: maximum replicas")
+@click.option(
+    "--autoscale-metric",
+    multiple=True,
+    help="Autoscaling metric (cpu:70, memory:80, gpu:60). Repeatable. Enables autoscaling.",
+)
+@click.option(
+    "--capacity-type",
+    type=click.Choice(["on-demand", "spot"]),
+    default=None,
+    help="Node capacity type. 'spot' uses cheaper preemptible instances.",
+)
+@click.option(
+    "--extra-args",
+    multiple=True,
+    help="Extra arguments passed to the container (e.g. '--kv-transfer-config {...}'). Repeatable.",
+)
+@click.option(
+    "--accelerator",
+    type=click.Choice(["nvidia", "neuron"]),
+    default="nvidia",
+    help="Accelerator type: 'nvidia' for GPU instances (default), 'neuron' for Trainium/Inferentia.",
+)
+@click.option(
+    "--node-selector",
+    multiple=True,
+    help="Node selector (key=value). Repeatable. E.g. --node-selector eks.amazonaws.com/instance-family=inf2",
+)
+@pass_config
+def inference_deploy(
+    config: Any,
+    endpoint_name: Any,
+    image: Any,
+    region: Any,
+    replicas: Any,
+    gpu_count: Any,
+    gpu_type: Any,
+    port: Any,
+    model_path: Any,
+    model_source: Any,
+    health_path: Any,
+    env: Any,
+    namespace: Any,
+    label: Any,
+    min_replicas: Any,
+    max_replicas: Any,
+    autoscale_metric: Any,
+    capacity_type: Any,
+    extra_args: Any,
+    accelerator: Any,
+    node_selector: Any,
+) -> None:
+    """Deploy an inference endpoint to one or more regions.
+
+    The endpoint is registered in DynamoDB and the inference_monitor
+    in each target region creates the Kubernetes resources automatically.
+
+    Examples:
+        gco inference deploy my-llm -i vllm/vllm-openai:v0.8.0
+
+        gco inference deploy llama3-70b \\
+            -i vllm/vllm-openai:v0.8.0 \\
+            -r us-east-1 -r eu-west-1 \\
+            --replicas 2 --gpu-count 4 \\
+            --model-path /mnt/gco/models/llama3-70b \\
+            -e MODEL_NAME=meta-llama/Llama-3-70B
+    """
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    # Parse env vars and labels
+    env_dict = {}
+    for e_var in env:
+        if "=" in e_var:
+            k, v = e_var.split("=", 1)
+            env_dict[k] = v
+
+    labels_dict = {}
+    for lbl in label:
+        if "=" in lbl:
+            k, v = lbl.split("=", 1)
+            labels_dict[k] = v
+
+    node_selector_dict = {}
+    for ns in node_selector:
+        if "=" in ns:
+            k, v = ns.split("=", 1)
+            node_selector_dict[k] = v
+
+    # Build autoscaling config
+    autoscaling_config = None
+    if autoscale_metric:
+        metrics = []
+        for m in autoscale_metric:
+            if ":" in m:
+                mtype, mtarget = m.split(":", 1)
+                metrics.append({"type": mtype, "target": int(mtarget)})
+            else:
+                metrics.append({"type": m, "target": 70})
+        autoscaling_config = {
+            "enabled": True,
+            "min_replicas": min_replicas or 1,
+            "max_replicas": max_replicas or 10,
+            "metrics": metrics,
+        }
+
+    try:
+        manager = get_inference_manager(config)
+        result = manager.deploy(
+            endpoint_name=endpoint_name,
+            image=image,
+            target_regions=list(region) if region else None,
+            replicas=replicas,
+            gpu_count=gpu_count,
+            gpu_type=gpu_type,
+            port=port,
+            model_path=model_path,
+            model_source=model_source,
+            health_check_path=health_path,
+            env=env_dict if env_dict else None,
+            namespace=namespace,
+            labels=labels_dict if labels_dict else None,
+            autoscaling=autoscaling_config,
+            capacity_type=capacity_type,
+            extra_args=list(extra_args) if extra_args else None,
+            accelerator=accelerator,
+            node_selector=node_selector_dict if node_selector_dict else None,
+        )
+
+        formatter.print_success(f"Endpoint '{endpoint_name}' registered for deployment")
+        regions_str = ", ".join(result.get("target_regions", []))
+        formatter.print_info(f"Target regions: {regions_str}")
+        formatter.print_info(f"Ingress path: {result.get('ingress_path', '')}")
+        formatter.print_info(
+            "The inference_monitor in each region will create the resources. "
+            "Use 'gco inference status' to track progress."
+        )
+
+        # Warn if deploying to a subset of regions
+        if region:
+            from ..aws_client import get_aws_client as _get_client
+
+            all_stacks = _get_client(config).discover_regional_stacks()
+            all_regions = set(all_stacks.keys())
+            target_set = set(result.get("target_regions", []))
+            missing = all_regions - target_set
+            if missing:
+                formatter.print_warning(
+                    f"Endpoint is NOT deployed to: {', '.join(sorted(missing))}. "
+                    "Global Accelerator may route users to those regions where "
+                    "the endpoint won't exist. Consider deploying to all regions "
+                    "(omit -r) for consistent global routing."
+                )
+
+        if config.output_format != "table":
+            formatter.print(result)
+
+    except ValueError as e:
+        formatter.print_error(str(e))
+        sys.exit(1)
+    except Exception as e:
+        formatter.print_error(f"Failed to deploy endpoint: {e}")
+        sys.exit(1)
+
+
+@inference.command("list")
+@click.option("--state", "-s", help="Filter by state (deploying, running, stopped, deleted)")
+@click.option("--region", "-r", help="Filter by target region")
+@pass_config
+def inference_list(config: Any, state: Any, region: Any) -> None:
+    """List inference endpoints.
+
+    Examples:
+        gco inference list
+        gco inference list --state running
+        gco inference list -r us-east-1
+    """
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    try:
+        manager = get_inference_manager(config)
+        endpoints = manager.list_endpoints(desired_state=state, region=region)
+
+        if config.output_format != "table":
+            formatter.print(endpoints)
+            return
+
+        if not endpoints:
+            formatter.print_info("No inference endpoints found")
+            return
+
+        print(f"\n  Inference Endpoints ({len(endpoints)} found)")
+        print("  " + "-" * 85)
+        print(f"  {'NAME':<25} {'STATE':<12} {'REGIONS':<25} {'REPLICAS':>8} {'IMAGE'}")
+        print("  " + "-" * 85)
+        for ep in endpoints:
+            name = ep.get("endpoint_name", "")[:24]
+            ep_state = ep.get("desired_state", "unknown")
+            regions = ", ".join(ep.get("target_regions", []))[:24]
+            spec = ep.get("spec", {})
+            replicas = spec.get("replicas", 1) if isinstance(spec, dict) else 1
+            image = spec.get("image", "")[:40] if isinstance(spec, dict) else ""
+            print(f"  {name:<25} {ep_state:<12} {regions:<25} {replicas:>8} {image}")
+
+        print()
+
+    except Exception as e:
+        formatter.print_error(f"Failed to list endpoints: {e}")
+        sys.exit(1)
+
+
+@inference.command("status")
+@click.argument("endpoint_name")
+@pass_config
+def inference_status(config: Any, endpoint_name: Any) -> None:
+    """Show detailed status of an inference endpoint.
+
+    Examples:
+        gco inference status my-llm
+    """
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    try:
+        manager = get_inference_manager(config)
+        endpoint = manager.get_endpoint(endpoint_name)
+
+        if not endpoint:
+            formatter.print_error(f"Endpoint '{endpoint_name}' not found")
+            sys.exit(1)
+
+        if config.output_format != "table":
+            formatter.print(endpoint)
+            return
+
+        spec = endpoint.get("spec", {})
+        print(f"\n  Endpoint: {endpoint_name}")
+        print("  " + "-" * 60)
+        print(f"  State:     {endpoint.get('desired_state', 'unknown')}")
+        print(f"  Image:     {spec.get('image', 'N/A')}")
+        print(f"  Replicas:  {spec.get('replicas', 1)}")
+        print(f"  GPUs:      {spec.get('gpu_count', 0)}")
+        print(f"  Port:      {spec.get('port', 8000)}")
+        print(f"  Path:      {endpoint.get('ingress_path', 'N/A')}")
+        print(f"  Namespace: {endpoint.get('namespace', 'N/A')}")
+        print(f"  Created:   {endpoint.get('created_at', 'N/A')}")
+
+        # Region status
+        region_status = endpoint.get("region_status", {})
+        if region_status:
+            print("\n  Region Status:")
+            print(f"  {'REGION':<18} {'STATE':<12} {'READY':>5} {'DESIRED':>7} {'LAST SYNC'}")
+            print("  " + "-" * 65)
+            for r, status in region_status.items():
+                if isinstance(status, dict):
+                    r_state = status.get("state", "unknown")
+                    ready = status.get("replicas_ready", 0)
+                    desired = status.get("replicas_desired", 0)
+                    last_sync = status.get("last_sync", "N/A")
+                    if last_sync and len(last_sync) > 19:
+                        last_sync = last_sync[:19]
+                    print(f"  {r:<18} {r_state:<12} {ready:>5} {desired:>7} {last_sync}")
+        else:
+            target_regions = endpoint.get("target_regions", [])
+            print(f"\n  Target regions: {', '.join(target_regions)}")
+            print("  (Waiting for inference_monitor to sync)")
+
+        print()
+
+    except Exception as e:
+        formatter.print_error(f"Failed to get endpoint status: {e}")
+        sys.exit(1)
+
+
+@inference.command("scale")
+@click.argument("endpoint_name")
+@click.option("--replicas", "-r", required=True, type=int, help="New replica count")
+@pass_config
+def inference_scale(config: Any, endpoint_name: Any, replicas: Any) -> None:
+    """Scale an inference endpoint.
+
+    Examples:
+        gco inference scale my-llm --replicas 4
+    """
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    try:
+        manager = get_inference_manager(config)
+        result = manager.scale(endpoint_name, replicas)
+
+        if result:
+            formatter.print_success(f"Endpoint '{endpoint_name}' scaled to {replicas} replicas")
+        else:
+            formatter.print_error(f"Endpoint '{endpoint_name}' not found")
+            sys.exit(1)
+
+    except Exception as e:
+        formatter.print_error(f"Failed to scale endpoint: {e}")
+        sys.exit(1)
+
+
+@inference.command("stop")
+@click.argument("endpoint_name")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@pass_config
+def inference_stop(config: Any, endpoint_name: Any, yes: Any) -> None:
+    """Stop an inference endpoint (scale to zero, keep config).
+
+    Examples:
+        gco inference stop my-llm -y
+    """
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    if not yes:
+        click.confirm(f"Stop endpoint '{endpoint_name}'?", abort=True)
+
+    try:
+        manager = get_inference_manager(config)
+        result = manager.stop(endpoint_name)
+
+        if result:
+            formatter.print_success(f"Endpoint '{endpoint_name}' marked for stop")
+        else:
+            formatter.print_error(f"Endpoint '{endpoint_name}' not found")
+            sys.exit(1)
+
+    except Exception as e:
+        formatter.print_error(f"Failed to stop endpoint: {e}")
+        sys.exit(1)
+
+
+@inference.command("start")
+@click.argument("endpoint_name")
+@pass_config
+def inference_start(config: Any, endpoint_name: Any) -> None:
+    """Start a stopped inference endpoint.
+
+    Examples:
+        gco inference start my-llm
+    """
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    try:
+        manager = get_inference_manager(config)
+        result = manager.start(endpoint_name)
+
+        if result:
+            formatter.print_success(f"Endpoint '{endpoint_name}' marked for start")
+        else:
+            formatter.print_error(f"Endpoint '{endpoint_name}' not found")
+            sys.exit(1)
+
+    except Exception as e:
+        formatter.print_error(f"Failed to start endpoint: {e}")
+        sys.exit(1)
+
+
+@inference.command("delete")
+@click.argument("endpoint_name")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@pass_config
+def inference_delete(config: Any, endpoint_name: Any, yes: Any) -> None:
+    """Delete an inference endpoint from all regions.
+
+    The inference_monitor in each region will clean up the K8s resources.
+
+    Examples:
+        gco inference delete my-llm -y
+    """
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    if not yes:
+        click.confirm(f"Delete endpoint '{endpoint_name}' from all regions?", abort=True)
+
+    try:
+        manager = get_inference_manager(config)
+        result = manager.delete(endpoint_name)
+
+        if result:
+            formatter.print_success(
+                f"Endpoint '{endpoint_name}' marked for deletion. "
+                "The inference_monitor will clean up resources in each region."
+            )
+        else:
+            formatter.print_error(f"Endpoint '{endpoint_name}' not found")
+            sys.exit(1)
+
+    except Exception as e:
+        formatter.print_error(f"Failed to delete endpoint: {e}")
+        sys.exit(1)
+
+
+@inference.command("update-image")
+@click.argument("endpoint_name")
+@click.option("--image", "-i", required=True, help="New container image")
+@pass_config
+def inference_update_image(config: Any, endpoint_name: Any, image: Any) -> None:
+    """Update the container image for an inference endpoint.
+
+    Triggers a rolling update across all target regions.
+
+    Examples:
+        gco inference update-image my-llm -i vllm/vllm-openai:v0.9.0
+    """
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    try:
+        manager = get_inference_manager(config)
+        result = manager.update_image(endpoint_name, image)
+
+        if result:
+            formatter.print_success(f"Endpoint '{endpoint_name}' image updated to {image}")
+            formatter.print_info("Rolling update will be applied by inference_monitor")
+        else:
+            formatter.print_error(f"Endpoint '{endpoint_name}' not found")
+            sys.exit(1)
+
+    except Exception as e:
+        formatter.print_error(f"Failed to update image: {e}")
+        sys.exit(1)
+
+
+@inference.command("invoke")
+@click.argument("endpoint_name")
+@click.option("--prompt", "-p", help="Text prompt to send")
+@click.option("--data", "-d", help="Raw JSON body to send")
+@click.option(
+    "--path", "api_path", default=None, help="API sub-path (default: auto-detect from framework)"
+)
+@click.option("--region", "-r", help="Target region for the request")
+@click.option(
+    "--max-tokens", type=int, default=100, help="Maximum tokens to generate (default: 100)"
+)
+@click.option("--stream/--no-stream", default=False, help="Stream the response")
+@pass_config
+def inference_invoke(
+    config: Any,
+    endpoint_name: Any,
+    prompt: Any,
+    data: Any,
+    api_path: Any,
+    region: Any,
+    max_tokens: Any,
+    stream: Any,
+) -> None:
+    """Send a request to an inference endpoint and print the response.
+
+    Automatically discovers the endpoint's ingress path and routes the
+    request through the API Gateway with SigV4 authentication.
+
+    Examples:
+        gco inference invoke my-llm -p "What is GPU orchestration?"
+
+        gco inference invoke my-llm -d '{"prompt": "Hello", "max_tokens": 50}'
+
+        gco inference invoke my-llm -p "Explain K8s" --path /v1/completions
+    """
+    import json as _json
+
+    from ..aws_client import get_aws_client
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    if not prompt and not data:
+        formatter.print_error("Provide --prompt (-p) or --data (-d)")
+        sys.exit(1)
+
+    try:
+        # Look up the endpoint to get its ingress path and spec
+        manager = get_inference_manager(config)
+        endpoint = manager.get_endpoint(endpoint_name)
+        if not endpoint:
+            formatter.print_error(f"Endpoint '{endpoint_name}' not found")
+            sys.exit(1)
+
+        ingress_path = endpoint.get("ingress_path", f"/inference/{endpoint_name}")
+        spec = endpoint.get("spec", {})
+        image = spec.get("image", "") if isinstance(spec, dict) else ""
+
+        # Auto-detect the API sub-path based on the container image
+        if api_path is None:
+            if "vllm" in image:
+                api_path = "/v1/completions"
+            elif "text-generation-inference" in image or "tgi" in image:
+                api_path = "/generate"
+            elif "tritonserver" in image or "triton" in image:
+                api_path = "/v2/models"
+            else:
+                api_path = "/v1/completions"
+
+        full_path = f"{ingress_path}{api_path}"
+
+        # Build the request body
+        if data:
+            body_str = data
+        elif prompt:
+            # Build a sensible default body based on framework
+            if "generate" in api_path:
+                # TGI format
+                body_dict = {"inputs": prompt, "parameters": {"max_new_tokens": max_tokens}}
+            elif "/v2/" in api_path:
+                # Triton — just list models, prompt not used for this path
+                body_dict = {}
+            else:
+                # OpenAI-compatible (vLLM, etc.)
+                # Determine model name for OpenAI-compatible request
+                model_name = endpoint_name
+                if isinstance(spec, dict):
+                    # Check env vars first
+                    model_name = spec.get("env", {}).get("MODEL", model_name)
+                    # Check container args for --model (vLLM, etc.)
+                    args_list = spec.get("args") or []
+                    for i, arg in enumerate(args_list):
+                        if arg == "--model" and i + 1 < len(args_list):
+                            model_name = args_list[i + 1]
+                            break
+                    # Default for vLLM with no explicit model — auto-detect
+                    # by querying /v1/models on the running endpoint
+                    if model_name == endpoint_name and "vllm" in image:
+                        try:
+                            detect_client = get_aws_client(config)
+                            models_path = f"/inference/{endpoint_name}/v1/models"
+                            models_resp = detect_client.make_authenticated_request(
+                                method="GET",
+                                path=models_path,
+                                target_region=region,
+                            )
+                            if models_resp.ok:
+                                models_data = models_resp.json().get("data", [])
+                                if models_data:
+                                    model_name = models_data[0]["id"]
+                        except Exception:
+                            pass  # Fall through to endpoint_name as model
+                body_dict = {
+                    "model": model_name,
+                    "prompt": prompt,
+                    "max_tokens": max_tokens,
+                    "stream": stream,
+                }
+            body_str = _json.dumps(body_dict)
+
+        formatter.print_info(f"POST {full_path}")
+
+        # Make the authenticated request
+        client = get_aws_client(config)
+        response = client.make_authenticated_request(
+            method="POST" if body_str else "GET",
+            path=full_path,
+            body=_json.loads(body_str) if body_str else None,
+            target_region=region,
+        )
+
+        # Print the response
+        if response.ok:
+            try:
+                resp_json = response.json()
+                # Extract the generated text for common formats
+                text = None
+                if "choices" in resp_json:
+                    # OpenAI format
+                    choices = resp_json["choices"]
+                    if choices:
+                        text = choices[0].get("text") or choices[0].get("message", {}).get(
+                            "content"
+                        )
+                elif "generated_text" in resp_json:
+                    # TGI format
+                    text = resp_json["generated_text"]
+                elif isinstance(resp_json, list) and resp_json and "generated_text" in resp_json[0]:
+                    text = resp_json[0]["generated_text"]
+
+                if text and config.output_format == "table":
+                    print(f"\n{text.strip()}\n")
+                else:
+                    print(_json.dumps(resp_json, indent=2))
+            except _json.JSONDecodeError:
+                print(response.text)
+        else:
+            formatter.print_error(f"HTTP {response.status_code}: {response.text[:500]}")
+            sys.exit(1)
+
+    except Exception as e:
+        formatter.print_error(f"Failed to invoke endpoint: {e}")
+        sys.exit(1)
+
+
+@inference.command("canary")
+@click.argument("endpoint_name")
+@click.option("--image", "-i", required=True, help="New container image for canary")
+@click.option(
+    "--weight",
+    "-w",
+    default=10,
+    type=int,
+    help="Percentage of traffic to canary (1-99, default: 10)",
+)
+@click.option(
+    "--replicas", "-r", default=1, type=int, help="Number of canary replicas (default: 1)"
+)
+@pass_config
+def inference_canary(
+    config: Any, endpoint_name: Any, image: Any, weight: Any, replicas: Any
+) -> None:
+    """Start a canary deployment with a new image.
+
+    Routes a percentage of traffic to the canary while the primary
+    continues serving the rest. Use 'promote' to make the canary
+    the new primary, or 'rollback' to remove it.
+
+    Examples:
+        gco inference canary my-llm -i vllm/vllm-openai:v0.9.0 --weight 10
+        gco inference canary my-llm -i new-image:latest -w 25 -r 2
+    """
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    try:
+        manager = get_inference_manager(config)
+        result = manager.canary_deploy(endpoint_name, image, weight=weight, replicas=replicas)
+
+        if not result:
+            formatter.print_error(f"Endpoint '{endpoint_name}' not found")
+            sys.exit(1)
+
+        formatter.print_success(
+            f"Canary started: {weight}% traffic → {image} ({replicas} replica(s))"
+        )
+        formatter.print_info(f"Monitor with: gco inference status {endpoint_name}")
+        formatter.print_info(f"Promote with: gco inference promote {endpoint_name}")
+        formatter.print_info(f"Rollback with: gco inference rollback {endpoint_name}")
+
+    except ValueError as e:
+        formatter.print_error(str(e))
+        sys.exit(1)
+    except Exception as e:
+        formatter.print_error(f"Failed to start canary: {e}")
+        sys.exit(1)
+
+
+@inference.command("promote")
+@click.argument("endpoint_name")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@pass_config
+def inference_promote(config: Any, endpoint_name: Any, yes: Any) -> None:
+    """Promote the canary to primary.
+
+    Replaces the primary image with the canary image and removes
+    the canary deployment. All traffic goes to the new image.
+
+    Examples:
+        gco inference promote my-llm -y
+    """
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    try:
+        manager = get_inference_manager(config)
+        endpoint = manager.get_endpoint(endpoint_name)
+
+        if not endpoint:
+            formatter.print_error(f"Endpoint '{endpoint_name}' not found")
+            sys.exit(1)
+
+        canary = endpoint.get("spec", {}).get("canary")
+        if not canary:
+            formatter.print_error(f"Endpoint '{endpoint_name}' has no active canary")
+            sys.exit(1)
+
+        if not yes:
+            current_image = endpoint.get("spec", {}).get("image", "unknown")
+            click.echo(f"  Current primary: {current_image}")
+            click.echo(f"  Canary image:    {canary.get('image', 'unknown')}")
+            click.echo(f"  Canary weight:   {canary.get('weight', 0)}%")
+            if not click.confirm("  Promote canary to primary?"):
+                formatter.print_info("Cancelled")
+                return
+
+        result = manager.promote_canary(endpoint_name)
+        if result:
+            new_image = result.get("spec", {}).get("image", "unknown")
+            formatter.print_success(f"Promoted: all traffic now serving {new_image}")
+        else:
+            formatter.print_error("Promotion failed")
+            sys.exit(1)
+
+    except ValueError as e:
+        formatter.print_error(str(e))
+        sys.exit(1)
+    except Exception as e:
+        formatter.print_error(f"Failed to promote canary: {e}")
+        sys.exit(1)
+
+
+@inference.command("rollback")
+@click.argument("endpoint_name")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@pass_config
+def inference_rollback(config: Any, endpoint_name: Any, yes: Any) -> None:
+    """Remove the canary deployment, keeping the primary unchanged.
+
+    All traffic returns to the primary deployment.
+
+    Examples:
+        gco inference rollback my-llm -y
+    """
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    try:
+        manager = get_inference_manager(config)
+        endpoint = manager.get_endpoint(endpoint_name)
+
+        if not endpoint:
+            formatter.print_error(f"Endpoint '{endpoint_name}' not found")
+            sys.exit(1)
+
+        canary = endpoint.get("spec", {}).get("canary")
+        if not canary:
+            formatter.print_error(f"Endpoint '{endpoint_name}' has no active canary")
+            sys.exit(1)
+
+        if not yes:
+            click.echo(f"  Canary image:  {canary.get('image', 'unknown')}")
+            click.echo(f"  Canary weight: {canary.get('weight', 0)}%")
+            if not click.confirm("  Remove canary and restore full traffic to primary?"):
+                formatter.print_info("Cancelled")
+                return
+
+        result = manager.rollback_canary(endpoint_name)
+        if result:
+            primary_image = result.get("spec", {}).get("image", "unknown")
+            formatter.print_success(f"Rolled back: all traffic now serving {primary_image}")
+        else:
+            formatter.print_error("Rollback failed")
+            sys.exit(1)
+
+    except ValueError as e:
+        formatter.print_error(str(e))
+        sys.exit(1)
+    except Exception as e:
+        formatter.print_error(f"Failed to rollback canary: {e}")
+        sys.exit(1)
+
+
+@inference.command("health")
+@click.argument("endpoint_name")
+@click.option("--region", "-r", help="Target region to check")
+@pass_config
+def inference_health(config: Any, endpoint_name: Any, region: Any) -> None:
+    """Check if an inference endpoint is healthy and ready to serve.
+
+    Hits the endpoint's health check path and reports status and latency.
+
+    Examples:
+        gco inference health my-llm
+
+        gco inference health my-llm -r us-east-1
+    """
+    import json as _json
+    import time as _time
+
+    from ..aws_client import get_aws_client
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    try:
+        manager = get_inference_manager(config)
+        endpoint = manager.get_endpoint(endpoint_name)
+        if not endpoint:
+            formatter.print_error(f"Endpoint '{endpoint_name}' not found")
+            sys.exit(1)
+
+        ingress_path = endpoint.get("ingress_path", f"/inference/{endpoint_name}")
+        spec = endpoint.get("spec", {})
+        health_path = spec.get("health_path", "/health") if isinstance(spec, dict) else "/health"
+        full_path = f"{ingress_path}{health_path}"
+
+        client = get_aws_client(config)
+        start = _time.monotonic()
+        response = client.make_authenticated_request(
+            method="GET",
+            path=full_path,
+            target_region=region,
+        )
+        latency_ms = (_time.monotonic() - start) * 1000
+
+        result = {
+            "endpoint": endpoint_name,
+            "status": "healthy" if response.ok else "unhealthy",
+            "http_status": response.status_code,
+            "latency_ms": round(latency_ms, 1),
+            "path": full_path,
+        }
+
+        try:
+            result["body"] = response.json()
+        except Exception:
+            result["body"] = response.text[:200] if response.text else None
+
+        if config.output_format == "json":
+            print(_json.dumps(result, indent=2))
+        else:
+            status_icon = "✓" if response.ok else "✗"
+            formatter.print_info(
+                f"{status_icon} {endpoint_name}: {result['status']} "
+                f"(HTTP {response.status_code}, {result['latency_ms']}ms)"
+            )
+
+    except Exception as e:
+        formatter.print_error(f"Health check failed: {e}")
+        sys.exit(1)
+
+
+@inference.command("models")
+@click.argument("endpoint_name")
+@click.option("--region", "-r", help="Target region to query")
+@pass_config
+def inference_models(config: Any, endpoint_name: Any, region: Any) -> None:
+    """List models loaded on an inference endpoint.
+
+    Queries the /v1/models path (OpenAI-compatible) to discover loaded models.
+
+    Examples:
+        gco inference models my-llm
+    """
+    import json as _json
+
+    from ..aws_client import get_aws_client
+    from ..inference import get_inference_manager
+
+    formatter = get_output_formatter(config)
+
+    try:
+        manager = get_inference_manager(config)
+        endpoint = manager.get_endpoint(endpoint_name)
+        if not endpoint:
+            formatter.print_error(f"Endpoint '{endpoint_name}' not found")
+            sys.exit(1)
+
+        ingress_path = endpoint.get("ingress_path", f"/inference/{endpoint_name}")
+        full_path = f"{ingress_path}/v1/models"
+
+        client = get_aws_client(config)
+        response = client.make_authenticated_request(
+            method="GET",
+            path=full_path,
+            target_region=region,
+        )
+
+        if response.ok:
+            try:
+                resp_json = response.json()
+                print(_json.dumps(resp_json, indent=2))
+            except _json.JSONDecodeError:
+                print(response.text)
+        else:
+            formatter.print_error(f"HTTP {response.status_code}: {response.text[:500]}")
+            sys.exit(1)
+
+    except Exception as e:
+        formatter.print_error(f"Failed to list models: {e}")
+        sys.exit(1)

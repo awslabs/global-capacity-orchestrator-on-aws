@@ -1,0 +1,45 @@
+# GPU NodePool — x86_64 (g4dn, g5, g6, g6e, p3 with NVIDIA GPUs)
+# Covers current-gen (g5, g6) and previous-gen (g4dn, p3) for broad availability.
+# g6/g6e use L4 GPUs; p3 uses V100s. Supports both on-demand and spot.
+# See docs/CUSTOMIZATION.md to add instance families or adjust limits.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu-x86-pool
+spec:
+  template:
+    metadata:
+      labels:
+        workload-type: gpu
+        arch: x86_64
+        project: gco
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: default
+      requirements:
+        - key: "eks.amazonaws.com/instance-family"
+          operator: In
+          values: ["g4dn", "g5", "g6", "g6e", "p3"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"]
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand", "spot"]
+        - key: "eks.amazonaws.com/instance-gpu-manufacturer"
+          operator: In
+          values: ["nvidia"]
+      taints:
+        - key: nvidia.com/gpu
+          value: "true"
+          effect: NoSchedule
+  limits:
+    cpu: "1000"
+    memory: 4000Gi
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s
+    budgets:
+      - nodes: "10%"

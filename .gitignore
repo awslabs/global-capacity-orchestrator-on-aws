@@ -1,0 +1,91 @@
+# CDK
+*.swp
+*.tmp
+~$*
+cdk.out/
+cdk-diff.out
+.cdk.staging/
+cdk.context.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+.kiro/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Kubernetes
+kubeconfig*
+*.kubeconfig
+
+# AWS
+.aws/
+aws-exports.js
+
+# Temporary files
+tmp/
+temp/
+
+# Other
+test_plan.md
+BUG_FIXES_SUMMARY.md
+DEPLOYMENT_PLAN.md
+GPU_NODEPOOL_IMPLEMENTATION.md
+lambda/kubectl-applier-simple-build/
+lambda/helm-installer-build/
+.hypothesis/
+
+# Local-only security documents (never commit)
+SECURITY_RESPONSE.md
+THREAT_MODEL.md

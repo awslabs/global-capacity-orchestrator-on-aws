@@ -1,0 +1,67 @@
+# BATS Shell Script Tests
+
+[BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System) tests for GCO's shell scripts. These are primarily functional tests that execute real bash logic (parameter expansion, sed transforms, jq queries against cdk.json, JSON validation) rather than just checking for string presence.
+
+## Table of Contents
+
+- [What's Tested](#whats-tested)
+- [Running Locally](#running-locally)
+- [CI Integration](#ci-integration)
+- [Adding New Tests](#adding-new-tests)
+- [Test Design Philosophy](#test-design-philosophy)
+
+## What's Tested
+
+| Test File | Script Under Test | Tests | What It Covers |
+|---|---|---|---|
+| `test_live_demo.bats` | `demo/live_demo.sh` + `demo/lib_demo.sh` | 38 | Sources `lib_demo.sh` and calls real functions: `feature_status`, `detect_features`, `setup_pauses`, `setup_colors`, `is_assumed_role`, `extract_role_name`, `build_role_arn`. Also validates manifest YAML, namespace targeting, inference lifecycle, section completeness |
+| `test_lib_demo.bats` | `demo/lib_demo.sh` | 33 | Sources and calls the real helper functions used by the three `record_*.sh` scripts: `sanitize_cast` (AWS-account-ID redaction, in-place edit, graceful missing-file, `SKIP_SANITIZE` bypass), `strip_emoji_from_cast` (substitutes the five codepoints agg can't render with Menlo — `ℹ→i`, `✅→✓`, `✨→*`, `📦→[pkg]`, `🚀→>>` — plus in-place semantics, graceful missing-file, `SKIP_EMOJI_STRIP` bypass), `render_gif` (agg argv via function stub, positional-arg propagation, `DEMO_FONT_FAMILY` override), `DEMO_FONT_FAMILY_DEFAULT` (Menlo-first monospace chain that deliberately omits colour-emoji fonts agg can't use), `wait_for_job` (always returns 0 so `set -e` callers don't die on slow jobs), plus regression guards for the ARN helpers shared with `setup-cluster-access.sh` |
+| `test_setup_cluster_access.bats` | `scripts/setup-cluster-access.sh` | 20 | Argument defaults and overrides, sources `lib_demo.sh` for ARN helpers (`is_assumed_role`, `extract_role_name`, `build_role_arn`), error handling patterns, AWS CLI call structure |
+| `test_aws_cli_examples.bats` | `docs/client-examples/aws_cli_examples.sh` | 17 | API region detection with fallback chain, URL trailing-slash stripping, JSON payload validation, trusted registry enforcement, SigV4 signing patterns |
+| `test_curl_sigv4_proxy.bats` | `docs/client-examples/curl_sigv4_proxy_example.sh` | 27 | URL host/path parsing pipeline, stack name construction, proxy lifecycle (port check, trap, kill), HTTP method coverage, Host header inclusion, auth failure testing, temp file cleanup |
+| `test_record_demo.bats` | `demo/record_demo.sh` | 40 | Configuration defaults and overrides, preflight checks (asciinema, agg, jq, gco, kubectl, cluster connectivity, disk space), wrapper generation, asciinema invocation, `sanitize_cast` → `strip_emoji_from_cast` → `render_gif` ordering, `SKIP_GIF` / `SKIP_SANITIZE` / `SKIP_EMOJI_STRIP` support, path resolution |
+| `test_record_deploy.bats` | `demo/record_deploy.sh` | 18 | Syntax validation, configuration defaults, preflight checks, asciinema invocation pattern, full `sanitize_cast` → `strip_emoji_from_cast` → `render_gif` pipeline ordering, `SKIP_SANITIZE` / `SKIP_EMOJI_STRIP` support, deploy command structure, output file paths |
+| `test_record_destroy.bats` | `demo/record_destroy.sh` | 18 | Syntax validation, configuration defaults, preflight checks, asciinema invocation pattern, full `sanitize_cast` → `strip_emoji_from_cast` → `render_gif` pipeline ordering, `SKIP_SANITIZE` / `SKIP_EMOJI_STRIP` support, destroy command structure, output file paths |
+
+Total: **211 tests** across 8 files.
+
+## Running Locally
+
+```bash
+# Install BATS (pick one)
+npm install -g bats          # via npm
+brew install bats-core       # via Homebrew (macOS)
+apt install bats             # via apt (Debian/Ubuntu)
+
+# Run all BATS tests
+bats tests/BATS/
+
+# Run a single test file
+bats tests/BATS/test_live_demo.bats
+
+# TAP output (verbose, shows each test name)
+bats tests/BATS/ --tap
+```
+
+## CI Integration
+
+BATS tests run on every push and PR as the `unit:bats:shell` job in `.github/workflows/unit-tests.yml`. They run in parallel with pytest, linting, and security scans — see the workflow file for the exact image pin and installed dependencies.
+
+## Adding New Tests
+
+1. Create a new `.bats` file in this directory (e.g., `test_my_script.bats`)
+2. Prefer functional tests — run bash logic, parse real files, validate output
+3. Use `command -v tool &>/dev/null || skip "tool not installed"` for optional dependencies
+4. Use `run bash -c '...'` for portable inline evaluation (avoids subshell variable issues)
+5. The CI job auto-discovers all `.bats` files in this directory
+
+## Test Design Philosophy
+
+These tests prioritize functional correctness over string matching:
+
+- **Parameter expansion**: Tests actually evaluate `${VAR:-default}` and `${VAR:+override}` patterns to verify defaults and overrides work
+- **sed/awk transforms**: Tests run the real sed commands from the scripts against sample input (e.g., assumed-role ARN parsing)
+- **jq queries**: Tests execute the actual jq expressions against the real `cdk.json` to verify feature detection
+- **JSON validation**: Tests pipe payloads through `jq -e` to verify structure, not just syntax
+- **YAML validation**: Tests use `python3 -c "import yaml; ..."` to parse manifests the same way Kubernetes would
+- **Portability**: All tests use `bash -c` for inline evaluation, avoid GNU-only flags (like `head -n -1`), and skip gracefully when optional tools are missing

@@ -1,0 +1,36 @@
+repos:
+  - repo: https://github.com/psf/black
+    rev: 26.3.1
+    hooks:
+      - id: black
+        args: [--line-length=100]
+        exclude: '/(\.venv|cdk\.out|lambda/kubectl-applier-simple-build|lambda/helm-installer-build)/'
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.7
+    hooks:
+      - id: ruff
+        args: [--fix, --exclude, lambda/kubectl-applier-simple-build, --exclude, lambda/helm-installer-build]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.19.1
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-requests, types-PyYAML]
+        args: [--ignore-missing-imports, --no-error-summary]
+        # gco/stacks/ excluded here because CDK type stubs aren't installed in pre-commit.
+        # Stacks are type-checked in CI via the lint:typecheck-stacks job.
+        files: ^(gco/(config|models|services)/|cli/)
+        pass_filenames: false
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.3.0
+    hooks:
+      - id: flake8
+        additional_dependencies: [flake8-bugbear, flake8-comprehensions]
+        exclude: '/(\.venv|cdk\.out|lambda/kubectl-applier-simple-build|lambda/helm-installer-build)/'

@@ -1,0 +1,7 @@
+# CODEOWNERS for the GCO repo.
+# Reviews from listed owners are requested automatically when their paths
+# change. To make this mandatory, also enable "Require review from Code
+# Owners" in branch protection for main.
+
+# Catch-all — Jacob owns the repo.
+*                           @Jmevorach

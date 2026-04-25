@@ -1,0 +1,198 @@
+# Example job that uses FSx for Lustre high-performance storage
+# FSx for Lustre provides high-throughput, low-latency storage ideal for:
+# - Large dataset processing (ML training data)
+# - High-performance computing (HPC) workloads
+# - Checkpoint/restart for long-running jobs
+#
+# Prerequisites:
+# 1. FSx must be enabled: gco stacks fsx enable
+# 2. Stack must be redeployed after enabling FSx
+#
+# The job:
+# 1. Mounts the FSx Lustre volume at /scratch
+# 2. Demonstrates high-throughput I/O operations
+# 3. Shows how to use FSx for ML training data and checkpoints
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fsx-lustre-example
+  namespace: gco-jobs
+  labels:
+    project: gco
+    example: fsx-lustre
+    storage-type: fsx
+spec:
+  ttlSecondsAfterFinished: 120  # Auto-delete 2 minutes after completion
+  template:
+    metadata:
+      labels:
+        project: gco
+        example: fsx-lustre
+        storage-type: fsx
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+      # FSx Lustre root is owned by root. Create the job directory
+      # with correct ownership before the non-root main container runs.
+      - name: init-scratch
+        image: python:3.14-slim
+        command: ["sh", "-c", "mkdir -p /scratch/fsx-lustre-example && chown 1000:1000 /scratch/fsx-lustre-example"]
+        securityContext:
+          runAsUser: 0
+          runAsNonRoot: false
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+            add:
+              - CHOWN
+              - DAC_OVERRIDE
+        volumeMounts:
+        - name: fsx-scratch
+          mountPath: /scratch
+      containers:
+      - name: worker
+        image: python:3.14-slim
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+        command:
+        - python
+        - -c
+        - |
+          import os
+          import json
+          import time
+          from datetime import datetime, timezone
+
+          print("=" * 60)
+          print("FSx for Lustre High-Performance Storage Demo")
+          print("=" * 60)
+
+          # Create job-specific directories
+          job_id = os.environ.get('JOB_ID', 'unknown')
+          scratch_dir = f'/scratch/{job_id}'
+          checkpoint_dir = f'{scratch_dir}/checkpoints'
+          data_dir = f'{scratch_dir}/data'
+
+          os.makedirs(checkpoint_dir, exist_ok=True)
+          os.makedirs(data_dir, exist_ok=True)
+
+          print(f"\nJob ID: {job_id}")
+          print(f"Scratch directory: {scratch_dir}")
+
+          # Simulate writing training data (high-throughput write)
+          print("\n[1/4] Simulating high-throughput data write...")
+          start_time = time.time()
+
+          # Write multiple data files to simulate dataset
+          total_bytes = 0
+          for i in range(10):
+              data_file = f'{data_dir}/batch_{i:03d}.bin'
+              # Write 1MB of data per file
+              data = b'X' * (1024 * 1024)
+              with open(data_file, 'wb') as f:
+                  f.write(data)
+              total_bytes += len(data)
+
+          write_time = time.time() - start_time
+          write_throughput = total_bytes / write_time / (1024 * 1024)
+          print(f"   Wrote {total_bytes / (1024*1024):.1f} MB in {write_time:.2f}s")
+          print(f"   Write throughput: {write_throughput:.1f} MB/s")
+
+          # Simulate checkpoint saving (critical for long-running jobs)
+          print("\n[2/4] Saving model checkpoint...")
+          checkpoint = {
+              'epoch': 10,
+              'model_state': 'simulated_weights_' + 'X' * 1000,
+              'optimizer_state': 'simulated_optimizer_' + 'Y' * 500,
+              'loss': 0.0234,
+              'accuracy': 0.9876,
+              'timestamp': datetime.now(timezone.utc).isoformat()
+          }
+
+          checkpoint_file = f'{checkpoint_dir}/checkpoint_epoch_010.json'
+          with open(checkpoint_file, 'w') as f:
+              json.dump(checkpoint, f, indent=2)
+          print(f"   Checkpoint saved to: {checkpoint_file}")
+
+          # Simulate reading data back (high-throughput read)
+          print("\n[3/4] Simulating high-throughput data read...")
+          start_time = time.time()
+
+          total_read = 0
+          for i in range(10):
+              data_file = f'{data_dir}/batch_{i:03d}.bin'
+              with open(data_file, 'rb') as f:
+                  data = f.read()
+              total_read += len(data)
+
+          read_time = time.time() - start_time
+          read_throughput = total_read / read_time / (1024 * 1024)
+          print(f"   Read {total_read / (1024*1024):.1f} MB in {read_time:.2f}s")
+          print(f"   Read throughput: {read_throughput:.1f} MB/s")
+
+          # Write final results
+          print("\n[4/4] Writing job results...")
+          results = {
+              'job_id': job_id,
+              'timestamp': datetime.now(timezone.utc).isoformat(),
+              'status': 'completed',
+              'storage_type': 'fsx-lustre',
+              'performance': {
+                  'write_throughput_mbps': round(write_throughput, 2),
+                  'read_throughput_mbps': round(read_throughput, 2),
+                  'total_data_mb': total_bytes / (1024 * 1024)
+              },
+              'checkpoints_saved': 1,
+              'data_files_processed': 10
+          }
+
+          results_file = f'{scratch_dir}/results.json'
+          with open(results_file, 'w') as f:
+              json.dump(results, f, indent=2)
+
+          print(f"   Results written to: {results_file}")
+
+          # Summary
+          print("\n" + "=" * 60)
+          print("Job Summary")
+          print("=" * 60)
+          print(json.dumps(results, indent=2))
+
+          # List scratch contents
+          print(f"\nContents of {scratch_dir}:")
+          for root, dirs, files in os.walk(scratch_dir):
+              level = root.replace(scratch_dir, '').count(os.sep)
+              indent = '  ' * level
+              print(f'{indent}{os.path.basename(root)}/')
+              subindent = '  ' * (level + 1)
+              for file in files:
+                  filepath = os.path.join(root, file)
+                  size = os.path.getsize(filepath)
+                  print(f'{subindent}{file} ({size} bytes)')
+
+        env:
+        - name: JOB_ID
+          value: "fsx-lustre-example"  # Hardcoded job name for consistent output directory
+        volumeMounts:
+        - name: fsx-scratch
+          mountPath: /scratch
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+      volumes:
+      - name: fsx-scratch
+        persistentVolumeClaim:
+          claimName: gco-fsx-storage

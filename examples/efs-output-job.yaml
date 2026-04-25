@@ -1,0 +1,106 @@
+# Example job that writes output to shared EFS storage
+# This demonstrates how to use the gco-shared-storage PVC for job outputs
+#
+# The job:
+# 1. Mounts the shared EFS volume at /outputs
+# 2. Creates a timestamped output file using the JOB_NAME (not pod name)
+# 3. Writes job results to the file
+#
+# Download results with: gco files download efs-output-example ./results -r <region>
+#
+# Other jobs or pods can read these outputs by mounting the same PVC
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: efs-output-example
+  namespace: gco-jobs
+  labels:
+    project: gco
+    example: efs-output
+spec:
+  ttlSecondsAfterFinished: 120  # Auto-delete 2 minutes after completion
+  template:
+    metadata:
+      labels:
+        project: gco
+        example: efs-output
+        # This label is used to get the job name (pod name has random suffix)
+        job-name: efs-output-example
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: worker
+        image: python:3.14-slim
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+        command:
+        - python
+        - -c
+        - |
+          import os
+          import json
+          from datetime import datetime, timezone
+
+          # Use JOB_NAME for consistent directory naming (not pod name which has random suffix)
+          # This allows: gco files download efs-output-example ./results
+          job_name = os.environ.get('JOB_NAME', 'unknown')
+          output_dir = f'/outputs/{job_name}'
+          os.makedirs(output_dir, exist_ok=True)
+
+          # Simulate some work and write results
+          results = {
+              'job_name': job_name,
+              'pod_name': os.environ.get('POD_NAME', 'unknown'),
+              'timestamp': datetime.now(timezone.utc).isoformat(),
+              'status': 'completed',
+              'metrics': {
+                  'processed_items': 1000,
+                  'accuracy': 0.95,
+                  'duration_seconds': 42
+              },
+              'output_files': ['model.pkl', 'predictions.csv']
+          }
+
+          # Write results to EFS
+          output_file = f'{output_dir}/results.json'
+          with open(output_file, 'w') as f:
+              json.dump(results, f, indent=2)
+
+          print(f'Results written to {output_file}')
+          print(json.dumps(results, indent=2))
+
+          # List all outputs in the shared storage
+          print('\nAll outputs in shared storage:')
+          for item in os.listdir('/outputs'):
+              print(f'  - {item}')
+        env:
+        # JOB_NAME uses the label we set, which is the actual job name
+        - name: JOB_NAME
+          value: "efs-output-example"
+        # POD_NAME is the full pod name with random suffix (for reference)
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        volumeMounts:
+        - name: shared-storage
+          mountPath: /outputs
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+      volumes:
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: gco-shared-storage
