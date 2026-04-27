@@ -837,6 +837,142 @@ class TestRegionalStackWithFsx:
             template.resource_count_is("AWS::FSx::FileSystem", 0)
 
 
+class TestAddonRoleUpdateDependencyChain:
+    """Regression guard for the IAM PassRole race on fresh deploys.
+
+    CDK's ``AwsCustomResource`` constructs reuse a singleton Lambda
+    (logical id prefix ``AWS679``) whose execution role accumulates
+    policy statements from every custom resource in the stack. On a
+    cold stack create, IAM propagation of one policy attachment can
+    race with the Lambda being invoked for a different custom resource.
+    ``PassRole`` is the most common failure surface because the IAM
+    authorization is checked inline by the subprocess, not cached.
+
+    The regional stack creates up to three ``updateAddon``-style custom
+    resources that share this singleton: one each for EFS CSI, FSx CSI
+    (only when FSx Lustre is enabled), and CloudWatch Observability.
+    The fix is to serialize them with CDK ``add_dependency`` so
+    CloudFormation emits explicit ``DependsOn`` edges and the Lambda
+    runs against a fully-propagated role each time.
+
+    These tests assert the dependency chain is present in the
+    synthesized template both with and without FSx enabled.
+    """
+
+    def _synth_regional_stack(self, fsx_enabled: bool, logical_name: str):
+        """Synthesize the regional stack with or without FSx enabled.
+
+        Returns the ``assertions.Template`` for inspection. Mirrors the
+        Docker + helm-installer patching pattern used elsewhere in this
+        file so no real Docker daemon is required.
+        """
+        from gco.stacks.regional_stack import GCORegionalStack
+
+        app = cdk.App()
+        config = MockConfigLoader(app, fsx_enabled=fsx_enabled)
+
+        with (
+            patch("gco.stacks.regional_stack.ecr_assets.DockerImageAsset") as mock_docker,
+            patch.object(
+                GCORegionalStack,
+                "_create_helm_installer_lambda",
+                TestRegionalStackSynthesis._mock_helm_installer,
+            ),
+        ):
+            mock_image = MagicMock()
+            mock_image.image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/test:latest"
+            mock_docker.return_value = mock_image
+
+            stack = GCORegionalStack(
+                app,
+                logical_name,
+                config=config,
+                region="us-east-1",
+                auth_secret_arn="arn:aws:secretsmanager:us-east-1:123456789012:secret:test-secret",  # nosec B106 - test fixture ARN with fake account ID, not a real secret
+                env=cdk.Environment(account="123456789012", region="us-east-1"),
+            )
+
+            return assertions.Template.from_stack(stack)
+
+    @staticmethod
+    def _depends_on_names(resource: dict) -> list[str]:
+        """Normalize a CFN ``DependsOn`` field to a list of logical ids."""
+        dep = resource.get("DependsOn", [])
+        if isinstance(dep, str):
+            return [dep]
+        return list(dep)
+
+    @staticmethod
+    def _find_by_logical_prefix(resources: dict, prefix: str) -> tuple[str, dict]:
+        """Return the first (logical_id, resource) pair whose id starts with ``prefix``."""
+        for lid, r in resources.items():
+            if lid.startswith(prefix):
+                return lid, r
+        raise AssertionError(
+            f"No resource found with logical id prefix {prefix!r}. "
+            f"Available logical ids: {sorted(resources)[:20]}..."
+        )
+
+    def test_cw_addon_update_depends_on_efs_addon_update_fsx_disabled(self):
+        """Without FSx, CloudWatch's update must depend on EFS's update.
+
+        Prevents the IAM propagation race between the two custom
+        resources that share the AWS679 singleton Lambda.
+        """
+        template = self._synth_regional_stack(
+            fsx_enabled=False, logical_name="test-dep-chain-no-fsx"
+        )
+        resources = template.find_resources("Custom::AWS")
+
+        cw_id, cw_resource = self._find_by_logical_prefix(resources, "UpdateCloudWatchAddonRole")
+        efs_id, _ = self._find_by_logical_prefix(resources, "UpdateEfsCsiAddonRole")
+
+        depends_on = self._depends_on_names(cw_resource)
+        assert efs_id in depends_on, (
+            f"CloudWatch update custom resource must depend on EFS update to "
+            f"serialize IAM propagation on the AWS679 singleton Lambda. "
+            f"Expected {efs_id!r} in CloudWatch's DependsOn; got: {depends_on}"
+        )
+
+    def test_cw_addon_update_has_no_fsx_dependency_when_fsx_disabled(self):
+        """When FSx is disabled, no UpdateFsxCsiAddonRole should exist at all."""
+        template = self._synth_regional_stack(
+            fsx_enabled=False, logical_name="test-dep-chain-no-fsx-guard"
+        )
+        resources = template.find_resources("Custom::AWS")
+
+        fsx_matches = [lid for lid in resources if lid.startswith("UpdateFsxCsiAddonRole")]
+        assert fsx_matches == [], (
+            f"No FSx CSI update custom resource should exist when FSx is "
+            f"disabled; found: {fsx_matches}"
+        )
+
+    def test_cw_addon_update_depends_on_fsx_addon_update_fsx_enabled(self):
+        """With FSx, CloudWatch's update must depend on both EFS and FSx updates.
+
+        All three share the AWS679 singleton Lambda, so the full chain
+        has to be serialized — not just the CloudWatch → EFS pair.
+        """
+        template = self._synth_regional_stack(fsx_enabled=True, logical_name="test-dep-chain-fsx")
+        resources = template.find_resources("Custom::AWS")
+
+        cw_id, cw_resource = self._find_by_logical_prefix(resources, "UpdateCloudWatchAddonRole")
+        efs_id, _ = self._find_by_logical_prefix(resources, "UpdateEfsCsiAddonRole")
+        fsx_id, _ = self._find_by_logical_prefix(resources, "UpdateFsxCsiAddonRole")
+
+        depends_on = self._depends_on_names(cw_resource)
+
+        assert efs_id in depends_on, (
+            f"CloudWatch update must still depend on EFS update when FSx is "
+            f"enabled. Expected {efs_id!r} in DependsOn; got: {depends_on}"
+        )
+        assert fsx_id in depends_on, (
+            f"CloudWatch update must depend on FSx update when FSx is enabled, "
+            f"otherwise FSx and CloudWatch race on the AWS679 singleton Lambda. "
+            f"Expected {fsx_id!r} in DependsOn; got: {depends_on}"
+        )
+
+
 class TestRegionalStackGetters:
     """Tests for RegionalStack getter methods."""
 
