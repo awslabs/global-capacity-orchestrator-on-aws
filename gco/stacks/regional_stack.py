@@ -189,6 +189,18 @@ class GCORegionalStack(Stack):
         # Create FSx for Lustre (if enabled) for high-performance storage
         self._create_fsx_lustre()
 
+        # FSx CSI's ``updateAddon`` custom resource is conditionally created
+        # inside ``_create_fsx_lustre`` above. Wire its serialization edge
+        # onto the CloudWatch update custom resource retroactively so all
+        # three updateAddon custom resources (EFS, FSx, CloudWatch) never
+        # race on the AWS679 singleton Lambda. EFS→CW is wired inside
+        # ``_create_cloudwatch_observability_addon`` because both are
+        # unconditional; FSx has to be wired here because it's optional
+        # and ordered after the CloudWatch addon is created.
+        fsx_role_update = getattr(self, "_fsx_csi_addon_role_update", None)
+        if fsx_role_update is not None:
+            self._cloudwatch_addon_role_update.node.add_dependency(fsx_role_update)
+
         # Create Valkey Serverless cache (if enabled) for K/V caching
         self._create_valkey_cache()
 
@@ -815,10 +827,18 @@ class GCORegionalStack(Stack):
         # Ensure the update happens after the add-on is created
         update_cw_addon.node.add_dependency(cw_addon)
         update_cw_addon.node.add_dependency(self.cloudwatch_role)
-        # Both UpdateEfsCsiAddonRole and UpdateCloudWatchAddonRole share the same
-        # singleton Lambda (AWS679). On first deploy, IAM propagation of one
-        # policy can race with the other custom resource's invocation. Serializing
-        # them ensures all policies are fully attached before the Lambda executes.
+        # UpdateEfsCsiAddonRole, UpdateFsxCsiAddonRole (optional, only when
+        # FSx Lustre is enabled), and UpdateCloudWatchAddonRole all share
+        # the same singleton Lambda (AWS679). On first deploy, IAM
+        # propagation of one policy can race with another custom resource's
+        # invocation. Serializing them ensures all policies are fully
+        # attached before the Lambda executes for any of them.
+        #
+        # Only EFS is wired here because FSx is created later in
+        # ``__init__`` (in ``_create_fsx_lustre``) and its attribute does
+        # not exist yet when this method runs. The FSx edge is wired
+        # retroactively after ``_create_fsx_lustre`` completes — see the
+        # ``add_dependency`` call immediately after it in ``__init__``.
         update_cw_addon.node.add_dependency(self._efs_csi_addon_role_update)
 
         # Expose the update-addon resource so _apply_kubernetes_manifests can
