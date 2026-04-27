@@ -13,7 +13,8 @@
 #   - unit:cli:smoke               — gco --help and all subcommand help pages
 #   - unit:fresh-install           — pip install from scratch, verify imports
 #   - unit:lockfile:freshness      — requirements-lock.txt matches pyproject.toml
-#   - unit:pytest:core             — pytest (coverage target 85%) + publish badges
+#   - unit:pages:deploy            — publish htmlcov/ (coverage report + badge) to Pages
+#   - unit:pytest:core             — pytest (coverage target 85%) + upload Pages artifact
 #   - unit:workload:imports        — K8s service import + circular-import detection
 #
 # =============================================================================
@@ -38,12 +39,6 @@ jobs:
     name: "unit:pytest:core"
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # `contents: write` is needed for the gh-pages publish step that pushes
-    # htmlcov/ + the shields.io endpoint JSON to the gh-pages branch. The
-    # step itself is gated on push-to-main, so PRs from forks still run
-    # with effective read-only access.
-    permissions:
-      contents: write
     # Several tests import Lambda handler modules that construct boto3
     # clients at module scope (lambda/api-gateway-proxy/proxy_utils.py,
     # lambda/cross-region-aggregator/handler.py). boto3 requires a region
@@ -91,23 +86,21 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
-          # coverage.json is written by coverage.py. Pull totals.percent_covered
-          # (float, 0-100), round to one decimal, and emit the shields.io
-          # endpoint badge schema so the README badge can link to a static
-          # JSON file on gh-pages without calling a third-party service.
+          # coverage.json is written by coverage.py. Pull totals.percent_covered,
+          # round to one decimal, and emit the shields.io endpoint badge
+          # schema so the README badge can link to a static JSON file on
+          # GitHub Pages without calling a third-party service.
           #
           # Color threshold matches the --cov-fail-under value (85%) from
           # the pytest step above: anything below that would have already
           # failed CI, so the badge only has two meaningful states.
           #
-          # The JSON write is done entirely in Python rather than handed
-          # back to the shell. An earlier version of this step used
-          # `PCT=$(python3 -c '...')` then interpolated $PCT into a shell
-          # `printf`, but Python's f-string syntax disallows backslash
-          # escapes inside `{ }` expressions, and the quoting gymnastics
-          # needed to pass `d["totals"]` through shell -> Python -> f-string
-          # without escaping were brittle. Heredoc + json.dump sidesteps
-          # the whole quoting stack.
+          # The JSON write is done entirely in Python (heredoc + json.dump)
+          # rather than piped back through shell — earlier attempts to
+          # interpolate a Python f-string result into shell printf ran into
+          # PEP 498's ban on backslash escapes inside f-string `{ }`
+          # expressions, producing a `SyntaxError: unexpected character
+          # after line continuation character` at CI time.
           python3 <<'PY'
           import json
           with open("coverage.json") as f:
@@ -123,14 +116,43 @@ jobs:
               json.dump(badge, f)
           print(f"Coverage: {pct:.1f}% ({color})")
           PY
-          cp htmlcov/coverage-badge.json coverage-badge.json
-      - name: Publish htmlcov to gh-pages
+      - name: Upload coverage report as Pages artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: peaceiris/actions-gh-pages@v4
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: htmlcov
-          commit_message: "Update coverage report for ${{ github.sha }}"
+          # htmlcov/ now contains index.html (coverage.py's report root)
+          # plus coverage-badge.json. GitHub Pages serves this at
+          # https://awslabs.github.io/<repo>/ once the deploy job below
+          # finalizes it. The README badge and report link both point
+          # under that base URL.
+          path: htmlcov
+
+  unit-pages-deploy:
+    name: "unit:pages:deploy"
+    # Deploys the htmlcov Pages artifact uploaded by unit-pytest-core to
+    # GitHub Pages. Runs only on push to main — PRs, manual dispatch,
+    # and forks all skip this job. Uses the official actions/deploy-pages
+    # flow rather than pushing to a gh-pages branch, so the Pages site
+    # is managed entirely through GitHub's built-in deployment system.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: unit-pytest-core
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # `pages: write` lets actions/deploy-pages finalize the deployment.
+    # `id-token: write` gives the action an OIDC token to authenticate
+    # with the Pages service — this is the documented requirement, not
+    # optional. `contents: read` is the default and sufficient since
+    # this job doesn't check out the repo.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 
   unit-bats-shell:
     name: "unit:bats:shell"
