@@ -151,6 +151,7 @@ class GCORegionalStack(Stack):
 
         # Get cluster configuration for this region
         cluster_config = self.config.get_cluster_config(region)
+        self.cluster_config = cluster_config
 
         # Create VPC for the EKS cluster
         self.vpc = ec2.Vpc(
@@ -180,6 +181,19 @@ class GCORegionalStack(Stack):
         # Create ECR repositories and build Docker images
         self._create_container_images()
 
+        # Pre-create the execution role shared by every ``cr.AwsCustomResource``
+        # in this stack. See ``_create_aws_custom_resource_role`` for the full
+        # rationale — in short, CDK's default behavior of auto-generating a
+        # Lambda role per ``AwsCustomResource`` (and then merging all the
+        # ``policy=`` statements onto it during deploy) triggers an IAM
+        # propagation race on cold creates. We sidestep the race by creating
+        # a single long-lived role up front and attaching policies to it as
+        # each consumer is built; every ``AwsCustomResource`` then passes
+        # ``role=self.aws_custom_resource_role`` instead of ``policy=``, so
+        # the singleton Lambda runs against a role whose inline policy has
+        # already replicated globally.
+        self._create_aws_custom_resource_role()
+
         # Create EKS cluster
         self._create_eks_cluster(cluster_config)
 
@@ -188,18 +202,6 @@ class GCORegionalStack(Stack):
 
         # Create FSx for Lustre (if enabled) for high-performance storage
         self._create_fsx_lustre()
-
-        # FSx CSI's ``updateAddon`` custom resource is conditionally created
-        # inside ``_create_fsx_lustre`` above. Wire its serialization edge
-        # onto the CloudWatch update custom resource retroactively so all
-        # three updateAddon custom resources (EFS, FSx, CloudWatch) never
-        # race on the AWS679 singleton Lambda. EFS→CW is wired inside
-        # ``_create_cloudwatch_observability_addon`` because both are
-        # unconditional; FSx has to be wired here because it's optional
-        # and ordered after the CloudWatch addon is created.
-        fsx_role_update = getattr(self, "_fsx_csi_addon_role_update", None)
-        if fsx_role_update is not None:
-            self._cloudwatch_addon_role_update.node.add_dependency(fsx_role_update)
 
         # Create Valkey Serverless cache (if enabled) for K/V caching
         self._create_valkey_cache()
@@ -342,6 +344,140 @@ class GCORegionalStack(Stack):
             value=self.job_dlq.queue_url,
             description=f"SQS Dead Letter Queue URL for {self.deployment_region}",
             export_name=f"{project_name}-job-dlq-url-{self.deployment_region}",
+        )
+
+    def _create_aws_custom_resource_role(self) -> None:
+        """Pre-create the execution role shared by every ``AwsCustomResource``.
+
+        CDK's ``cr.AwsCustomResource`` defaults to auto-generating a per-
+        construct Lambda execution role from the ``policy=`` parameter.
+        Internally, CDK deduplicates those auto-generated roles onto a
+        single *singleton* provider Lambda (logical id prefix
+        ``AWS679f53fac002430cb0da5b7982bd22872``), and merges each custom
+        resource's policy statements onto that Lambda's role at stack
+        create time. On cold deploys, CloudFormation invokes the Lambda
+        within 2-3 seconds of attaching a new policy statement, which is
+        faster than IAM's global propagation window. The symptom is a
+        ``iam:PassRole NOT authorized`` failure on whichever addon role
+        update happens to run right after its ``iam:PassRole`` policy
+        statement was attached but before it had replicated.
+
+        The fix is to create the role up front, attach every policy
+        statement the stack will need during stack creation, and pass
+        ``role=self.aws_custom_resource_role`` to every
+        ``AwsCustomResource`` instead of ``policy=``. Because the role
+        already exists — and its inline policy has had minutes to
+        replicate by the time any ``AwsCustomResource`` actually fires —
+        the race disappears entirely.
+
+        This method creates the role with the statements we can compute
+        without a cluster reference (EKS ``UpdateAddon`` / ``DescribeAddon``
+        scoped to this cluster, and SSM ``GetParameter`` for the endpoint
+        group ARN). ``iam:PassRole`` statements for individual addon
+        roles (EFS CSI, FSx CSI, CloudWatch Observability) are appended
+        by each ``_create_*_addon`` method after the corresponding IRSA
+        role has been created, so every PassRole ``resources=`` list
+        stays precise (no wildcards) and cdk-nag stays happy.
+        """
+        project_name = self.config.get_project_name()
+        global_region = self.config.get_global_region()
+
+        self.aws_custom_resource_role = iam.Role(
+            self,
+            "AwsCustomResourceRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            description=(
+                "Shared execution role for every cr.AwsCustomResource in this "
+                "stack. Pre-created to avoid the IAM policy propagation race "
+                "that occurs when CDK auto-generates per-CR roles and the "
+                "singleton provider Lambda fires before the freshly-attached "
+                "policy has replicated globally."
+            ),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"
+                ),
+            ],
+        )
+
+        # EKS UpdateAddon / DescribeAddon — used by the three updateAddon
+        # custom resources (EFS CSI, FSx CSI, CloudWatch Observability).
+        # Scoped to this cluster's addons by ARN.
+        self.aws_custom_resource_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["eks:UpdateAddon", "eks:DescribeAddon"],
+                resources=[
+                    f"arn:aws:eks:{self.deployment_region}:{self.account}"
+                    f":addon/{self.cluster_config.cluster_name}/*"
+                ],
+            )
+        )
+
+        # SSM GetParameter — used by the GetEndpointGroupArn custom
+        # resource in _create_ga_registration_lambda to read the ARN of
+        # the Global Accelerator endpoint group published by the global
+        # stack during its deploy.
+        self.aws_custom_resource_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["ssm:GetParameter"],
+                resources=[
+                    f"arn:aws:ssm:{global_region}:{self.account}" f":parameter/{project_name}/*"
+                ],
+            )
+        )
+
+        # cdk-nag suppressions: the two wildcard-bearing ARNs above are
+        # intentional and both scoped as tightly as AWS IAM permits.
+        #
+        # - The ``eks:UpdateAddon`` / ``eks:DescribeAddon`` statement uses
+        #   ``addon/<cluster>/*`` as its resource because the same shared
+        #   role is consumed by three different updateAddon custom
+        #   resources (EFS CSI, FSx CSI, CloudWatch Observability). Each
+        #   addon has its own ARN and we'd otherwise need three separate
+        #   statements that each grant access to a known addon name. The
+        #   wildcard is scoped to a single cluster in a single region in
+        #   a single account — it cannot be used against any addon
+        #   belonging to a different cluster or a different service.
+        #
+        # - The ``ssm:GetParameter`` statement uses
+        #   ``parameter/<project>/*`` because the exact parameter name
+        #   (``endpoint-group-<region>-arn``) is only known at Global
+        #   Accelerator registration time and the endpoint path
+        #   structure is ``<project>/<parameter>``. Scoping to the
+        #   project prefix restricts access to parameters owned by this
+        #   project only.
+        from cdk_nag import NagSuppressions
+
+        NagSuppressions.add_resource_suppressions(
+            self.aws_custom_resource_role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "Scoped to a single EKS cluster's addons "
+                        "(addon/<cluster>/*) and this project's SSM "
+                        "parameters (parameter/<project>/*). Both wildcards "
+                        "are as tight as AWS IAM permits: addon names and "
+                        "parameter names are not known at stack synthesis "
+                        "time because the addons are created later in the "
+                        "same stack and the GA endpoint group ARN is "
+                        "published by a separate stack during deploy. The "
+                        "shared role pattern itself is deliberate — see "
+                        "_create_aws_custom_resource_role docstring for why "
+                        "we pre-create instead of letting CDK auto-generate "
+                        "per-CR roles."
+                    ),
+                    "appliesTo": [
+                        f"Resource::arn:aws:eks:{self.deployment_region}"
+                        f":<AWS::AccountId>:addon/{self.cluster_config.cluster_name}/*",
+                        f"Resource::arn:aws:ssm:{global_region}"
+                        f":<AWS::AccountId>:parameter/{project_name}/*",
+                    ],
+                },
+            ],
+            apply_to_children=True,
         )
 
     def _create_container_images(self) -> None:
@@ -674,6 +810,19 @@ class GCORegionalStack(Stack):
             },
         )
 
+        # Append the PassRole statement for the EFS CSI role to the shared
+        # AwsCustomResource execution role. See the role's creation in
+        # _create_aws_custom_resource_role for the full rationale on why
+        # we pre-create + attach up-front instead of letting CDK
+        # auto-generate per-CR roles.
+        self.aws_custom_resource_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["iam:PassRole"],
+                resources=[self.efs_csi_role.role_arn],
+            )
+        )
+
         # Update the add-on to use the IRSA role via custom resource
         # This is needed because the eks v2 alpha Addon doesn't support service_account_role directly
         update_addon = cr.AwsCustomResource(
@@ -700,27 +849,15 @@ class GCORegionalStack(Stack):
                     "serviceAccountRoleArn": self.efs_csi_role.role_arn,
                 },
             ),
-            policy=cr.AwsCustomResourcePolicy.from_statements(
-                [
-                    iam.PolicyStatement(
-                        effect=iam.Effect.ALLOW,
-                        actions=["eks:UpdateAddon", "eks:DescribeAddon"],
-                        resources=[
-                            f"arn:aws:eks:{self.deployment_region}:{self.account}:addon/{self.cluster.cluster_name}/*"
-                        ],
-                    ),
-                    iam.PolicyStatement(
-                        effect=iam.Effect.ALLOW,
-                        actions=["iam:PassRole"],
-                        resources=[self.efs_csi_role.role_arn],
-                    ),
-                ]
-            ),
+            role=self.aws_custom_resource_role,
         )
 
-        # Ensure the update happens after the add-on is created
+        # Ensure the update happens after the add-on is created. We also
+        # depend on the shared execution role so CloudFormation has fully
+        # attached + replicated its inline policy before the Lambda fires.
         update_addon.node.add_dependency(efs_addon)
         update_addon.node.add_dependency(self.efs_csi_role)
+        update_addon.node.add_dependency(self.aws_custom_resource_role)
 
         # Expose the update-addon resource so _apply_kubernetes_manifests can
         # make the kubectl Lambda wait for the IRSA annotation patch to land
@@ -781,6 +918,17 @@ class GCORegionalStack(Stack):
             },
         )
 
+        # Append the PassRole statement for the CloudWatch Observability
+        # role to the shared AwsCustomResource execution role. See
+        # _create_aws_custom_resource_role for the full rationale.
+        self.aws_custom_resource_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["iam:PassRole"],
+                resources=[self.cloudwatch_role.role_arn],
+            )
+        )
+
         # Update the add-on to use the IRSA role via custom resource
         update_cw_addon = cr.AwsCustomResource(
             self,
@@ -806,40 +954,17 @@ class GCORegionalStack(Stack):
                     "serviceAccountRoleArn": self.cloudwatch_role.role_arn,
                 },
             ),
-            policy=cr.AwsCustomResourcePolicy.from_statements(
-                [
-                    iam.PolicyStatement(
-                        effect=iam.Effect.ALLOW,
-                        actions=["eks:UpdateAddon", "eks:DescribeAddon"],
-                        resources=[
-                            f"arn:aws:eks:{self.deployment_region}:{self.account}:addon/{self.cluster.cluster_name}/*"
-                        ],
-                    ),
-                    iam.PolicyStatement(
-                        effect=iam.Effect.ALLOW,
-                        actions=["iam:PassRole"],
-                        resources=[self.cloudwatch_role.role_arn],
-                    ),
-                ]
-            ),
+            role=self.aws_custom_resource_role,
         )
 
-        # Ensure the update happens after the add-on is created
+        # Ensure the update happens after the add-on is created. Depend on
+        # the shared execution role so CFN has fully attached + replicated
+        # its inline policy before the Lambda fires. No CR→CR dependency
+        # chain needed anymore — the race it was serializing against is
+        # eliminated by pre-creating the role.
         update_cw_addon.node.add_dependency(cw_addon)
         update_cw_addon.node.add_dependency(self.cloudwatch_role)
-        # UpdateEfsCsiAddonRole, UpdateFsxCsiAddonRole (optional, only when
-        # FSx Lustre is enabled), and UpdateCloudWatchAddonRole all share
-        # the same singleton Lambda (AWS679). On first deploy, IAM
-        # propagation of one policy can race with another custom resource's
-        # invocation. Serializing them ensures all policies are fully
-        # attached before the Lambda executes for any of them.
-        #
-        # Only EFS is wired here because FSx is created later in
-        # ``__init__`` (in ``_create_fsx_lustre``) and its attribute does
-        # not exist yet when this method runs. The FSx edge is wired
-        # retroactively after ``_create_fsx_lustre`` completes — see the
-        # ``add_dependency`` call immediately after it in ``__init__``.
-        update_cw_addon.node.add_dependency(self._efs_csi_addon_role_update)
+        update_cw_addon.node.add_dependency(self.aws_custom_resource_role)
 
         # Expose the update-addon resource so _apply_kubernetes_manifests can
         # make the kubectl Lambda wait for the IRSA annotation patch to land
@@ -1746,7 +1871,11 @@ class GCORegionalStack(Stack):
             description="Allow GA registration Lambda to access EKS API",
         )
 
-        # Get endpoint group ARN from SSM (stored in global region)
+        # Get endpoint group ARN from SSM (stored in global region).
+        # Uses the shared AwsCustomResource execution role (pre-created in
+        # _create_aws_custom_resource_role) — the SSM GetParameter
+        # statement was attached there up-front so the Lambda never hits
+        # an IAM propagation race on cold deploys.
         global_region = self.config.get_global_region()
         get_endpoint_group_arn = cr.AwsCustomResource(
             self,
@@ -1766,18 +1895,9 @@ class GCORegionalStack(Stack):
                 parameters={"Name": f"/{project_name}/endpoint-group-{self.deployment_region}-arn"},
                 region=global_region,
             ),
-            policy=cr.AwsCustomResourcePolicy.from_statements(
-                [
-                    iam.PolicyStatement(
-                        effect=iam.Effect.ALLOW,
-                        actions=["ssm:GetParameter"],
-                        resources=[
-                            f"arn:aws:ssm:{global_region}:{self.account}:parameter/{project_name}/*"
-                        ],
-                    )
-                ]
-            ),
+            role=self.aws_custom_resource_role,
         )
+        get_endpoint_group_arn.node.add_dependency(self.aws_custom_resource_role)
 
         endpoint_group_arn = get_endpoint_group_arn.get_response_field("Parameter.Value")
 
@@ -2319,6 +2439,17 @@ class GCORegionalStack(Stack):
             },
         )
 
+        # Append the PassRole statement for the FSx CSI role to the shared
+        # AwsCustomResource execution role. See
+        # _create_aws_custom_resource_role for the full rationale.
+        self.aws_custom_resource_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["iam:PassRole"],
+                resources=[self.fsx_csi_role.role_arn],
+            )
+        )
+
         # Update the add-on to use the IRSA role
         update_fsx_addon = cr.AwsCustomResource(
             self,
@@ -2344,26 +2475,12 @@ class GCORegionalStack(Stack):
                     "serviceAccountRoleArn": self.fsx_csi_role.role_arn,
                 },
             ),
-            policy=cr.AwsCustomResourcePolicy.from_statements(
-                [
-                    iam.PolicyStatement(
-                        effect=iam.Effect.ALLOW,
-                        actions=["eks:UpdateAddon", "eks:DescribeAddon"],
-                        resources=[
-                            f"arn:aws:eks:{self.deployment_region}:{self.account}:addon/{self.cluster.cluster_name}/*"
-                        ],
-                    ),
-                    iam.PolicyStatement(
-                        effect=iam.Effect.ALLOW,
-                        actions=["iam:PassRole"],
-                        resources=[self.fsx_csi_role.role_arn],
-                    ),
-                ]
-            ),
+            role=self.aws_custom_resource_role,
         )
 
         update_fsx_addon.node.add_dependency(fsx_addon)
         update_fsx_addon.node.add_dependency(self.fsx_csi_role)
+        update_fsx_addon.node.add_dependency(self.aws_custom_resource_role)
 
         # Expose the update-addon resource so _apply_kubernetes_manifests can
         # make the kubectl Lambda wait for the IRSA annotation patch to land

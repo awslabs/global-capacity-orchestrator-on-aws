@@ -837,26 +837,40 @@ class TestRegionalStackWithFsx:
             template.resource_count_is("AWS::FSx::FileSystem", 0)
 
 
-class TestAddonRoleUpdateDependencyChain:
-    """Regression guard for the IAM PassRole race on fresh deploys.
+class TestAwsCustomResourceSharedRole:
+    """Regression guards for the IAM PassRole race fix (v0.1.2).
 
-    CDK's ``AwsCustomResource`` constructs reuse a singleton Lambda
-    (logical id prefix ``AWS679``) whose execution role accumulates
-    policy statements from every custom resource in the stack. On a
-    cold stack create, IAM propagation of one policy attachment can
-    race with the Lambda being invoked for a different custom resource.
-    ``PassRole`` is the most common failure surface because the IAM
-    authorization is checked inline by the subprocess, not cached.
+    CDK's ``cr.AwsCustomResource`` defaults to auto-generating a Lambda
+    execution role per construct, then deduplicates them onto a single
+    singleton provider Lambda (logical id prefix ``AWS679``). Each
+    construct's ``policy=`` statements are merged onto that Lambda's
+    role during stack create. On cold deploys, CloudFormation invokes
+    the Lambda within 2-3 seconds of attaching a new policy statement,
+    which is faster than IAM's global propagation window. The symptom
+    is an ``iam:PassRole NOT authorized`` failure on the last
+    ``updateAddon`` custom resource to run.
 
-    The regional stack creates up to three ``updateAddon``-style custom
-    resources that share this singleton: one each for EFS CSI, FSx CSI
-    (only when FSx Lustre is enabled), and CloudWatch Observability.
-    The fix is to serialize them with CDK ``add_dependency`` so
-    CloudFormation emits explicit ``DependsOn`` edges and the Lambda
-    runs against a fully-propagated role each time.
+    The prior approach (PRs #8 and #9) serialized the three
+    ``updateAddon`` custom resources with ``add_dependency`` so they
+    run sequentially. In practice that moved the race rather than
+    fixing it — the Lambda still fired within seconds of a fresh
+    ``PassRole`` attach, so the last one in the chain still failed.
 
-    These tests assert the dependency chain is present in the
-    synthesized template both with and without FSx enabled.
+    The v0.1.2 approach replaces CDK's auto-generated role with a
+    single pre-created ``iam.Role`` (``self.aws_custom_resource_role``)
+    that has every required statement attached by the time CFN
+    provisions it. Every ``AwsCustomResource`` passes
+    ``role=self.aws_custom_resource_role`` instead of ``policy=``. The
+    role (and its inline policy) exist minutes before any custom
+    resource fires, so IAM has ample time to replicate.
+
+    These tests assert:
+    1. The shared role exists in the synthesized template
+    2. All four known ``AwsCustomResource`` instances reference it
+    3. The shared role has the required policy statements
+    4. No CR→CR dependency chain is needed (the old
+       ``TestAddonRoleUpdateDependencyChain`` class covered that; it's
+       replaced by this class since the chain is gone by design)
     """
 
     def _synth_regional_stack(self, fsx_enabled: bool, logical_name: str):
@@ -895,14 +909,6 @@ class TestAddonRoleUpdateDependencyChain:
             return assertions.Template.from_stack(stack)
 
     @staticmethod
-    def _depends_on_names(resource: dict) -> list[str]:
-        """Normalize a CFN ``DependsOn`` field to a list of logical ids."""
-        dep = resource.get("DependsOn", [])
-        if isinstance(dep, str):
-            return [dep]
-        return list(dep)
-
-    @staticmethod
     def _find_by_logical_prefix(resources: dict, prefix: str) -> tuple[str, dict]:
         """Return the first (logical_id, resource) pair whose id starts with ``prefix``."""
         for lid, r in resources.items():
@@ -913,63 +919,220 @@ class TestAddonRoleUpdateDependencyChain:
             f"Available logical ids: {sorted(resources)[:20]}..."
         )
 
-    def test_cw_addon_update_depends_on_efs_addon_update_fsx_disabled(self):
-        """Without FSx, CloudWatch's update must depend on EFS's update.
+    @staticmethod
+    def _depends_on_names(resource: dict) -> list[str]:
+        """Normalize a CFN ``DependsOn`` field to a list of logical ids."""
+        dep = resource.get("DependsOn", [])
+        if isinstance(dep, str):
+            return [dep]
+        return list(dep)
 
-        Prevents the IAM propagation race between the two custom
-        resources that share the AWS679 singleton Lambda.
+    @staticmethod
+    def _role_refs(resource: dict) -> set[str]:
+        """Return the set of IAM role logical ids referenced by a CFN resource's Role prop.
+
+        The ``Role`` property on ``Custom::AWS`` resources is expressed as
+        ``{"Fn::GetAtt": ["<logical_id>", "Arn"]}``. This helper digs the
+        logical ids out so assertions can match on them directly.
+        """
+        properties = resource.get("Properties", {})
+        role = properties.get("ServiceToken")
+        # Custom::AWS isn't a standard Custom Resource — its singleton
+        # Lambda's role is referenced indirectly. We look at the stack's
+        # Lambda function resources separately.
+        return {role} if isinstance(role, str) else set()
+
+    def test_shared_role_is_created(self):
+        """The pre-created shared execution role must exist in the template."""
+        template = self._synth_regional_stack(
+            fsx_enabled=False, logical_name="test-shared-role-exists"
+        )
+        roles = template.find_resources("AWS::IAM::Role")
+        shared_role_ids = [lid for lid in roles if lid.startswith("AwsCustomResourceRole")]
+        assert shared_role_ids, (
+            f"The pre-created AwsCustomResourceRole should appear in the "
+            f"CFN template. Found role logical ids: {sorted(roles)[:20]}"
+        )
+
+    def test_shared_role_has_eks_update_addon_policy(self):
+        """The shared role's inline policy must allow eks:UpdateAddon/DescribeAddon."""
+        template = self._synth_regional_stack(
+            fsx_enabled=False, logical_name="test-shared-role-eks-policy"
+        )
+        policies = template.find_resources("AWS::IAM::Policy")
+        shared_policies = [
+            (lid, r) for lid, r in policies.items() if lid.startswith("AwsCustomResourceRole")
+        ]
+        assert shared_policies, "The shared role should have an attached inline policy"
+        # At least one of the attached policies must grant
+        # eks:UpdateAddon and eks:DescribeAddon.
+        found_eks_statement = False
+        for _lid, policy in shared_policies:
+            for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+                actions = statement.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                if "eks:UpdateAddon" in actions and "eks:DescribeAddon" in actions:
+                    found_eks_statement = True
+                    break
+        assert found_eks_statement, "Shared role must allow eks:UpdateAddon and eks:DescribeAddon"
+
+    def test_shared_role_has_ssm_get_parameter_policy(self):
+        """The shared role must allow ssm:GetParameter for the endpoint group ARN lookup."""
+        template = self._synth_regional_stack(
+            fsx_enabled=False, logical_name="test-shared-role-ssm-policy"
+        )
+        policies = template.find_resources("AWS::IAM::Policy")
+        shared_policies = [
+            (lid, r) for lid, r in policies.items() if lid.startswith("AwsCustomResourceRole")
+        ]
+        found_ssm_statement = False
+        for _lid, policy in shared_policies:
+            for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+                actions = statement.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                if "ssm:GetParameter" in actions:
+                    found_ssm_statement = True
+                    break
+        assert found_ssm_statement, "Shared role must allow ssm:GetParameter"
+
+    def test_shared_role_has_efs_passrole_statement(self):
+        """The shared role must allow iam:PassRole for the EFS CSI IRSA role."""
+        template = self._synth_regional_stack(
+            fsx_enabled=False, logical_name="test-shared-role-efs-passrole"
+        )
+        policies = template.find_resources("AWS::IAM::Policy")
+        shared_policies = [
+            (lid, r) for lid, r in policies.items() if lid.startswith("AwsCustomResourceRole")
+        ]
+        # Collect all PassRole statements and check any of them references
+        # the EFS CSI role by Fn::GetAtt.
+        passrole_targets: list = []
+        for _lid, policy in shared_policies:
+            for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+                actions = statement.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                if "iam:PassRole" in actions:
+                    resources = statement.get("Resource", [])
+                    if not isinstance(resources, list):
+                        resources = [resources]
+                    passrole_targets.extend(resources)
+        # Each resource is either a string ARN or a dict with Fn::GetAtt.
+        passrole_target_strs = [str(r) for r in passrole_targets]
+        assert any("EfsCsiDriverRole" in s for s in passrole_target_strs), (
+            f"Shared role must have PassRole statement for EFS CSI role. "
+            f"Found PassRole targets: {passrole_target_strs}"
+        )
+
+    def test_shared_role_has_fsx_passrole_statement_when_fsx_enabled(self):
+        """When FSx is enabled, the shared role must allow iam:PassRole for the FSx CSI role."""
+        template = self._synth_regional_stack(
+            fsx_enabled=True, logical_name="test-shared-role-fsx-passrole"
+        )
+        policies = template.find_resources("AWS::IAM::Policy")
+        shared_policies = [
+            (lid, r) for lid, r in policies.items() if lid.startswith("AwsCustomResourceRole")
+        ]
+        passrole_targets: list = []
+        for _lid, policy in shared_policies:
+            for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+                actions = statement.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                if "iam:PassRole" in actions:
+                    resources = statement.get("Resource", [])
+                    if not isinstance(resources, list):
+                        resources = [resources]
+                    passrole_targets.extend(resources)
+        passrole_target_strs = [str(r) for r in passrole_targets]
+        assert any("FsxCsiDriverRole" in s for s in passrole_target_strs), (
+            f"When FSx is enabled, shared role must have PassRole statement "
+            f"for FSx CSI role. Found PassRole targets: {passrole_target_strs}"
+        )
+
+    def test_shared_role_has_cloudwatch_passrole_statement(self):
+        """The shared role must allow iam:PassRole for the CloudWatch Observability role."""
+        template = self._synth_regional_stack(
+            fsx_enabled=False, logical_name="test-shared-role-cw-passrole"
+        )
+        policies = template.find_resources("AWS::IAM::Policy")
+        shared_policies = [
+            (lid, r) for lid, r in policies.items() if lid.startswith("AwsCustomResourceRole")
+        ]
+        passrole_targets: list = []
+        for _lid, policy in shared_policies:
+            for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+                actions = statement.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                if "iam:PassRole" in actions:
+                    resources = statement.get("Resource", [])
+                    if not isinstance(resources, list):
+                        resources = [resources]
+                    passrole_targets.extend(resources)
+        passrole_target_strs = [str(r) for r in passrole_targets]
+        assert any("CloudWatchObservabilityRole" in s for s in passrole_target_strs), (
+            f"Shared role must have PassRole statement for CloudWatch role. "
+            f"Found PassRole targets: {passrole_target_strs}"
+        )
+
+    def test_addon_update_crs_depend_on_shared_role(self):
+        """Each updateAddon custom resource must depend on the shared role.
+
+        CDK-emitted ``DependsOn`` edges ensure CloudFormation provisions
+        (and IAM propagates) the shared role + its inline policy before
+        the singleton Lambda fires for any ``AwsCustomResource``.
         """
         template = self._synth_regional_stack(
-            fsx_enabled=False, logical_name="test-dep-chain-no-fsx"
+            fsx_enabled=True, logical_name="test-crs-depend-on-shared-role"
         )
-        resources = template.find_resources("Custom::AWS")
+        crs = template.find_resources("Custom::AWS")
 
-        cw_id, cw_resource = self._find_by_logical_prefix(resources, "UpdateCloudWatchAddonRole")
-        efs_id, _ = self._find_by_logical_prefix(resources, "UpdateEfsCsiAddonRole")
+        _cw_id, cw_resource = self._find_by_logical_prefix(crs, "UpdateCloudWatchAddonRole")
+        _efs_id, efs_resource = self._find_by_logical_prefix(crs, "UpdateEfsCsiAddonRole")
+        _fsx_id, fsx_resource = self._find_by_logical_prefix(crs, "UpdateFsxCsiAddonRole")
 
-        depends_on = self._depends_on_names(cw_resource)
-        assert efs_id in depends_on, (
-            f"CloudWatch update custom resource must depend on EFS update to "
-            f"serialize IAM propagation on the AWS679 singleton Lambda. "
-            f"Expected {efs_id!r} in CloudWatch's DependsOn; got: {depends_on}"
-        )
+        # The CR's ``DependsOn`` references the IAM role by its logical id
+        # (CDK resolves the ``add_dependency`` call to a CFN DependsOn edge).
+        for cr_resource, name in (
+            (cw_resource, "UpdateCloudWatchAddonRole"),
+            (efs_resource, "UpdateEfsCsiAddonRole"),
+            (fsx_resource, "UpdateFsxCsiAddonRole"),
+        ):
+            depends_on = self._depends_on_names(cr_resource)
+            assert any(d.startswith("AwsCustomResourceRole") for d in depends_on), (
+                f"{name} must depend on AwsCustomResourceRole so CFN has "
+                f"fully attached + replicated the shared inline policy "
+                f"before the Lambda fires. DependsOn: {depends_on}"
+            )
 
-    def test_cw_addon_update_has_no_fsx_dependency_when_fsx_disabled(self):
-        """When FSx is disabled, no UpdateFsxCsiAddonRole should exist at all."""
-        template = self._synth_regional_stack(
-            fsx_enabled=False, logical_name="test-dep-chain-no-fsx-guard"
-        )
-        resources = template.find_resources("Custom::AWS")
+    def test_cr_cr_dependency_chain_is_gone(self):
+        """The old serialization chain from PRs #8 and #9 should be removed.
 
-        fsx_matches = [lid for lid in resources if lid.startswith("UpdateFsxCsiAddonRole")]
-        assert fsx_matches == [], (
-            f"No FSx CSI update custom resource should exist when FSx is "
-            f"disabled; found: {fsx_matches}"
-        )
-
-    def test_cw_addon_update_depends_on_fsx_addon_update_fsx_enabled(self):
-        """With FSx, CloudWatch's update must depend on both EFS and FSx updates.
-
-        All three share the AWS679 singleton Lambda, so the full chain
-        has to be serialized — not just the CloudWatch → EFS pair.
+        CloudWatch's update must NOT depend on EFS's or FSx's update
+        anymore. That chain was working around the race that the shared
+        role now eliminates. Keeping it would add meaningless
+        serialization and slow down cold creates for no benefit.
         """
-        template = self._synth_regional_stack(fsx_enabled=True, logical_name="test-dep-chain-fsx")
-        resources = template.find_resources("Custom::AWS")
+        template = self._synth_regional_stack(fsx_enabled=True, logical_name="test-no-cr-cr-chain")
+        crs = template.find_resources("Custom::AWS")
 
-        cw_id, cw_resource = self._find_by_logical_prefix(resources, "UpdateCloudWatchAddonRole")
-        efs_id, _ = self._find_by_logical_prefix(resources, "UpdateEfsCsiAddonRole")
-        fsx_id, _ = self._find_by_logical_prefix(resources, "UpdateFsxCsiAddonRole")
+        _cw_id, cw_resource = self._find_by_logical_prefix(crs, "UpdateCloudWatchAddonRole")
+        efs_id, _ = self._find_by_logical_prefix(crs, "UpdateEfsCsiAddonRole")
+        fsx_id, _ = self._find_by_logical_prefix(crs, "UpdateFsxCsiAddonRole")
 
         depends_on = self._depends_on_names(cw_resource)
-
-        assert efs_id in depends_on, (
-            f"CloudWatch update must still depend on EFS update when FSx is "
-            f"enabled. Expected {efs_id!r} in DependsOn; got: {depends_on}"
+        assert efs_id not in depends_on, (
+            f"CloudWatch update should no longer depend on EFS update; the "
+            f"race is eliminated by the shared role. Found {efs_id!r} in "
+            f"DependsOn: {depends_on}"
         )
-        assert fsx_id in depends_on, (
-            f"CloudWatch update must depend on FSx update when FSx is enabled, "
-            f"otherwise FSx and CloudWatch race on the AWS679 singleton Lambda. "
-            f"Expected {fsx_id!r} in DependsOn; got: {depends_on}"
+        assert fsx_id not in depends_on, (
+            f"CloudWatch update should no longer depend on FSx update; the "
+            f"race is eliminated by the shared role. Found {fsx_id!r} in "
+            f"DependsOn: {depends_on}"
         )
 
 
