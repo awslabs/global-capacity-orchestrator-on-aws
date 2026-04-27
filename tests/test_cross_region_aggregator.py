@@ -17,11 +17,35 @@ tests running in the same pytest session.
 """
 
 import json
+import time
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from tests._lambda_imports import load_lambda_module
 
 handler = load_lambda_module("cross-region-aggregator")
+
+
+@pytest.fixture(autouse=True)
+def _reset_endpoints_cache():
+    """Prime the endpoints cache TTL so tests that set
+    ``handler._cached_endpoints`` directly don't fall through to a
+    real SSM call. The cache is only consulted when
+    ``(time.time() - _endpoints_cache_time) < _ENDPOINTS_CACHE_TTL``;
+    a freshly-loaded module has ``_endpoints_cache_time = 0``, which
+    always fails the TTL check.
+
+    Tests in this file either (a) set ``_cached_endpoints`` then call
+    handler functions that read through the cache, or (b) explicitly
+    test the SSM path by setting ``_cached_endpoints = None`` and
+    patching ``boto3.client``. Case (a) relies on the cache actually
+    being honored; case (b) bypasses the TTL check by nulling the
+    cache up front. Stamping ``_endpoints_cache_time = time.time()``
+    here supports case (a) without interfering with case (b).
+    """
+    handler._endpoints_cache_time = time.time()
+    yield
 
 
 class TestGetSecretToken:

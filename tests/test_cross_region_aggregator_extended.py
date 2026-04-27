@@ -15,11 +15,27 @@ pytest session. See that module for the full rationale.
 """
 
 import json
+import time
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from tests._lambda_imports import load_lambda_module
 
 handler = load_lambda_module("cross-region-aggregator")
+
+
+@pytest.fixture(autouse=True)
+def _reset_endpoints_cache():
+    """Prime the endpoints cache TTL so tests that set
+    ``handler._cached_endpoints`` directly don't fall through to a
+    real SSM call. See the identical fixture in
+    ``test_cross_region_aggregator.py`` for the full rationale —
+    a freshly-loaded module has ``_endpoints_cache_time = 0``, and
+    without this fixture the TTL check always fails.
+    """
+    handler._endpoints_cache_time = time.time()
+    yield
 
 
 class TestQueryRegion503Handling:

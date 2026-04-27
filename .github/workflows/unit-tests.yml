@@ -38,6 +38,12 @@ jobs:
     name: "unit:pytest:core"
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # `contents: write` is needed for the gh-pages publish step that pushes
+    # htmlcov/ + the shields.io endpoint JSON to the gh-pages branch. The
+    # step itself is gated on push-to-main, so PRs from forks still run
+    # with effective read-only access.
+    permissions:
+      contents: write
     # Several tests import Lambda handler modules that construct boto3
     # clients at module scope (lambda/api-gateway-proxy/proxy_utils.py,
     # lambda/cross-region-aggregator/handler.py). boto3 requires a region
@@ -81,6 +87,32 @@ jobs:
             coverage.json
             report.xml
           retention-days: 7
+      - name: Generate shields.io badge endpoint JSON
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          # coverage.json is written by coverage.py. Pull totals.percent_covered
+          # (float, 0-100), round to one decimal, and emit the shields.io
+          # endpoint badge schema so the README badge can link to a static
+          # JSON file on gh-pages without calling a third-party service.
+          #
+          # Color threshold matches the --cov-fail-under value (85%) from
+          # the pytest step above: anything below that would have already
+          # failed CI, so the badge only has two meaningful states.
+          PCT=$(python3 -c 'import json; d=json.load(open("coverage.json")); print(f"{d[\"totals\"][\"percent_covered\"]:.1f}")')
+          if awk "BEGIN{exit !($PCT >= 85)}"; then COLOR=brightgreen
+          else COLOR=red
+          fi
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$PCT" "$COLOR" > htmlcov/coverage-badge.json
+          cp htmlcov/coverage-badge.json coverage-badge.json
+          echo "Coverage: $PCT% ($COLOR)"
+      - name: Publish htmlcov to gh-pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: htmlcov
+          commit_message: "Update coverage report for ${{ github.sha }}"
 
   unit-bats-shell:
     name: "unit:bats:shell"
