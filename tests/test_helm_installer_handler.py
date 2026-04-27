@@ -16,27 +16,19 @@ These tests mock ``subprocess.run`` directly so they never invoke
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# The Lambda lives outside the tests package and is not installed. Import it
-# by file path under a unique module name so we don't pollute
-# ``sys.modules['handler']`` — several other test files do
-# ``sys.path.insert(0, 'lambda/<dir>'); import handler`` for their own
-# Lambda's ``handler.py`` and rely on getting a fresh module object. Using a
-# unique name here keeps those other imports hermetic.
-_HANDLER_DIR = Path(__file__).resolve().parents[1] / "lambda" / "helm-installer"
-_spec = importlib.util.spec_from_file_location(
-    "helm_installer_handler", _HANDLER_DIR / "handler.py"
-)
-assert _spec is not None and _spec.loader is not None
-helm_handler = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(helm_handler)
+from tests._lambda_imports import load_lambda_module
+
+# Load the handler under a unique ``sys.modules`` name via the shared
+# helper so this file doesn't collide with other Lambda handler tests
+# that use the legacy ``sys.path.insert + import handler`` pattern.
+# See ``tests/_lambda_imports.py`` for the full rationale.
+helm_handler = load_lambda_module("helm-installer")
 
 
 def _completed(returncode: int, stdout: str = "", stderr: str = "") -> MagicMock:

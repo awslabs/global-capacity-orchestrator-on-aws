@@ -8,13 +8,18 @@ bodies), DELETE requests with a body, aggregate_jobs limit trimming
 and creationTimestamp sorting, aggregate_health when every region
 is unhealthy, bulk_delete_jobs with real deletion (not dry_run),
 and the lambda_handler null-query-string/null-body paths.
+
+The handler is loaded via :func:`tests._lambda_imports.load_lambda_module`
+so it doesn't collide with other Lambda handler tests in the same
+pytest session. See that module for the full rationale.
 """
 
 import json
-import sys
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, "lambda/cross-region-aggregator")
+from tests._lambda_imports import load_lambda_module
+
+handler = load_lambda_module("cross-region-aggregator")
 
 
 class TestQueryRegion503Handling:
@@ -22,7 +27,6 @@ class TestQueryRegion503Handling:
 
     def test_503_with_valid_json_returns_success(self):
         """503 from health endpoint with JSON body should be treated as success."""
-        import handler
 
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
 
@@ -44,7 +48,6 @@ class TestQueryRegion503Handling:
 
     def test_503_with_invalid_json_returns_error(self):
         """503 with non-JSON body should be treated as error."""
-        import handler
 
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
 
@@ -63,7 +66,6 @@ class TestQueryRegion503Handling:
 
     def test_503_with_unicode_error_returns_error(self):
         """503 with undecodable body should be treated as error."""
-        import handler
 
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
 
@@ -86,7 +88,6 @@ class TestQueryRegionDeleteMethod:
 
     def test_delete_with_body(self):
         """DELETE request should send body correctly."""
-        import handler
 
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
 
@@ -111,7 +112,6 @@ class TestQueryRegionDeleteMethod:
 
     def test_delete_without_body(self):
         """DELETE request without body should send None."""
-        import handler
 
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
 
@@ -134,7 +134,6 @@ class TestAggregateJobsLimitTrimming:
 
     def test_jobs_trimmed_to_limit(self):
         """Jobs should be trimmed to the requested limit after aggregation."""
-        import handler
 
         handler._cached_endpoints = {
             "us-east-1": "alb-1.example.com",
@@ -169,7 +168,6 @@ class TestAggregateJobsLimitTrimming:
 
     def test_jobs_sorted_by_creation_time_descending(self):
         """Jobs should be sorted by creationTimestamp descending."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -194,7 +192,6 @@ class TestAggregateJobsLimitTrimming:
 
     def test_aggregate_jobs_with_namespace_and_status_filters(self):
         """Namespace and status filters should be passed as query params."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -222,7 +219,6 @@ class TestAggregateHealthAllUnhealthy:
 
     def test_all_regions_unhealthy(self):
         """When all regions fail, overall_status should be 'unhealthy'."""
-        import handler
 
         handler._cached_endpoints = {
             "us-east-1": "alb-1.example.com",
@@ -245,7 +241,6 @@ class TestAggregateHealthAllUnhealthy:
 
     def test_all_regions_exception(self):
         """When all regions return errors, overall_status should be 'unhealthy'."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -264,7 +259,6 @@ class TestAggregateHealthAllUnhealthy:
 
     def test_empty_endpoints(self):
         """When no endpoints exist, should return unhealthy with 0 regions."""
-        import handler
 
         handler._cached_endpoints = {}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -281,7 +275,6 @@ class TestBulkDeleteActualDeletion:
 
     def test_bulk_delete_actual(self):
         """Actual deletion should report deleted counts."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -306,7 +299,6 @@ class TestBulkDeleteActualDeletion:
 
     def test_bulk_delete_with_older_than_days(self):
         """older_than_days should be included in request body."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -330,7 +322,6 @@ class TestBulkDeleteActualDeletion:
 
     def test_bulk_delete_with_region_errors(self):
         """Errors from some regions should be reported."""
-        import handler
 
         handler._cached_endpoints = {
             "us-east-1": "alb-1.example.com",
@@ -369,7 +360,6 @@ class TestLambdaHandlerEdgeCases:
 
     def test_handler_null_query_params(self):
         """Handler should handle null queryStringParameters."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -393,7 +383,6 @@ class TestLambdaHandlerEdgeCases:
 
     def test_handler_missing_query_params_key(self):
         """Handler should handle missing queryStringParameters key."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -416,7 +405,6 @@ class TestLambdaHandlerEdgeCases:
 
     def test_handler_delete_with_null_body(self):
         """DELETE handler should handle null body."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -442,7 +430,6 @@ class TestLambdaHandlerEdgeCases:
 
     def test_handler_delete_with_invalid_json_body(self):
         """DELETE handler should return 500 on invalid JSON body."""
-        import handler
 
         event = {
             "httpMethod": "DELETE",
@@ -455,7 +442,6 @@ class TestLambdaHandlerEdgeCases:
 
     def test_handler_get_jobs_with_custom_limit(self):
         """GET jobs should respect custom limit parameter."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -481,7 +467,6 @@ class TestLambdaHandlerEdgeCases:
 
     def test_handler_missing_http_method_defaults_to_get(self):
         """Missing httpMethod should default to GET."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -505,7 +490,6 @@ class TestAggregateMetricsEdgeCases:
 
     def test_aggregate_metrics_with_errors(self):
         """Metrics aggregation should report errors from failed regions."""
-        import handler
 
         handler._cached_endpoints = {
             "us-east-1": "alb-1.example.com",
@@ -539,7 +523,6 @@ class TestAggregateMetricsEdgeCases:
 
     def test_aggregate_metrics_with_exception(self):
         """Metrics aggregation should handle exceptions from regions."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential

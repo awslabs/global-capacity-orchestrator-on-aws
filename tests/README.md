@@ -7,6 +7,7 @@ This directory contains the test suite for GCO (Global Capacity Orchestrator on 
 - [Running Tests](#running-tests)
 - [Test Organization](#test-organization)
 - [Test Files by Category](#test-files-by-category)
+- [Lambda Handler Import Helper](#lambda-handler-import-helper)
 - [Writing New Tests](#writing-new-tests)
 - [Mocking Patterns](#mocking-patterns)
 - [Coverage Requirements](#coverage-requirements)
@@ -137,6 +138,50 @@ The Lambda build directory (`lambda/kubectl-applier-simple-build/`) is auto-crea
 - `test:cdk-config-matrix` — builds the Lambda package in `before_script` and runs `cdk synth` against it (synth fails if the build dir is missing or incomplete)
 - `test_stacks.py::TestStackManagerSyncLambdaSources` — unit tests that `_sync_lambda_sources` auto-creates the build directory when missing
 
+### Lambda Handler Import Helper
+
+Lambda handler modules live under `lambda/<name>/handler.py` and aren't on Python's normal `sys.path`. Early tests loaded them with the pattern:
+
+```python
+sys.path.insert(0, "lambda/foo")
+sys.modules.pop("handler", None)
+import handler
+```
+
+That works in isolation but leaks across tests. Pytest runs the whole suite in one Python process, so the first test to `import handler` wins `sys.modules['handler']`. Any later test that forgets to pop — or runs after a fixture that populated it with a different Lambda's module — silently gets the wrong handler. This collision broke CI on the v0.1.0 launch when two test files' `handler` imports collided.
+
+**The helper:** `tests/_lambda_imports.py` exposes `load_lambda_module(lambda_dir, module_name="handler", *, shared_dirs=())`. It loads the target module under a unique, namespace-safe name (e.g. `_gco_lambda_secret_rotation_handler`) via `importlib.util.spec_from_file_location`, so registrations cannot collide across tests.
+
+Features:
+
+- **Unique `sys.modules` name** per `(lambda_dir, module_name)` — zero collision risk.
+- **Fresh load on every call** — matches the semantics of the old `sys.modules.pop + import` pattern. Fixtures that wrap the load in `patch("boto3.client")` see the mock applied on every invocation, which is required by handlers like `alb-header-validator/handler.py` that do `boto3.client("secretsmanager")` at module-import time.
+- **`shared_dirs`** — for handlers that `import` from a sibling lambda dir (e.g. `lambda/api-gateway-proxy/handler.py` doing `from proxy_utils import ...`), `shared_dirs=["proxy-shared"]` pushes that dir onto `sys.path` for the duration of the load only.
+- **Collateral cleanup** — when `shared_dirs` is non-empty, any new entries the load added to `sys.modules` (e.g. a bare `proxy_utils` entry) are removed afterward, so the next fixture gets a truly fresh re-import under its own mocks. Standalone loads (no `shared_dirs`) leave `sys.modules` untouched so third-party globals like `boto3` aren't disturbed.
+- **Input validation** — rejects path traversal in `lambda_dir` and `shared_dirs`, raises a clean `ValueError` if the target file doesn't exist.
+
+Typical usage in a fixture:
+
+```python
+from tests._lambda_imports import load_lambda_module
+
+@pytest.fixture
+def rotation_module():
+    with patch("boto3.client") as mock_client:
+        handler = load_lambda_module("secret-rotation")
+        yield handler, mock_client
+```
+
+Handler that depends on a shared utility module:
+
+```python
+proxy_utils = load_lambda_module("proxy-shared", "proxy_utils")
+proxy_utils._cached_secret = None
+handler = load_lambda_module("api-gateway-proxy", shared_dirs=["proxy-shared"])
+```
+
+Every Lambda handler test in this repo now loads via this helper. The legacy `sys.path.insert + import handler` pattern is gone, and `tests/test_lambda_imports.py` pins the helper's contract against regression.
+
 ### Other Tests
 
 | File | Description |
@@ -152,6 +197,7 @@ The Lambda build directory (`lambda/kubectl-applier-simple-build/`) is auto-crea
 | `test_cross_region_aggregator.py` | Cross-region data aggregation tests |
 | `test_integration.py` | End-to-end integration tests |
 | `test_sqs_integration.py` | SQS integration tests |
+| `test_lambda_imports.py` | Contract tests for the `tests/_lambda_imports.py` helper — unique module naming, fresh-load semantics, collateral module cleanup when `shared_dirs` is used, input validation against path traversal |
 
 ### Script Tests
 
@@ -170,6 +216,7 @@ actually deploy anything, hit AWS, or spawn long-running subprocesses.
 | File | Description |
 |------|-------------|
 | `conftest.py` | Shared pytest fixtures and configuration |
+| `_lambda_imports.py` | `load_lambda_module()` helper for importing Lambda handler modules under unique `sys.modules` names. See the [Lambda Handler Import Helper](#lambda-handler-import-helper) section above. |
 | `__init__.py` | Package initialization |
 
 ## Writing New Tests

@@ -6,16 +6,22 @@ in-memory caching, SSM-based regional endpoint discovery, per-region
 HTTP queries via urllib3, and the higher-level aggregate_* helpers
 that merge job lists, health status, metrics, and bulk-delete results
 across every discovered region. Also drives the API Gateway Lambda
-handler surface. The lambda/ directory isn't on the normal import path,
-so sys.path is munged at module load.
+handler surface.
+
+The ``lambda/`` directory isn't on the normal import path, so the
+handler is loaded by file path under a unique ``sys.modules`` name
+via :func:`tests._lambda_imports.load_lambda_module`. That avoids
+the ``sys.path.insert('lambda/foo') + import handler`` pattern used
+elsewhere, which would otherwise collide with other Lambda handler
+tests running in the same pytest session.
 """
 
 import json
-import sys
 from unittest.mock import MagicMock, patch
 
-# Add lambda directory to path for imports
-sys.path.insert(0, "lambda/cross-region-aggregator")
+from tests._lambda_imports import load_lambda_module
+
+handler = load_lambda_module("cross-region-aggregator")
 
 
 class TestGetSecretToken:
@@ -23,8 +29,8 @@ class TestGetSecretToken:
 
     def test_get_secret_token_success(self):
         """Test successful secret retrieval."""
-        import handler
-        from handler import get_secret_token
+
+        get_secret_token = handler.get_secret_token
 
         # Reset cache
         handler._cached_secret = None
@@ -48,7 +54,6 @@ class TestGetSecretToken:
 
     def test_get_secret_token_cached(self):
         """Test that secret is cached."""
-        import handler
 
         handler._cached_secret = "cached-token"  # nosec B105 - test fixture, not a real credential
 
@@ -63,7 +68,6 @@ class TestGetRegionalEndpoints:
 
     def test_get_regional_endpoints_success(self):
         """Test successful endpoint retrieval from SSM."""
-        import handler
 
         handler._cached_endpoints = None
 
@@ -97,7 +101,6 @@ class TestGetRegionalEndpoints:
 
     def test_get_regional_endpoints_empty(self):
         """Test empty endpoints when no SSM parameters found."""
-        import handler
 
         handler._cached_endpoints = None
 
@@ -115,7 +118,6 @@ class TestGetRegionalEndpoints:
 
     def test_get_regional_endpoints_ssm_error(self):
         """Test graceful handling of SSM errors."""
-        import handler
 
         handler._cached_endpoints = None
 
@@ -132,7 +134,6 @@ class TestGetRegionalEndpoints:
 
     def test_get_regional_endpoints_cached(self):
         """Test that endpoints are cached."""
-        import handler
 
         handler._cached_endpoints = {
             "us-east-1": "cached-alb.example.com",
@@ -148,7 +149,6 @@ class TestQueryRegion:
 
     def test_query_region_success(self):
         """Test successful region query."""
-        import handler
 
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
 
@@ -172,7 +172,6 @@ class TestQueryRegion:
 
     def test_query_region_with_query_params(self):
         """Test region query with query parameters."""
-        import handler
 
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
 
@@ -199,7 +198,6 @@ class TestQueryRegion:
 
     def test_query_region_error(self):
         """Test region query with HTTP error."""
-        import handler
 
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
 
@@ -221,7 +219,6 @@ class TestQueryRegion:
 
     def test_query_region_exception(self):
         """Test region query with exception."""
-        import handler
 
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
 
@@ -244,7 +241,6 @@ class TestAggregateJobs:
 
     def test_aggregate_jobs_success(self):
         """Test successful job aggregation."""
-        import handler
 
         handler._cached_endpoints = {
             "us-east-1": "alb-us-east-1.example.com",
@@ -276,7 +272,6 @@ class TestAggregateJobs:
 
     def test_aggregate_jobs_with_errors(self):
         """Test job aggregation with some region errors."""
-        import handler
 
         handler._cached_endpoints = {
             "us-east-1": "alb-us-east-1.example.com",
@@ -312,7 +307,6 @@ class TestAggregateHealth:
 
     def test_aggregate_health_all_healthy(self):
         """Test health aggregation when all regions are healthy."""
-        import handler
 
         handler._cached_endpoints = {
             "us-east-1": "alb-us-east-1.example.com",
@@ -342,7 +336,6 @@ class TestAggregateHealth:
 
     def test_aggregate_health_degraded(self):
         """Test health aggregation when some regions are unhealthy."""
-        import handler
 
         handler._cached_endpoints = {
             "us-east-1": "alb-us-east-1.example.com",
@@ -379,7 +372,6 @@ class TestAggregateMetrics:
 
     def test_aggregate_metrics_success(self):
         """Test successful metrics aggregation."""
-        import handler
 
         handler._cached_endpoints = {
             "us-east-1": "alb-us-east-1.example.com",
@@ -412,7 +404,6 @@ class TestBulkDeleteJobs:
 
     def test_bulk_delete_jobs_dry_run(self):
         """Test bulk delete with dry run."""
-        import handler
 
         handler._cached_endpoints = {
             "us-east-1": "alb-us-east-1.example.com",
@@ -450,7 +441,6 @@ class TestLambdaHandler:
 
     def test_handler_get_jobs(self):
         """Test handler for GET /global/jobs."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -477,7 +467,6 @@ class TestLambdaHandler:
 
     def test_handler_get_health(self):
         """Test handler for GET /global/health."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -503,7 +492,6 @@ class TestLambdaHandler:
 
     def test_handler_get_status(self):
         """Test handler for GET /global/status."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -527,7 +515,6 @@ class TestLambdaHandler:
 
     def test_handler_delete_jobs(self):
         """Test handler for DELETE /global/jobs."""
-        import handler
 
         handler._cached_endpoints = {"us-east-1": "alb.example.com"}
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
@@ -557,7 +544,6 @@ class TestLambdaHandler:
 
     def test_handler_not_found(self):
         """Test handler for unknown path."""
-        import handler
 
         event = {
             "httpMethod": "GET",
@@ -570,7 +556,6 @@ class TestLambdaHandler:
 
     def test_handler_error(self):
         """Test handler error handling."""
-        import handler
 
         # Force an error by making aggregate_jobs raise an exception
         with patch.object(handler, "aggregate_jobs", side_effect=Exception("Test error")):

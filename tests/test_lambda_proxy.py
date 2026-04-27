@@ -11,12 +11,13 @@ ALB request.
 """
 
 import json
-import sys
 import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 import urllib3
+
+from tests._lambda_imports import load_lambda_module
 
 # ============================================================================
 # proxy_utils
@@ -25,7 +26,11 @@ import urllib3
 
 @pytest.fixture
 def proxy_utils_module():
-    """Import proxy_utils with mocked boto3 and urllib3.PoolManager."""
+    """Import proxy_utils with mocked boto3 and urllib3.PoolManager.
+
+    Loaded via :func:`load_lambda_module` — see
+    ``tests/_lambda_imports.py`` for the rationale.
+    """
     with (
         patch("boto3.client") as mock_boto,
         patch("urllib3.PoolManager") as mock_pool_cls,
@@ -39,21 +44,14 @@ def proxy_utils_module():
             },
         ),
     ):
-        sys.modules.pop("proxy_utils", None)
-        sys.path.insert(0, "lambda/proxy-shared")
-        try:
-            import proxy_utils
+        proxy_utils = load_lambda_module("proxy-shared", "proxy_utils")
 
-            # Reset module-level cache between tests
-            proxy_utils._cached_secret = None
-            proxy_utils._cache_timestamp = 0.0
+        proxy_utils._cached_secret = None
+        proxy_utils._cache_timestamp = 0.0
 
-            mock_sm = mock_boto.return_value
-            mock_pool = mock_pool_cls.return_value
-            yield proxy_utils, mock_sm, mock_pool
-        finally:
-            sys.path.pop(0)
-            sys.modules.pop("proxy_utils", None)
+        mock_sm = mock_boto.return_value
+        mock_pool = mock_pool_cls.return_value
+        yield proxy_utils, mock_sm, mock_pool
 
 
 class TestGetSecretToken:
@@ -177,7 +175,14 @@ class TestForwardRequest:
 
 @pytest.fixture
 def api_gw_proxy_module():
-    """Import api-gateway-proxy handler with mocked dependencies."""
+    """Import api-gateway-proxy handler with mocked dependencies.
+
+    The handler does ``from proxy_utils import ...`` at module load
+    time, so we pass ``shared_dirs=["proxy-shared"]`` to make it
+    resolvable during the load. Both the handler and proxy_utils get
+    loaded under unique names, so there's no ``sys.modules['handler']``
+    pollution between tests.
+    """
     with (
         patch("boto3.client") as mock_boto,
         patch("urllib3.PoolManager") as mock_pool_cls,
@@ -192,28 +197,24 @@ def api_gw_proxy_module():
             },
         ),
     ):
-        sys.modules.pop("handler", None)
-        sys.modules.pop("proxy_utils", None)
-        sys.path.insert(0, "lambda/proxy-shared")
-        sys.path.insert(0, "lambda/api-gateway-proxy")
-        try:
-            import handler
-            import proxy_utils
+        # Load proxy_utils first so we can reset its cache before the
+        # handler imports from it. The handler's own module body does
+        # ``from proxy_utils import ...`` which captures function
+        # references; resetting proxy_utils._cached_secret after the
+        # handler loads is still fine because the functions close over
+        # the module dict.
+        proxy_utils = load_lambda_module("proxy-shared", "proxy_utils")
+        proxy_utils._cached_secret = None
+        proxy_utils._cache_timestamp = 0.0
 
-            proxy_utils._cached_secret = None
-            proxy_utils._cache_timestamp = 0.0
+        handler = load_lambda_module("api-gateway-proxy", shared_dirs=["proxy-shared"])
 
-            mock_sm = mock_boto.return_value
-            mock_sm.get_secret_value.return_value = {
-                "SecretString": json.dumps({"token": "gco-secret-token"})
-            }
-            mock_pool = mock_pool_cls.return_value
-            yield handler, mock_sm, mock_pool
-        finally:
-            sys.path.pop(0)
-            sys.path.remove("lambda/proxy-shared")
-            sys.modules.pop("handler", None)
-            sys.modules.pop("proxy_utils", None)
+        mock_sm = mock_boto.return_value
+        mock_sm.get_secret_value.return_value = {
+            "SecretString": json.dumps({"token": "gco-secret-token"})
+        }
+        mock_pool = mock_pool_cls.return_value
+        yield handler, mock_sm, mock_pool
 
 
 class TestApiGatewayProxyHandler:
@@ -269,7 +270,11 @@ class TestApiGatewayProxyHandler:
 
 @pytest.fixture
 def regional_proxy_module():
-    """Import regional-api-proxy handler with mocked dependencies."""
+    """Import regional-api-proxy handler with mocked dependencies.
+
+    Same load pattern as ``api_gw_proxy_module`` above. See
+    ``tests/_lambda_imports.py`` for the full rationale.
+    """
     with (
         patch("boto3.client") as mock_boto,
         patch("urllib3.PoolManager") as mock_pool_cls,
@@ -284,28 +289,18 @@ def regional_proxy_module():
             },
         ),
     ):
-        sys.modules.pop("handler", None)
-        sys.modules.pop("proxy_utils", None)
-        sys.path.insert(0, "lambda/proxy-shared")
-        sys.path.insert(0, "lambda/regional-api-proxy")
-        try:
-            import handler
-            import proxy_utils
+        proxy_utils = load_lambda_module("proxy-shared", "proxy_utils")
+        proxy_utils._cached_secret = None
+        proxy_utils._cache_timestamp = 0.0
 
-            proxy_utils._cached_secret = None
-            proxy_utils._cache_timestamp = 0.0
+        handler = load_lambda_module("regional-api-proxy", shared_dirs=["proxy-shared"])
 
-            mock_sm = mock_boto.return_value
-            mock_sm.get_secret_value.return_value = {
-                "SecretString": json.dumps({"token": "regional-secret"})
-            }
-            mock_pool = mock_pool_cls.return_value
-            yield handler, mock_sm, mock_pool
-        finally:
-            sys.path.pop(0)
-            sys.path.remove("lambda/proxy-shared")
-            sys.modules.pop("handler", None)
-            sys.modules.pop("proxy_utils", None)
+        mock_sm = mock_boto.return_value
+        mock_sm.get_secret_value.return_value = {
+            "SecretString": json.dumps({"token": "regional-secret"})
+        }
+        mock_pool = mock_pool_cls.return_value
+        yield handler, mock_sm, mock_pool
 
 
 class TestRegionalApiProxyHandler:

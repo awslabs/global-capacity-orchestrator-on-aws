@@ -12,7 +12,6 @@ normal import path.
 """
 
 import json
-import sys
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -280,39 +279,35 @@ class TestQueryRegionUrlEncoding:
 
     def test_special_chars_in_query_params(self):
         """Query params with special characters should be URL-encoded."""
-        sys.path.insert(0, "lambda/cross-region-aggregator")
-        try:
-            import handler
+        from tests._lambda_imports import load_lambda_module
 
-            handler._cached_secret = (
-                "test-token"  # nosec B105 - test fixture, not a real credential
+        handler = load_lambda_module("cross-region-aggregator")
+
+        handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
+
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.data = json.dumps({"ok": True}).encode("utf-8")
+
+        mock_http = MagicMock()
+        mock_http.request.return_value = mock_response
+
+        with patch.object(handler, "http", mock_http):
+            handler.query_region(
+                "us-east-1",
+                "alb.example.com",
+                "/api/v1/jobs",
+                "GET",
+                query_params={"namespace": "my namespace", "label": "app=web&tier=front"},
             )
 
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.data = json.dumps({"ok": True}).encode("utf-8")
-
-            mock_http = MagicMock()
-            mock_http.request.return_value = mock_response
-
-            with patch.object(handler, "http", mock_http):
-                handler.query_region(
-                    "us-east-1",
-                    "alb.example.com",
-                    "/api/v1/jobs",
-                    "GET",
-                    query_params={"namespace": "my namespace", "label": "app=web&tier=front"},
-                )
-
-                call_args = mock_http.request.call_args
-                url = call_args[0][1]
-                # Should be URL-encoded, not raw
-                assert "my+namespace" in url or "my%20namespace" in url
-                assert "app%3Dweb%26tier%3Dfront" in url or "app%3Dweb%26" in url
-                # Should NOT contain raw special chars in query string
-                assert "my namespace" not in url.split("?")[1]
-        finally:
-            sys.path.pop(0)
+            call_args = mock_http.request.call_args
+            url = call_args[0][1]
+            # Should be URL-encoded, not raw
+            assert "my+namespace" in url or "my%20namespace" in url
+            assert "app%3Dweb%26tier%3Dfront" in url or "app%3Dweb%26" in url
+            # Should NOT contain raw special chars in query string
+            assert "my namespace" not in url.split("?")[1]
 
 
 # ============================================================================
@@ -325,56 +320,37 @@ class TestBuildTargetUrlEncoding:
 
     def test_special_chars_encoded(self):
         """Query params with special characters should be URL-encoded."""
-        from importlib import import_module
+        from tests._lambda_imports import load_lambda_module
 
-        sys.path.insert(0, "lambda/proxy-shared")
-        try:
-            # Force reimport to get the updated code
-            if "proxy_utils" in sys.modules:
-                del sys.modules["proxy_utils"]
-            proxy_utils = import_module("proxy_utils")
+        proxy_utils = load_lambda_module("proxy-shared", "proxy_utils")
 
-            url = proxy_utils.build_target_url(
-                "alb.example.com",
-                "/api/v1/jobs",
-                {"namespace": "my namespace", "filter": "a=b&c=d"},
-            )
+        url = proxy_utils.build_target_url(
+            "alb.example.com",
+            "/api/v1/jobs",
+            {"namespace": "my namespace", "filter": "a=b&c=d"},
+        )
 
-            assert "my+namespace" in url or "my%20namespace" in url
-            assert "a%3Db%26c%3Dd" in url or "a%3Db%26" in url
-        finally:
-            sys.path.pop(0)
+        assert "my+namespace" in url or "my%20namespace" in url
+        assert "a%3Db%26c%3Dd" in url or "a%3Db%26" in url
 
     def test_no_query_params(self):
         """URL without query params should have no question mark."""
-        from importlib import import_module
+        from tests._lambda_imports import load_lambda_module
 
-        sys.path.insert(0, "lambda/proxy-shared")
-        try:
-            if "proxy_utils" in sys.modules:
-                del sys.modules["proxy_utils"]
-            proxy_utils = import_module("proxy_utils")
+        proxy_utils = load_lambda_module("proxy-shared", "proxy_utils")
 
-            url = proxy_utils.build_target_url("alb.example.com", "/api/v1/health", None)
+        url = proxy_utils.build_target_url("alb.example.com", "/api/v1/health", None)
 
-            assert url == "http://alb.example.com/api/v1/health"
-            assert "?" not in url
-        finally:
-            sys.path.pop(0)
+        assert url == "http://alb.example.com/api/v1/health"
+        assert "?" not in url
 
     def test_empty_query_params(self):
         """Empty query params dict should produce no query string."""
-        from importlib import import_module
+        from tests._lambda_imports import load_lambda_module
 
-        sys.path.insert(0, "lambda/proxy-shared")
-        try:
-            if "proxy_utils" in sys.modules:
-                del sys.modules["proxy_utils"]
-            proxy_utils = import_module("proxy_utils")
+        proxy_utils = load_lambda_module("proxy-shared", "proxy_utils")
 
-            url = proxy_utils.build_target_url("alb.example.com", "/api/v1/health", {})
+        url = proxy_utils.build_target_url("alb.example.com", "/api/v1/health", {})
 
-            # Empty dict is falsy, so no query string
-            assert "?" not in url
-        finally:
-            sys.path.pop(0)
+        # Empty dict is falsy, so no query string
+        assert "?" not in url

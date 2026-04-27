@@ -11,17 +11,22 @@ fallback when Secrets Manager becomes unavailable.
 """
 
 import json
-import sys
 import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 import urllib3
 
+from tests._lambda_imports import load_lambda_module
+
 
 @pytest.fixture
 def proxy_module():
-    """Import proxy_utils with mocked boto3 and env."""
+    """Import proxy_utils with mocked boto3 and env.
+
+    Loaded via :func:`load_lambda_module` — see
+    ``tests/_lambda_imports.py`` for the rationale.
+    """
     with (
         patch("boto3.client") as mock_client,
         patch.dict(
@@ -34,22 +39,16 @@ def proxy_module():
             },
         ),
     ):
-        sys.modules.pop("proxy_utils", None)
-        sys.path.insert(0, "lambda/proxy-shared")
-        try:
-            import proxy_utils
+        proxy_utils = load_lambda_module("proxy-shared", "proxy_utils")
 
-            proxy_utils._cached_secret = None
-            proxy_utils._cache_timestamp = 0.0
+        proxy_utils._cached_secret = None
+        proxy_utils._cache_timestamp = 0.0
 
-            mock_sm = mock_client.return_value
-            mock_sm.get_secret_value.return_value = {
-                "SecretString": json.dumps({"token": "test-token"})
-            }
-            yield proxy_utils, mock_sm
-        finally:
-            sys.path.pop(0)
-            sys.modules.pop("proxy_utils", None)
+        mock_sm = mock_client.return_value
+        mock_sm.get_secret_value.return_value = {
+            "SecretString": json.dumps({"token": "test-token"})
+        }
+        yield proxy_utils, mock_sm
 
 
 class TestForwardRequestTimeout:

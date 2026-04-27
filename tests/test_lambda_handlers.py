@@ -11,10 +11,11 @@ starts with a clean Secrets Manager client mock.
 """
 
 import json
-import sys
 from unittest.mock import patch
 
 import pytest
+
+from tests._lambda_imports import load_lambda_module
 
 # ============================================================================
 # Secret Rotation Lambda
@@ -23,18 +24,15 @@ import pytest
 
 @pytest.fixture
 def rotation_module():
-    """Import the secret-rotation handler with mocked boto3."""
-    with patch("boto3.client") as mock_client:
-        # Remove cached module if present
-        sys.modules.pop("handler", None)
-        sys.path.insert(0, "lambda/secret-rotation")
-        try:
-            import handler
+    """Import the secret-rotation handler with mocked boto3.
 
-            yield handler, mock_client
-        finally:
-            sys.path.pop(0)
-            sys.modules.pop("handler", None)
+    Loaded via :func:`load_lambda_module` under a unique ``sys.modules``
+    name so this fixture doesn't collide with other Lambda handler
+    tests (see ``tests/_lambda_imports.py``).
+    """
+    with patch("boto3.client") as mock_client:
+        handler = load_lambda_module("secret-rotation")
+        yield handler, mock_client
 
 
 class TestSecretRotationHandler:
@@ -113,7 +111,11 @@ class TestSecretRotationHandler:
 
 @pytest.fixture
 def alb_validator_module():
-    """Import the alb-header-validator handler with mocked boto3 and env."""
+    """Import the alb-header-validator handler with mocked boto3 and env.
+
+    Loaded via :func:`load_lambda_module` — see the secret-rotation
+    fixture above for the rationale.
+    """
     with (
         patch("boto3.client") as mock_client,
         patch.dict(
@@ -124,27 +126,23 @@ def alb_validator_module():
             },
         ),
     ):
-        sys.modules.pop("handler", None)
-        sys.path.insert(0, "lambda/alb-header-validator")
-        try:
-            import handler
+        handler = load_lambda_module("alb-header-validator")
 
-            # Reset module-level cache
-            handler._cached_tokens = set()
-            handler._cache_timestamp = 0.0
+        # Reset module-level cache in case the cached module carries
+        # state from an earlier test (load_lambda_module caches module
+        # objects for the session).
+        handler._cached_tokens = set()
+        handler._cache_timestamp = 0.0
 
-            mock_sm = mock_client.return_value
-            mock_sm.get_secret_value.return_value = {
-                "SecretString": json.dumps({"token": "valid-secret-token"})
-            }
-            # AWSPENDING not found by default (no rotation in progress)
-            mock_sm.exceptions.ResourceNotFoundException = type(
-                "ResourceNotFoundException", (Exception,), {}
-            )
-            yield handler, mock_sm
-        finally:
-            sys.path.pop(0)
-            sys.modules.pop("handler", None)
+        mock_sm = mock_client.return_value
+        mock_sm.get_secret_value.return_value = {
+            "SecretString": json.dumps({"token": "valid-secret-token"})
+        }
+        # AWSPENDING not found by default (no rotation in progress)
+        mock_sm.exceptions.ResourceNotFoundException = type(
+            "ResourceNotFoundException", (Exception,), {}
+        )
+        yield handler, mock_sm
 
 
 class TestAlbHeaderValidator:

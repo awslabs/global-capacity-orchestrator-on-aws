@@ -11,31 +11,33 @@ isolated.
 """
 
 import json
-import sys
 import time
 from unittest.mock import patch
 
 import pytest
 
+from tests._lambda_imports import load_lambda_module
+
 
 @pytest.fixture
 def rotation_module():
-    """Import the secret-rotation handler with mocked boto3."""
-    with patch("boto3.client") as mock_client:
-        sys.modules.pop("handler", None)
-        sys.path.insert(0, "lambda/secret-rotation")
-        try:
-            import handler
+    """Import the secret-rotation handler with mocked boto3.
 
-            yield handler, mock_client
-        finally:
-            sys.path.pop(0)
-            sys.modules.pop("handler", None)
+    See ``tests/_lambda_imports.py`` for why this uses
+    :func:`load_lambda_module` rather than the
+    ``sys.path.insert + import handler`` pattern.
+    """
+    with patch("boto3.client") as mock_client:
+        handler = load_lambda_module("secret-rotation")
+        yield handler, mock_client
 
 
 @pytest.fixture
 def alb_validator_module():
-    """Import the alb-header-validator handler with mocked boto3 and env."""
+    """Import the alb-header-validator handler with mocked boto3 and env.
+
+    See ``tests/_lambda_imports.py`` for the load pattern rationale.
+    """
     with (
         patch("boto3.client") as mock_client,
         patch.dict(
@@ -46,22 +48,16 @@ def alb_validator_module():
             },
         ),
     ):
-        sys.modules.pop("handler", None)
-        sys.path.insert(0, "lambda/alb-header-validator")
-        try:
-            import handler
+        handler = load_lambda_module("alb-header-validator")
 
-            handler._cached_tokens = set()
-            handler._cache_timestamp = 0.0
+        handler._cached_tokens = set()
+        handler._cache_timestamp = 0.0
 
-            mock_sm = mock_client.return_value
-            mock_sm.exceptions.ResourceNotFoundException = type(
-                "ResourceNotFoundException", (Exception,), {}
-            )
-            yield handler, mock_sm
-        finally:
-            sys.path.pop(0)
-            sys.modules.pop("handler", None)
+        mock_sm = mock_client.return_value
+        mock_sm.exceptions.ResourceNotFoundException = type(
+            "ResourceNotFoundException", (Exception,), {}
+        )
+        yield handler, mock_sm
 
 
 class TestFinishSecret:

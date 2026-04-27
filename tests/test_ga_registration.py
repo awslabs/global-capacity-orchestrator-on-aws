@@ -13,11 +13,12 @@ under patched boto3 + urllib3 so each test starts from a clean slate.
 """
 
 import json
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
+
+from tests._lambda_imports import load_lambda_module
 
 # ============================================================================
 # Fixture
@@ -26,7 +27,12 @@ from botocore.exceptions import ClientError
 
 @pytest.fixture
 def ga_module():
-    """Import the ga-registration handler with mocked boto3 and urllib3."""
+    """Import the ga-registration handler with mocked boto3 and urllib3.
+
+    Loaded via :func:`load_lambda_module` — see
+    ``tests/_lambda_imports.py`` for why we don't use the
+    ``sys.path.insert + import handler`` pattern.
+    """
     with (
         patch("boto3.client") as mock_boto_client,
         patch("boto3.Session"),
@@ -44,15 +50,8 @@ def ga_module():
             },
         ),
     ):
-        sys.modules.pop("handler", None)
-        sys.path.insert(0, "lambda/ga-registration")
-        try:
-            import handler
-
-            yield handler, mock_boto_client, mock_pool
-        finally:
-            sys.path.pop(0)
-            sys.modules.pop("handler", None)
+        handler = load_lambda_module("ga-registration")
+        yield handler, mock_boto_client, mock_pool
 
 
 # ============================================================================
