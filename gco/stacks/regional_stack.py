@@ -815,6 +815,11 @@ class GCORegionalStack(Stack):
         # Ensure the update happens after the add-on is created
         update_cw_addon.node.add_dependency(cw_addon)
         update_cw_addon.node.add_dependency(self.cloudwatch_role)
+        # Both UpdateEfsCsiAddonRole and UpdateCloudWatchAddonRole share the same
+        # singleton Lambda (AWS679). On first deploy, IAM propagation of one
+        # policy can race with the other custom resource's invocation. Serializing
+        # them ensures all policies are fully attached before the Lambda executes.
+        update_cw_addon.node.add_dependency(self._efs_csi_addon_role_update)
 
         # Expose the update-addon resource so _apply_kubernetes_manifests can
         # make the kubectl Lambda wait for the IRSA annotation patch to land
