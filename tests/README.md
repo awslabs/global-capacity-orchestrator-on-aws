@@ -7,6 +7,7 @@ This directory contains the test suite for GCO (Global Capacity Orchestrator on 
 - [Running Tests](#running-tests)
 - [Test Organization](#test-organization)
 - [Test Files by Category](#test-files-by-category)
+- [cdk-nag Compliance Testing](#cdk-nag-compliance-testing)
 - [Lambda Handler Import Helper](#lambda-handler-import-helper)
 - [Writing New Tests](#writing-new-tests)
 - [Mocking Patterns](#mocking-patterns)
@@ -118,13 +119,45 @@ Tests are organized by the component they test:
 
 ### CDK Configuration Matrix
 
-The `scripts/test_cdk_synthesis.py` script tests that `cdk synth` succeeds across 20 configuration combinations. This runs in CI and can be run locally:
+The cdk.json configuration matrix — the set of overlays users can pick from (multi-region, FSx on/off, all feature toggles, resource threshold values, helm chart enable/disable, etc.) — lives in `tests/_cdk_config_matrix.CONFIGS` and is the single source of truth shared between two test surfaces:
+
+1. **`scripts/test_cdk_synthesis.py`** runs `cdk synth --quiet` as a subprocess for each of the 24 configs. Catches node/CLI toolchain breakage, hardcoded regions, missing conditional guards, and broken feature-flag interactions. Run locally or in CI:
+
+    ```bash
+    python scripts/test_cdk_synthesis.py
+    ```
+
+2. **`tests/test_nag_compliance.py`** runs the full CDK app in-process against the same 24 configs and asserts zero unsuppressed cdk-nag findings across five rule packs (AwsSolutions, HIPAA Security, NIST 800-53 R5, PCI DSS 3.2.1, Serverless). This is the gate that prevents a user from hitting a cdk-nag error at `cdk deploy` time on a config CI hasn't already validated. See [cdk-nag Compliance Testing](#cdk-nag-compliance-testing) below for details.
+
+Sharing the matrix is deliberate — divergence between the two lists is how we ended up with an `AwsSolutions-IAM5` error on a user's `gco-us-east-1` deploy that neither tool had exercised. Adding a new cdk.json knob means adding one entry to `tests/_cdk_config_matrix.py` and both tests pick it up.
+
+### cdk-nag Compliance Testing
+
+The cdk-nag rule packs that block production deploys (AwsSolutions-IAM5 wildcards, Serverless-LambdaTracing, etc.) are enforced by `tests/test_nag_compliance.py` across every `cdk.json` configuration in the shared matrix. If the test is green, every config the user can pick has been verified to produce zero unsuppressed findings.
+
+**Why this exists:** `cdk synth --quiet` exits 0 even when unsuppressed findings exist, and we shipped a regional-stack `AwsSolutions-IAM5` finding on the auth-secret ARN to v0.1.0 that only surfaced when a user ran `cdk deploy gco-us-east-1` for the first time. The CI matrix at that point only ran `cdk synth --quiet` and called exit 0 success — the finding slipped through.
+
+**How it works:**
+
+- `tests/_cdk_nag_logger.py` implements a custom `INagLogger` that routes every rule-pack finding into a Python list rather than CDK's annotation system. This bypasses the CLI's silent-drop behavior.
+- `tests/test_nag_compliance.py` parameterizes over the full 24-config matrix, builds the complete CDK app (Global, API Gateway, Regional, Monitoring) the same way `app.py` does, attaches all five rule packs plus the capturing logger, calls `app.synth()`, and asserts the finding list is empty.
+- CI runs this as its own job — `unit:cdk:nag-compliance` — with `pytest-xdist`'s `-n auto` (via the `psutil` extra). On an 8-core runner, all 24 configs finish in ~10 minutes.
+
+**Scope discipline for new suppressions:**
+
+Any `NagSuppressions.add_*_suppressions` call this test forces you to add should:
+
+- Scope via `applies_to` to the specific resource (literal ARN, regex-matched token reference, etc.). Never use `applies_to=["Resource::*"]` or `applies_to=["Action::*"]` — those are blanket bypasses that defeat the whole test.
+- Include a `reason` string that explains WHY the wildcard is necessary (cross-stack token, AWS-managed policy, Secrets Manager suffix, etc.) and links to any relevant AWS documentation.
+- Live as close to the construct that created the finding as possible. Resource-level suppressions via `NagSuppressions.add_resource_suppressions` are preferred over stack-level suppressions via `add_stack_suppressions` — the former fail closed when the construct is renamed.
+
+**Debugging findings locally:**
+
+If the test fails, run `scripts/dump_nag_findings.py` for a compact, per-finding report grouped by rule + path + config name. It uses the same test harness and gives cleaner output than pytest's `AssertionError` repr.
 
 ```bash
-python scripts/test_cdk_synthesis.py
+python3 scripts/dump_nag_findings.py
 ```
-
-It covers region variations (us-east, us-west, eu, ap, multi-region), feature toggles (Valkey, FSx, endpoint access modes), resource threshold settings, and combined configurations. This catches hardcoded regions, missing conditional guards, and broken feature flag interactions without deploying anything.
 
 ### Fresh Install Verification
 
@@ -198,6 +231,7 @@ Every Lambda handler test in this repo now loads via this helper. The legacy `sy
 | `test_integration.py` | End-to-end integration tests |
 | `test_sqs_integration.py` | SQS integration tests |
 | `test_lambda_imports.py` | Contract tests for the `tests/_lambda_imports.py` helper — unique module naming, fresh-load semantics, collateral module cleanup when `shared_dirs` is used, input validation against path traversal |
+| `test_nag_compliance.py` | End-to-end cdk-nag regression: synthesizes the full CDK app (Global, API Gateway, Regional, Monitoring) against each of the 24 `cdk.json` overlays in `tests/_cdk_config_matrix.py` and asserts zero unsuppressed findings across all five rule packs (AwsSolutions, HIPAA Security, NIST 800-53 R5, PCI DSS 3.2.1, Serverless). See the [cdk-nag Compliance Testing](#cdk-nag-compliance-testing) section. |
 
 ### Script Tests
 
@@ -217,6 +251,8 @@ actually deploy anything, hit AWS, or spawn long-running subprocesses.
 |------|-------------|
 | `conftest.py` | Shared pytest fixtures and configuration |
 | `_lambda_imports.py` | `load_lambda_module()` helper for importing Lambda handler modules under unique `sys.modules` names. See the [Lambda Handler Import Helper](#lambda-handler-import-helper) section above. |
+| `_cdk_config_matrix.py` | The canonical list of `cdk.json` configuration overlays (24 entries: default, multi-region, feature toggles, thresholds, helm matrix). Imported by both `scripts/test_cdk_synthesis.py` and `tests/test_nag_compliance.py` so the two iterate over the same set. See the [CDK Configuration Matrix](#cdk-stack-tests) section. |
+| `_cdk_nag_logger.py` | `CapturingCdkNagLogger` — a custom `INagLogger` implementation that routes every cdk-nag finding into a Python list instead of CDK's annotation system. Used by `test_nag_compliance.py` and `scripts/dump_nag_findings.py` to assert on findings programmatically. |
 | `__init__.py` | Package initialization |
 
 ## Writing New Tests

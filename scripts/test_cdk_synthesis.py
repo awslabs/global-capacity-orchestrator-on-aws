@@ -6,6 +6,12 @@ combinations. This catches issues like hardcoded regions, missing
 conditional guards, and broken feature flag interactions — without
 deploying anything.
 
+The configuration matrix itself lives in
+``tests/_cdk_config_matrix.CONFIGS`` so both this script and
+``tests/test_nag_compliance.py`` iterate over the same set of cdk.json
+overlays. See the docstring at the top of that module for the
+rationale.
+
 Usage:
     python3 scripts/test_cdk_synthesis.py [--verbose]
 """
@@ -20,6 +26,13 @@ VERBOSE = "--verbose" in sys.argv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CDK_JSON = PROJECT_ROOT / "cdk.json"
+
+# Put the repo root on sys.path so ``tests._cdk_config_matrix`` resolves
+# even though this script lives under ``scripts/``.
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from tests._cdk_config_matrix import CONFIGS  # noqa: E402
 
 # Save original config to restore after each test
 ORIGINAL_CONFIG = CDK_JSON.read_text()
@@ -80,279 +93,6 @@ def synth_with_config(name: str, overrides: dict[str, Any]) -> bool:
     finally:
         # Always restore original config
         CDK_JSON.write_text(ORIGINAL_CONFIG)
-
-
-CONFIGS: list[tuple[str, dict[str, Any]]] = [
-    ("default-regions", {}),
-    (
-        "us-west-regions",
-        {
-            "deployment_regions": {
-                "global": "us-west-2",
-                "api_gateway": "us-west-2",
-                "monitoring": "us-west-2",
-                "regional": ["us-west-1"],
-            }
-        },
-    ),
-    (
-        "eu-regions",
-        {
-            "deployment_regions": {
-                "global": "eu-west-1",
-                "api_gateway": "eu-west-1",
-                "monitoring": "eu-west-1",
-                "regional": ["eu-central-1"],
-            }
-        },
-    ),
-    (
-        "multi-region",
-        {
-            "deployment_regions": {
-                "global": "us-east-2",
-                "api_gateway": "us-east-2",
-                "monitoring": "us-east-2",
-                "regional": ["us-east-1", "us-west-2"],
-            }
-        },
-    ),
-    (
-        "valkey-enabled",
-        {
-            "valkey": {
-                "enabled": True,
-                "max_data_storage_gb": 5,
-                "max_ecpu_per_second": 5000,
-                "snapshot_retention_limit": 1,
-            }
-        },
-    ),
-    (
-        "valkey-disabled",
-        {
-            "valkey": {
-                "enabled": False,
-                "max_data_storage_gb": 5,
-                "max_ecpu_per_second": 5000,
-                "snapshot_retention_limit": 1,
-            }
-        },
-    ),
-    (
-        "fsx-enabled",
-        {
-            "fsx_lustre": {
-                "enabled": True,
-                "storage_capacity_gib": 1200,
-                "deployment_type": "SCRATCH_2",
-                "file_system_type_version": "2.15",
-                "per_unit_storage_throughput": 200,
-                "data_compression_type": "LZ4",
-                "import_path": None,
-                "export_path": None,
-                "auto_import_policy": "NEW_CHANGED_DELETED",
-            }
-        },
-    ),
-    ("fsx-disabled", {"fsx_lustre": {"enabled": False}}),
-    ("endpoint-private", {"eks_cluster": {"endpoint_access": "PRIVATE"}}),
-    ("endpoint-public-private", {"eks_cluster": {"endpoint_access": "PUBLIC_AND_PRIVATE"}}),
-    (
-        "thresholds-all-disabled",
-        {
-            "resource_thresholds": {
-                "cpu_threshold": -1,
-                "memory_threshold": -1,
-                "gpu_threshold": -1,
-                "pending_pods_threshold": -1,
-                "pending_requested_cpu_vcpus": -1,
-                "pending_requested_memory_gb": -1,
-                "pending_requested_gpus": -1,
-            }
-        },
-    ),
-    (
-        "thresholds-aggressive",
-        {
-            "resource_thresholds": {
-                "cpu_threshold": 90,
-                "memory_threshold": 90,
-                "gpu_threshold": 95,
-                "pending_pods_threshold": 50,
-                "pending_requested_cpu_vcpus": 500,
-                "pending_requested_memory_gb": 1000,
-                "pending_requested_gpus": 100,
-            }
-        },
-    ),
-    (
-        "all-features-enabled",
-        {
-            "valkey": {
-                "enabled": True,
-                "max_data_storage_gb": 10,
-                "max_ecpu_per_second": 10000,
-                "snapshot_retention_limit": 3,
-            },
-            "fsx_lustre": {
-                "enabled": True,
-                "storage_capacity_gib": 2400,
-                "deployment_type": "SCRATCH_2",
-                "file_system_type_version": "2.15",
-                "per_unit_storage_throughput": 200,
-                "data_compression_type": "LZ4",
-                "import_path": None,
-                "export_path": None,
-                "auto_import_policy": "NEW_CHANGED_DELETED",
-            },
-            "eks_cluster": {"endpoint_access": "PUBLIC_AND_PRIVATE"},
-        },
-    ),
-    (
-        "minimal-config",
-        {
-            "valkey": {
-                "enabled": False,
-                "max_data_storage_gb": 5,
-                "max_ecpu_per_second": 5000,
-                "snapshot_retention_limit": 1,
-            },
-            "fsx_lustre": {"enabled": False},
-            "eks_cluster": {"endpoint_access": "PRIVATE"},
-        },
-    ),
-    # Asia-Pacific region
-    (
-        "ap-regions",
-        {
-            "deployment_regions": {
-                "global": "ap-southeast-1",
-                "api_gateway": "ap-southeast-1",
-                "monitoring": "ap-southeast-1",
-                "regional": ["ap-northeast-1"],
-            }
-        },
-    ),
-    # Three-region deployment
-    (
-        "three-regions",
-        {
-            "deployment_regions": {
-                "global": "us-east-2",
-                "api_gateway": "us-east-2",
-                "monitoring": "us-east-2",
-                "regional": ["us-east-1", "eu-west-1", "ap-northeast-1"],
-            }
-        },
-    ),
-    # Valkey with large capacity
-    (
-        "valkey-large",
-        {
-            "valkey": {
-                "enabled": True,
-                "max_data_storage_gb": 100,
-                "max_ecpu_per_second": 50000,
-                "snapshot_retention_limit": 7,
-            }
-        },
-    ),
-    # FSx with S3 import
-    (
-        "fsx-with-s3-import",
-        {
-            "fsx_lustre": {
-                "enabled": True,
-                "storage_capacity_gib": 1200,
-                "deployment_type": "PERSISTENT_2",
-                "file_system_type_version": "2.15",
-                "per_unit_storage_throughput": 500,
-                "data_compression_type": "LZ4",
-                "import_path": "s3://my-bucket/data",
-                "export_path": "s3://my-bucket/output",
-                "auto_import_policy": "NEW_CHANGED_DELETED",
-            }
-        },
-    ),
-    # High API throttle limits
-    (
-        "high-api-limits",
-        {
-            "api_gateway": {
-                "throttle_rate_limit": 10000,
-                "throttle_burst_limit": 20000,
-                "log_level": "ERROR",
-                "metrics_enabled": True,
-                "tracing_enabled": False,
-            }
-        },
-    ),
-    # Large node group config
-    (
-        "large-node-groups",
-        {
-            "node_groups": {
-                "gpu_instances": ["p4d.24xlarge", "g5.48xlarge"],
-                "min_size": 0,
-                "max_size": 500,
-                "desired_size": 10,
-            }
-        },
-    ),
-    # Helm: Slurm and YuniKorn enabled
-    (
-        "helm-slurm-yunikorn-enabled",
-        {
-            "helm": {
-                "slurm": {"enabled": True},
-                "yunikorn": {"enabled": True},
-            }
-        },
-    ),
-    # Helm: minimal — only GPU operator and Kueue
-    (
-        "helm-minimal",
-        {
-            "helm": {
-                "keda": {"enabled": False},
-                "volcano": {"enabled": False},
-                "kuberay": {"enabled": False},
-                "nvidia_network_operator": {"enabled": False},
-                "aws_efa_device_plugin": {"enabled": False},
-            }
-        },
-    ),
-    # Helm: everything disabled except GPU basics
-    (
-        "helm-gpu-only",
-        {
-            "helm": {
-                "keda": {"enabled": False},
-                "volcano": {"enabled": False},
-                "kuberay": {"enabled": False},
-                "kueue": {"enabled": False},
-                "cert_manager": {"enabled": False},
-                "nvidia_network_operator": {"enabled": False},
-                "aws_efa_device_plugin": {"enabled": False},
-                "aws_neuron_device_plugin": {"enabled": False},
-            }
-        },
-    ),
-    # Helm: all schedulers enabled
-    (
-        "helm-all-schedulers",
-        {
-            "helm": {
-                "slurm": {"enabled": True},
-                "yunikorn": {"enabled": True},
-                "volcano": {"enabled": True},
-                "kueue": {"enabled": True},
-                "kuberay": {"enabled": True},
-            }
-        },
-    ),
-]
 
 
 def main() -> int:

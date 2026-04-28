@@ -350,7 +350,11 @@ mypy gco/stacks/ app.py
 bandit -r gco/ cli/ -c pyproject.toml --severity-level medium
 
 # Run tests with coverage (matches unit:pytest:core)
-pytest tests/ --cov=gco --cov=cli --cov-report=html --cov-fail-under=85
+pytest tests/ --cov=gco --cov=cli --cov-report=html --cov-fail-under=85 \
+    --ignore=tests/test_nag_compliance.py
+
+# Run cdk-nag compliance matrix (matches unit:cdk:nag-compliance)
+pytest tests/test_nag_compliance.py -n auto
 
 # Run CDK config matrix (matches unit:cdk:config-matrix)
 python scripts/test_cdk_synthesis.py

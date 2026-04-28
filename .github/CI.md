@@ -95,7 +95,7 @@ All CI workflows share the same safety defaults:
 
 Shared logic used by multiple jobs. Invoked with `uses: ./.github/actions/<name>`.
 
-- **`actions/build-lambda-package`** — stages `lambda/kubectl-applier-simple-build/` and `lambda/helm-installer-build/` that CDK synth, pytest, and KICS scans all expect. Used by `unit:cdk:synth`, `unit:cdk:config-matrix`, `unit:pytest:core`, and `security:kics:iac`.
+- **`actions/build-lambda-package`** — stages `lambda/kubectl-applier-simple-build/` and `lambda/helm-installer-build/` that CDK synth, pytest, and KICS scans all expect. Used by `unit:cdk:synth`, `unit:cdk:config-matrix`, `unit:cdk:nag-compliance`, `unit:pytest:core`, and `security:kics:iac`.
 
 ## CodeQL config
 
@@ -291,7 +291,12 @@ mypy gco/ cli/ mcp/ scripts/ --exclude 'gco/stacks/'
 mypy gco/stacks/ app.py          # requires ".[cdk,typecheck]"
 
 # Unit tests (matches unit:pytest:core)
-pytest tests/ --cov=gco --cov=cli --cov-fail-under=85 --ignore=tests/test_integration.py
+pytest tests/ --cov=gco --cov=cli --cov-fail-under=85 \
+    --ignore=tests/test_integration.py \
+    --ignore=tests/test_nag_compliance.py
+
+# cdk-nag compliance matrix (matches unit:cdk:nag-compliance)
+pytest tests/test_nag_compliance.py -n auto
 
 # CDK synth / config matrix (matches unit:cdk:synth and unit:cdk:config-matrix)
 cdk synth --quiet

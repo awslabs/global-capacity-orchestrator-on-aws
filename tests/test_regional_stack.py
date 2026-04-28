@@ -1136,6 +1136,123 @@ class TestAwsCustomResourceSharedRole:
         )
 
 
+class TestServiceAccountRoleSecretSuppression:
+    """Regression guard for the v0.1.2+ deploy-blocking cdk-nag finding
+    on the auth secret wildcard.
+
+    The ``ServiceAccountRole``'s inline policy grants
+    ``secretsmanager:GetSecretValue`` on the cross-stack auth secret
+    ARN with a trailing ``*`` so it matches both the full ARN (with
+    the 6-character suffix AWS appends) and the partial ARN form.
+    cdk-nag's ``AwsSolutions-IAM5`` rule flags that wildcard and
+    blocks ``cdk deploy`` unless the policy has a scoped
+    ``rules_to_suppress`` entry with a matching ``applies_to``.
+
+    The suppression was absent on initial launch, which surfaced as a
+    deploy-time failure when first deploying to a region whose
+    regional stack had never synthesized before. This test ensures
+    every synthesized regional stack carries the suppression, so any
+    future refactor that drops or renames it fails PR CI instead of
+    deploy.
+    """
+
+    def _synth(self, fsx_enabled: bool, logical_name: str):
+        from gco.stacks.regional_stack import GCORegionalStack
+
+        app = cdk.App()
+        config = MockConfigLoader(app, fsx_enabled=fsx_enabled)
+
+        with (
+            patch("gco.stacks.regional_stack.ecr_assets.DockerImageAsset") as mock_docker,
+            patch.object(
+                GCORegionalStack,
+                "_create_helm_installer_lambda",
+                TestRegionalStackSynthesis._mock_helm_installer,
+            ),
+        ):
+            mock_image = MagicMock()
+            mock_image.image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/test:latest"
+            mock_docker.return_value = mock_image
+
+            stack = GCORegionalStack(
+                app,
+                logical_name,
+                config=config,
+                region="us-east-1",
+                auth_secret_arn=(
+                    "arn:aws:secretsmanager:us-east-2:123456789012"
+                    ":secret:gco/api-gateway-auth-token"
+                ),
+                env=cdk.Environment(account="123456789012", region="us-east-1"),
+            )
+
+        return stack, assertions.Template.from_stack(stack)
+
+    def test_service_account_role_policy_has_iam5_suppression(self):
+        """The ServiceAccountRole's DefaultPolicy must carry a
+        scoped AwsSolutions-IAM5 suppression for the auth secret
+        wildcard."""
+        _stack, template = self._synth(fsx_enabled=False, logical_name="test-sa-role-suppression")
+
+        policies = template.find_resources("AWS::IAM::Policy")
+        sa_policies = {
+            lid: res
+            for lid, res in policies.items()
+            if lid.startswith("ServiceAccountRoleDefaultPolicy")
+        }
+        assert sa_policies, (
+            "ServiceAccountRole DefaultPolicy not found — the IAM5 "
+            "suppression check below can't run. Something in the "
+            "regional stack structure has changed."
+        )
+
+        # Find the IAM5 suppression among the policy's metadata rules.
+        for lid, policy in sa_policies.items():
+            metadata = policy.get("Metadata", {}) or {}
+            supps = (metadata.get("cdk_nag") or {}).get("rules_to_suppress") or []
+            iam5 = [s for s in supps if s.get("id") == "AwsSolutions-IAM5"]
+            assert iam5, (
+                f"{lid} is missing an AwsSolutions-IAM5 suppression. The "
+                f"inline policy grants secretsmanager:GetSecretValue on a "
+                f"wildcarded ARN (secret ARN + '*'), which cdk-nag will "
+                f"block deploy on. Add a scoped NagSuppressions entry "
+                f"matching the GCOAuthSecret token."
+            )
+
+            # The appliesTo must specifically scope the suppression to
+            # the auth secret, not just a blanket wildcard entry.
+            applies_to = []
+            for s in iam5:
+                at = s.get("applies_to") or s.get("appliesTo") or []
+                applies_to.extend(at)
+            assert applies_to, (
+                f"{lid}'s AwsSolutions-IAM5 suppression has no appliesTo. "
+                f"Unscoped IAM5 suppressions are not acceptable — the "
+                f"suppression must pin to the specific GCOAuthSecret "
+                f"resource via a regex or literal pattern."
+            )
+
+            # At least one entry must match the GCOAuthSecret token.
+            # Accepts both literal string patterns and regex dicts.
+            matched = False
+            for entry in applies_to:
+                if isinstance(entry, str) and "GCOAuthSecret" in entry:
+                    matched = True
+                    break
+                if isinstance(entry, dict):
+                    raw = entry.get("regex", "")
+                    if "GCOAuthSecret" in raw:
+                        matched = True
+                        break
+            assert matched, (
+                f"{lid}'s AwsSolutions-IAM5 suppression has appliesTo "
+                f"entries but none of them reference GCOAuthSecret. The "
+                f"suppression must specifically scope to the auth secret "
+                f"resource, not some unrelated wildcard. Found entries: "
+                f"{applies_to!r}"
+            )
+
+
 class TestRegionalStackGetters:
     """Tests for RegionalStack getter methods."""
 

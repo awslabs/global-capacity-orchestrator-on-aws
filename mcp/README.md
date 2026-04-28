@@ -305,6 +305,7 @@ Source code resources cover `gco/`, `cli/`, `lambda/`, `mcp/`, `scripts/`, `demo
 | `scripts://gco/setup-cluster-access.sh` | Configure kubectl access to EKS |
 | `scripts://gco/bump_version.py` | Version bumping across all locations |
 | `scripts://gco/test_cdk_synthesis.py` | CDK synthesis matrix testing |
+| `scripts://gco/dump_nag_findings.py` | cdk-nag compliance debugging helper |
 | `scripts://gco/test_webhook_delivery.py` | Webhook dispatcher testing |
 
 ### Try it

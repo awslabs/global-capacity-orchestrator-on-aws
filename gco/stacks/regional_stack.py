@@ -1027,6 +1027,40 @@ class GCORegionalStack(Stack):
             )
         )
 
+        # cdk-nag suppression: the trailing ``*`` on the auth secret
+        # ARN above is intentional and is NOT a broad wildcard. Secrets
+        # Manager appends a random 6-character suffix to every secret
+        # ARN at creation time (``arn:...:secret:my-secret-AbC123``).
+        # The secret lives in a separate stack (api_gateway_global_stack)
+        # and is referenced here via a cross-stack token, so the actual
+        # suffix is unknown at synth time. The wildcard matches the
+        # suffix only — every finding under this rule is still scoped
+        # to this single secret.
+        from cdk_nag import NagSuppressions
+
+        NagSuppressions.add_resource_suppressions(
+            self.service_account_role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "The trailing ``*`` matches the 6-character "
+                        "random suffix Secrets Manager appends to secret "
+                        "ARNs. The secret is created in a different stack "
+                        "(api_gateway_global_stack) and referenced here "
+                        "via a cross-stack token, so the actual suffix "
+                        "isn't known at synth time. The wildcard is "
+                        "bounded to a single secret — it does not grant "
+                        "access to any other secret in the account."
+                    ),
+                    "appliesTo": [
+                        {"regex": "/^Resource::<GCOAuthSecret.*>\\*$/"},
+                    ],
+                },
+            ],
+            apply_to_children=True,
+        )
+
         # Add permissions for AWS Load Balancer Controller
         self.service_account_role.add_to_policy(
             iam.PolicyStatement(

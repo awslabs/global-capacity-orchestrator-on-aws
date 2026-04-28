@@ -9,6 +9,7 @@
 # Jobs (alphabetical by display name):
 #   - unit:bats:shell              — BATS shell tests
 #   - unit:cdk:config-matrix       — scripts/test_cdk_synthesis.py (config combos)
+#   - unit:cdk:nag-compliance      — cdk-nag compliance across full config matrix
 #   - unit:cdk:synth               — cdk synth of the default config
 #   - unit:cli:smoke               — gco --help and all subcommand help pages
 #   - unit:fresh-install           — pip install from scratch, verify imports
@@ -66,6 +67,7 @@ jobs:
         run: |
           pytest tests/ -v \
             --ignore=tests/test_integration.py \
+            --ignore=tests/test_nag_compliance.py \
             --cov=gco --cov=cli \
             --cov-report=xml --cov-report=html --cov-report=json \
             --cov-report=term-missing \
@@ -251,6 +253,60 @@ jobs:
       - name: Run config matrix
         run: python3 scripts/test_cdk_synthesis.py --verbose
 
+  unit-cdk-nag-compliance:
+    name: "unit:cdk:nag-compliance"
+    # Synthesizes every cdk.json configuration in the shared matrix
+    # (``tests/_cdk_config_matrix.CONFIGS``) through a full cdk-nag
+    # traversal and asserts zero unsuppressed findings. This is the
+    # hard gate against shipping an IAM-wildcard or similar cdk-nag
+    # error to a user's ``cdk deploy``: if the test is green, every
+    # configuration the user can pick from cdk.json has been validated
+    # against AwsSolutions, HIPAA Security, NIST 800-53 R5, PCI DSS
+    # 3.2.1, and Serverless rule packs in the same process that
+    # ``app.py`` uses for real deploys.
+    #
+    # Runs in its own job with pytest-xdist parallelism (``-n auto``
+    # picks the core count via psutil). On an 8-core runner all 24
+    # configs complete in ~10 minutes. The tests are parallel-safe by
+    # construction — each config builds a fresh ``cdk.App`` with no
+    # shared module state.
+    #
+    # Separate from ``unit:pytest:core`` because the rest of the
+    # suite isn't parallel-safe and we don't want to either
+    # (a) pay the serial cost here, or (b) split a single pytest
+    # invocation across two --dist modes.
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,mcp]"
+      - uses: ./.github/actions/build-lambda-package
+      - name: Run cdk-nag compliance matrix
+        run: |
+          pytest tests/test_nag_compliance.py -n auto -v \
+            --junitxml=report-nag-compliance.xml
+      - name: Upload nag compliance report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nag-compliance-report
+          path: report-nag-compliance.xml
+          retention-days: 7
+
   unit-lockfile-freshness:
     name: "unit:lockfile:freshness"
     runs-on: ubuntu-latest
@@ -272,6 +328,15 @@ jobs:
         # this, an unrelated transitive release between a local pip-compile
         # and the CI run would falsely flag drift. See the comment block in
         # the retired .gitlab-ci.yml for the full rationale.
+        #
+        # ``--all-extras`` pins every optional-dependency group (dev, test,
+        # cdk, mcp, typecheck, lint, security, inference-monitor). Without
+        # it, only the runtime ``dependencies`` list gets resolved and CI's
+        # own toolchain (pytest, pytest-xdist, moto, black, ruff, mypy,
+        # aws-cdk-lib, etc.) installs against live PyPI on every run. That
+        # means a transitive bump to pluggy or coverage between PR runs
+        # could silently change test behavior. Locking everything keeps
+        # every job reproducible against a known pinned tree.
         env:
           # pip-compile invokes pip, which can hit interactive keyring prompts
           # on CI ("Unhandled exception: EOF when reading a line"). Disabling
@@ -280,13 +345,13 @@ jobs:
         run: |
           set -euo pipefail
           cp requirements-lock.txt /tmp/requirements-lock-fresh.txt
-          pip-compile --no-emit-index-url --strip-extras -o /tmp/requirements-lock-fresh.txt pyproject.toml -q
-          grep -v '^#' requirements-lock.txt > /tmp/lock-no-comments.txt
-          grep -v '^#' /tmp/requirements-lock-fresh.txt > /tmp/fresh-no-comments.txt
+          pip-compile --all-extras --no-emit-index-url --strip-extras -o /tmp/requirements-lock-fresh.txt pyproject.toml -q
+          grep -vE '^\s*#' requirements-lock.txt | grep -v '^gco-cli @ file' > /tmp/lock-no-comments.txt
+          grep -vE '^\s*#' /tmp/requirements-lock-fresh.txt | grep -v '^gco-cli @ file' > /tmp/fresh-no-comments.txt
           if ! diff /tmp/lock-no-comments.txt /tmp/fresh-no-comments.txt; then
             echo ""
             echo "ERROR: requirements-lock.txt is stale."
-            echo "Run: pip-compile --no-emit-index-url --strip-extras -o requirements-lock.txt pyproject.toml"
+            echo "Run: pip-compile --all-extras --no-emit-index-url --strip-extras -o requirements-lock.txt pyproject.toml"
             echo "Then commit the updated lockfile."
             exit 1
           fi
