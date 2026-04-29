@@ -3,7 +3,7 @@ Unit tests for gco/models data classes.
 
 Covers validation rules across the model surface: ResourceThresholds
 (boundary values, -1 disable sentinel, out-of-range rejection),
-NodeGroupConfig (empty name rejected), ResourceUtilization, HealthStatus,
+ResourceUtilization, HealthStatus,
 KubernetesManifest, ManifestSubmissionRequest/Response, and
 ResourceStatus. Each dataclass enforces invariants in __post_init__,
 and these tests pin the error messages so callers can rely on them.
@@ -18,7 +18,6 @@ from gco.models import (
     KubernetesManifest,
     ManifestSubmissionRequest,
     ManifestSubmissionResponse,
-    NodeGroupConfig,
     ResourceStatus,
     ResourceThresholds,
     ResourceUtilization,
@@ -67,77 +66,6 @@ class TestResourceThresholds:
         """Test that invalid GPU threshold raises error."""
         with pytest.raises(ValueError, match="gpu_threshold"):
             ResourceThresholds(cpu_threshold=80, memory_threshold=85, gpu_threshold=-10)
-
-
-class TestNodeGroupConfig:
-    """Tests for NodeGroupConfig model."""
-
-    def test_valid_config(self):
-        """Test creating valid node group config."""
-        config = NodeGroupConfig(
-            name="gpu-nodes",
-            instance_types=["g4dn.xlarge", "g5.xlarge"],
-            scaling_config={"min_size": 0, "max_size": 10, "desired_size": 2},
-            labels={"workload-type": "gpu"},
-            taints=[{"key": "nvidia.com/gpu", "value": "true", "effect": "NoSchedule"}],
-        )
-        assert config.name == "gpu-nodes"
-        assert len(config.instance_types) == 2
-
-    def test_empty_name_raises_error(self):
-        """Test that empty name raises error."""
-        with pytest.raises(ValueError, match="name cannot be empty"):
-            NodeGroupConfig(
-                name="",
-                instance_types=["g4dn.xlarge"],
-                scaling_config={"min_size": 0, "max_size": 10, "desired_size": 2},
-                labels={},
-                taints=[],
-            )
-
-    def test_empty_instance_types_raises_error(self):
-        """Test that empty instance types raises error."""
-        with pytest.raises(ValueError, match="At least one instance type"):
-            NodeGroupConfig(
-                name="gpu-nodes",
-                instance_types=[],
-                scaling_config={"min_size": 0, "max_size": 10, "desired_size": 2},
-                labels={},
-                taints=[],
-            )
-
-    def test_missing_scaling_keys_raises_error(self):
-        """Test that missing scaling config keys raises error."""
-        with pytest.raises(ValueError, match="Scaling config must contain"):
-            NodeGroupConfig(
-                name="gpu-nodes",
-                instance_types=["g4dn.xlarge"],
-                scaling_config={"min_size": 0, "max_size": 10},  # Missing desired_size
-                labels={},
-                taints=[],
-            )
-
-    def test_min_greater_than_max_raises_error(self):
-        """Test that min_size > max_size raises error."""
-        with pytest.raises(ValueError, match="min_size cannot be greater than max_size"):
-            NodeGroupConfig(
-                name="gpu-nodes",
-                instance_types=["g4dn.xlarge"],
-                scaling_config={"min_size": 10, "max_size": 5, "desired_size": 7},
-                labels={},
-                taints=[],
-            )
-
-    def test_desired_out_of_range_raises_error(self):
-        """Test that desired_size outside range raises error."""
-        with pytest.raises(ValueError, match="desired_size must be between"):
-            NodeGroupConfig(
-                name="gpu-nodes",
-                instance_types=["g4dn.xlarge"],
-                scaling_config={"min_size": 2, "max_size": 10, "desired_size": 1},
-                labels={},
-                taints=[],
-            )
 
 
 class TestResourceUtilization:

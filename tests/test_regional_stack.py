@@ -4,7 +4,7 @@ Tests for gco/stacks/regional_stack.GCORegionalStack.
 Synthesizes the regional stack — VPC, EKS cluster, EFS, optionally FSx,
 kubectl-applier Lambda, helm-installer Lambda, the MCP role, drift
 detection, and the NetworkPolicy/RBAC apply pipeline — against a
-MockConfigLoader that supplies ClusterConfig, NodeGroupConfig, ALB
+MockConfigLoader that supplies ClusterConfig, ALB
 config, manifest processor config, and the API Gateway config. Patches
 the DockerImageAsset and helm-installer builder so tests don't need a
 Docker daemon. The MockConfigLoader here is reused by sibling test
@@ -50,17 +50,6 @@ class MockConfigLoader:
 
         return ResourceThresholds(cpu_threshold=80, memory_threshold=85, gpu_threshold=90)
 
-    def get_node_group_config(self):
-        from gco.models import NodeGroupConfig
-
-        return NodeGroupConfig(
-            name="gpu-nodes",
-            instance_types=["g4dn.xlarge"],
-            scaling_config={"min_size": 0, "max_size": 10, "desired_size": 1},
-            labels={"workload-type": "gpu"},
-            taints=[],
-        )
-
     def get_cluster_config(self, region):
         from gco.models import ClusterConfig
 
@@ -68,7 +57,6 @@ class MockConfigLoader:
             region=region,
             cluster_name=f"gco-test-{region}",
             kubernetes_version="1.35",
-            node_groups=[self.get_node_group_config()],
             addons=["metrics-server"],
             resource_thresholds=self.get_resource_thresholds(),
         )
@@ -417,16 +405,6 @@ class TestConfigLoaderValidation:
         assert "eu-west-1" in ConfigLoader.VALID_REGIONS
         assert "invalid-region" not in ConfigLoader.VALID_REGIONS
 
-    def test_config_loader_valid_gpu_instances(self):
-        """Test ConfigLoader VALID_GPU_INSTANCES constant."""
-        from gco.config.config_loader import ConfigLoader
-
-        assert "g4dn.xlarge" in ConfigLoader.VALID_GPU_INSTANCES
-        assert "g5.xlarge" in ConfigLoader.VALID_GPU_INSTANCES
-        assert "p3.2xlarge" in ConfigLoader.VALID_GPU_INSTANCES
-        assert "p4d.24xlarge" in ConfigLoader.VALID_GPU_INSTANCES
-        assert "t3.micro" not in ConfigLoader.VALID_GPU_INSTANCES
-
     def test_config_validation_error_class(self):
         """Test ConfigValidationError exception class."""
         from gco.config.config_loader import ConfigValidationError
@@ -521,22 +499,14 @@ class TestClusterConfigModel:
 
     def test_cluster_config_creation(self):
         """Test creating ClusterConfig."""
-        from gco.models import ClusterConfig, NodeGroupConfig, ResourceThresholds
+        from gco.models import ClusterConfig, ResourceThresholds
 
         thresholds = ResourceThresholds(cpu_threshold=80, memory_threshold=85, gpu_threshold=90)
-        node_group = NodeGroupConfig(
-            name="gpu-nodes",
-            instance_types=["g4dn.xlarge"],
-            scaling_config={"min_size": 0, "max_size": 10, "desired_size": 1},
-            labels={},
-            taints=[],
-        )
 
         config = ClusterConfig(
             region="us-east-1",
             cluster_name="test-cluster",
             kubernetes_version="1.35",
-            node_groups=[node_group],
             addons=["metrics-server"],
             resource_thresholds=thresholds,
         )
@@ -544,28 +514,6 @@ class TestClusterConfigModel:
         assert config.region == "us-east-1"
         assert config.cluster_name == "test-cluster"
         assert config.kubernetes_version == "1.35"
-        assert len(config.node_groups) == 1
-
-
-class TestNodeGroupConfigModel:
-    """Tests for NodeGroupConfig model."""
-
-    def test_node_group_config_creation(self):
-        """Test creating NodeGroupConfig."""
-        from gco.models import NodeGroupConfig
-
-        config = NodeGroupConfig(
-            name="gpu-nodes",
-            instance_types=["g4dn.xlarge", "g5.xlarge"],
-            scaling_config={"min_size": 0, "max_size": 10, "desired_size": 1},
-            labels={"workload-type": "gpu"},
-            taints=[{"key": "nvidia.com/gpu", "value": "true", "effect": "NoSchedule"}],
-        )
-
-        assert config.name == "gpu-nodes"
-        assert "g4dn.xlarge" in config.instance_types
-        assert config.scaling_config["min_size"] == 0
-        assert config.labels["workload-type"] == "gpu"
 
 
 class TestResourceThresholdsModel:

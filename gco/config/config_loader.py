@@ -10,7 +10,6 @@ Configuration Sections:
 - regions: List of AWS regions to deploy to
 - kubernetes_version: EKS Kubernetes version
 - resource_thresholds: CPU/memory/GPU utilization thresholds
-- node_groups: GPU node group configuration
 - global_accelerator: Global Accelerator settings
 - alb_config: Application Load Balancer health check settings
 - manifest_processor: Manifest validation and resource limits
@@ -31,7 +30,7 @@ from typing import Any, cast
 import boto3
 from aws_cdk import App
 
-from gco.models import ClusterConfig, NodeGroupConfig, ResourceThresholds
+from gco.models import ClusterConfig, ResourceThresholds
 
 logger = logging.getLogger(__name__)
 
@@ -65,34 +64,6 @@ class ConfigLoader:
         "sa-east-1",
     }
 
-    # Valid GPU instance types
-    VALID_GPU_INSTANCES = {
-        "g4dn.xlarge",
-        "g4dn.2xlarge",
-        "g4dn.4xlarge",
-        "g4dn.8xlarge",
-        "g4dn.12xlarge",
-        "g4dn.16xlarge",
-        "g4ad.xlarge",
-        "g4ad.2xlarge",
-        "g4ad.4xlarge",
-        "g4ad.8xlarge",
-        "g4ad.16xlarge",
-        "p3.2xlarge",
-        "p3.8xlarge",
-        "p3.16xlarge",
-        "p3dn.24xlarge",
-        "p4d.24xlarge",
-        "g5.xlarge",
-        "g5.2xlarge",
-        "g5.4xlarge",
-        "g5.8xlarge",
-        "g5.12xlarge",
-        "g5.16xlarge",
-        "g5.24xlarge",
-        "g5.48xlarge",
-    }
-
     def __init__(self, app: App):
         self.app = app
         self._validate_configuration()
@@ -110,7 +81,6 @@ class ConfigLoader:
             "project_name",
             "kubernetes_version",
             "resource_thresholds",
-            "node_groups",
         ]
         for field in required_fields:
             if not self.app.node.try_get_context(field):
@@ -128,9 +98,6 @@ class ConfigLoader:
 
         # Validate resource thresholds
         self._validate_resource_thresholds()
-
-        # Validate node groups
-        self._validate_node_groups()
 
         # Validate Global Accelerator config
         self._validate_global_accelerator_config()
@@ -195,40 +162,6 @@ class ConfigLoader:
                     raise ConfigValidationError(
                         f"{opt_threshold} must be a non-negative integer (or -1 to disable), got {value}"
                     )
-
-    def _validate_node_groups(self) -> None:
-        """Validate node group configuration"""
-        node_config = self.app.node.try_get_context("node_groups")
-
-        required_fields = ["gpu_instances", "min_size", "max_size", "desired_size"]
-        for field in required_fields:
-            if field not in node_config:
-                raise ConfigValidationError(f"Missing node group configuration: {field}")
-
-        # Validate instance types
-        gpu_instances = node_config["gpu_instances"]
-        if not isinstance(gpu_instances, list) or not gpu_instances:
-            raise ConfigValidationError("gpu_instances must be a non-empty list")
-
-        for instance_type in gpu_instances:
-            if instance_type not in self.VALID_GPU_INSTANCES:
-                raise ConfigValidationError(
-                    f"Invalid GPU instance type '{instance_type}'. Valid types: {sorted(self.VALID_GPU_INSTANCES)}"
-                )
-
-        # Validate scaling values
-        min_size = node_config["min_size"]
-        max_size = node_config["max_size"]
-        desired_size = node_config["desired_size"]
-
-        if not all(isinstance(x, int) and x >= 0 for x in [min_size, max_size, desired_size]):
-            raise ConfigValidationError("Scaling values must be non-negative integers")
-
-        if min_size > max_size:
-            raise ConfigValidationError("min_size cannot be greater than max_size")
-
-        if desired_size < min_size or desired_size > max_size:
-            raise ConfigValidationError("desired_size must be between min_size and max_size")
 
     def _validate_global_accelerator_config(self) -> None:
         """Validate Global Accelerator configuration"""
@@ -465,33 +398,12 @@ class ConfigLoader:
             pending_requested_gpus=thresholds_config.get("pending_requested_gpus", 8),
         )
 
-    def get_node_group_config(self) -> NodeGroupConfig:
-        """Get node group configuration"""
-        node_config = self.app.node.try_get_context("node_groups") or {
-            "gpu_instances": ["g4dn.xlarge"],
-            "min_size": 0,
-            "max_size": 10,
-            "desired_size": 1,
-        }
-        return NodeGroupConfig(
-            name="gpu-nodes",
-            instance_types=node_config["gpu_instances"],
-            scaling_config={
-                "min_size": node_config["min_size"],
-                "max_size": node_config["max_size"],
-                "desired_size": node_config["desired_size"],
-            },
-            labels={"workload-type": "gpu-compute", "node-type": "gpu"},
-            taints=[{"key": "nvidia.com/gpu", "value": "true", "effect": "NoSchedule"}],
-        )
-
     def get_cluster_config(self, region: str) -> ClusterConfig:
         """Get complete cluster configuration for a region"""
         return ClusterConfig(
             region=region,
             cluster_name=f"{self.get_project_name()}-{region}",
             kubernetes_version=self.get_kubernetes_version(),
-            node_groups=[self.get_node_group_config()],
             addons=["metrics-server"],
             resource_thresholds=self.get_resource_thresholds(),
         )

@@ -3,7 +3,6 @@ Cluster configuration data models for GCO (Global Capacity Orchestrator on AWS).
 
 This module defines dataclasses for EKS cluster configuration including:
 - ResourceThresholds: CPU/memory/GPU utilization thresholds for health monitoring
-- NodeGroupConfig: EKS node group configuration (instance types, scaling, labels)
 - ClusterConfig: Complete cluster configuration combining all settings
 
 All models include validation in __post_init__ to ensure data integrity.
@@ -70,50 +69,12 @@ class ResourceThresholds:
 
 
 @dataclass
-class NodeGroupConfig:
-    """Configuration for EKS node groups"""
-
-    name: str
-    instance_types: list[str]
-    scaling_config: dict[str, int]  # min_size, max_size, desired_size
-    labels: dict[str, str]
-    taints: list[dict[str, str]]
-
-    def __post_init__(self) -> None:
-        """Validate node group configuration"""
-        if not self.name:
-            raise ValueError("Node group name cannot be empty")
-
-        if not self.instance_types:
-            raise ValueError("At least one instance type must be specified")
-
-        required_scaling_keys = {"min_size", "max_size", "desired_size"}
-        if not required_scaling_keys.issubset(self.scaling_config.keys()):
-            raise ValueError(f"Scaling config must contain keys: {required_scaling_keys}")
-
-        # Validate scaling values
-        min_size = self.scaling_config["min_size"]
-        max_size = self.scaling_config["max_size"]
-        desired_size = self.scaling_config["desired_size"]
-
-        if min_size < 0 or max_size < 0 or desired_size < 0:
-            raise ValueError("Scaling values must be non-negative")
-
-        if min_size > max_size:
-            raise ValueError("min_size cannot be greater than max_size")
-
-        if desired_size < min_size or desired_size > max_size:
-            raise ValueError("desired_size must be between min_size and max_size")
-
-
-@dataclass
 class ClusterConfig:
     """Complete configuration for an EKS cluster"""
 
     region: str
     cluster_name: str
     kubernetes_version: str
-    node_groups: list[NodeGroupConfig]
     addons: list[str]
     resource_thresholds: ResourceThresholds
 
@@ -127,11 +88,3 @@ class ClusterConfig:
 
         if not self.kubernetes_version:
             raise ValueError("Kubernetes version cannot be empty")
-
-        if not self.node_groups:
-            raise ValueError("At least one node group must be specified")
-
-        # Validate node group names are unique
-        node_group_names = [ng.name for ng in self.node_groups]
-        if len(node_group_names) != len(set(node_group_names)):
-            raise ValueError("Node group names must be unique")

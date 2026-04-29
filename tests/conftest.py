@@ -17,7 +17,6 @@ import pytest
 from gco.models import (
     ClusterConfig,
     HealthStatus,
-    NodeGroupConfig,
     ResourceThresholds,
     ResourceUtilization,
 )
@@ -99,25 +98,12 @@ def sample_utilization():
 
 
 @pytest.fixture
-def sample_node_group():
-    """Create sample node group configuration."""
-    return NodeGroupConfig(
-        name="gpu-nodes",
-        instance_types=["g4dn.xlarge", "g5.xlarge"],
-        scaling_config={"min_size": 0, "max_size": 10, "desired_size": 2},
-        labels={"workload-type": "gpu"},
-        taints=[{"key": "nvidia.com/gpu", "value": "true", "effect": "NoSchedule"}],
-    )
-
-
-@pytest.fixture
-def sample_cluster_config(sample_thresholds, sample_node_group):
+def sample_cluster_config(sample_thresholds):
     """Create sample cluster configuration."""
     return ClusterConfig(
         region="us-east-1",
         cluster_name="gco-us-east-1",
         kubernetes_version="1.35",
-        node_groups=[sample_node_group],
         addons=["metrics-server"],
         resource_thresholds=sample_thresholds,
     )
@@ -304,12 +290,6 @@ def valid_cdk_context():
         },
         "kubernetes_version": "1.35",
         "resource_thresholds": {"cpu_threshold": 80, "memory_threshold": 85, "gpu_threshold": 90},
-        "node_groups": {
-            "gpu_instances": ["g4dn.xlarge", "g5.xlarge"],
-            "min_size": 0,
-            "max_size": 10,
-            "desired_size": 2,
-        },
         "global_accelerator": {
             "name": "gco-accelerator",
             "health_check_grace_period": 30,

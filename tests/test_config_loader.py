@@ -4,7 +4,7 @@ Tests for gco/config/config_loader.ConfigLoader.
 Drives ConfigLoader against a MockApp/MockNode pair that surfaces a
 hand-crafted CDK context dict. Verifies happy-path loading of every
 top-level field (project_name, deployment_regions, kubernetes_version,
-resource_thresholds, node_groups, global_accelerator, alb_config,
+resource_thresholds, global_accelerator, alb_config,
 manifest_processor, job_validation_policy, api_gateway, tags) and
 that missing required fields raise ConfigValidationError with an
 informative message. Companion suite to test_config_loader_validation.py
@@ -46,12 +46,6 @@ def valid_context():
         },
         "kubernetes_version": "1.35",
         "resource_thresholds": {"cpu_threshold": 80, "memory_threshold": 85, "gpu_threshold": 90},
-        "node_groups": {
-            "gpu_instances": ["g4dn.xlarge", "g5.xlarge"],
-            "min_size": 0,
-            "max_size": 10,
-            "desired_size": 2,
-        },
         "global_accelerator": {
             "name": "gco-accelerator",
             "health_check_grace_period": 30,
@@ -191,40 +185,6 @@ class TestResourceThresholdsValidation:
             ConfigLoader(app)
 
 
-class TestNodeGroupValidation:
-    """Tests for node group validation."""
-
-    def test_valid_node_groups(self, valid_context):
-        """Test valid node groups pass validation."""
-        app = MockApp(valid_context)
-        config = ConfigLoader(app)
-        node_config = config.get_node_group_config()
-        assert node_config.name == "gpu-nodes"
-        assert "g4dn.xlarge" in node_config.instance_types
-
-    def test_invalid_gpu_instance(self, valid_context):
-        """Test invalid GPU instance type raises error."""
-        valid_context["node_groups"]["gpu_instances"] = ["invalid-instance"]
-        app = MockApp(valid_context)
-        with pytest.raises(ConfigValidationError, match="Invalid GPU instance type"):
-            ConfigLoader(app)
-
-    def test_min_greater_than_max(self, valid_context):
-        """Test min_size > max_size raises error."""
-        valid_context["node_groups"]["min_size"] = 10
-        valid_context["node_groups"]["max_size"] = 5
-        app = MockApp(valid_context)
-        with pytest.raises(ConfigValidationError, match="min_size cannot be greater than max_size"):
-            ConfigLoader(app)
-
-    def test_desired_out_of_range(self, valid_context):
-        """Test desired_size outside range raises error."""
-        valid_context["node_groups"]["desired_size"] = 20
-        app = MockApp(valid_context)
-        with pytest.raises(ConfigValidationError, match="desired_size must be between"):
-            ConfigLoader(app)
-
-
 class TestGlobalAcceleratorValidation:
     """Tests for Global Accelerator config validation."""
 
@@ -298,7 +258,6 @@ class TestConfigLoaderGetters:
         assert cluster_config.region == "us-east-1"
         assert cluster_config.cluster_name == "gco-us-east-1"
         assert cluster_config.kubernetes_version == "1.35"
-        assert len(cluster_config.node_groups) == 1
 
     def test_get_tags(self, valid_context):
         """Test getting tags."""
@@ -615,20 +574,6 @@ class TestConfigValidationEdgeCases:
         with pytest.raises(ConfigValidationError, match="At least one region must be specified"):
             ConfigLoader(app)
 
-    def test_empty_gpu_instances_list(self, valid_context):
-        """Test that empty gpu_instances list raises error."""
-        valid_context["node_groups"]["gpu_instances"] = []
-        app = MockApp(valid_context)
-        with pytest.raises(ConfigValidationError, match="gpu_instances must be a non-empty list"):
-            ConfigLoader(app)
-
-    def test_negative_scaling_values(self, valid_context):
-        """Test that negative scaling values raise error."""
-        valid_context["node_groups"]["min_size"] = -1
-        app = MockApp(valid_context)
-        with pytest.raises(ConfigValidationError, match="Scaling values must be non-negative"):
-            ConfigLoader(app)
-
     def test_missing_global_accelerator_config(self, valid_context):
         """Test that missing global_accelerator config raises error."""
         del valid_context["global_accelerator"]
@@ -796,15 +741,6 @@ class TestConfigValidationEdgeCases:
         app = MockApp(valid_context)
         with pytest.raises(
             ConfigValidationError, match="pending_requested_gpus must be a non-negative integer"
-        ):
-            ConfigLoader(app)
-
-    def test_missing_node_groups_field(self, valid_context):
-        """Test that missing node_groups field raises error."""
-        del valid_context["node_groups"]["desired_size"]
-        app = MockApp(valid_context)
-        with pytest.raises(
-            ConfigValidationError, match="Missing node group configuration: desired_size"
         ):
             ConfigLoader(app)
 

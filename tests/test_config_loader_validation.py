@@ -51,12 +51,6 @@ class TestConfigLoaderValidation:
                     "memory_threshold": 85,
                     "gpu_threshold": 90,
                 },
-                "node_groups": {
-                    "gpu_instances": ["g4dn.xlarge"],
-                    "min_size": 0,
-                    "max_size": 10,
-                    "desired_size": 1,
-                },
                 "global_accelerator": {
                     "name": "test",
                     "health_check_grace_period": 30,
@@ -120,12 +114,6 @@ class TestConfigLoaderValidation:
                     "memory_threshold": 85,
                     "gpu_threshold": 90,
                 },
-                "node_groups": {
-                    "gpu_instances": ["g4dn.xlarge"],
-                    "min_size": 0,
-                    "max_size": 10,
-                    "desired_size": 1,
-                },
                 "global_accelerator": {
                     "name": "test",
                     "health_check_grace_period": 30,
@@ -174,12 +162,6 @@ class TestConfigLoaderValidation:
                     "cpu_threshold": 80,
                     "memory_threshold": 85,
                     "gpu_threshold": 90,
-                },
-                "node_groups": {
-                    "gpu_instances": ["g4dn.xlarge"],
-                    "min_size": 0,
-                    "max_size": 10,
-                    "desired_size": 1,
                 },
                 "global_accelerator": {
                     "name": "test",
@@ -230,12 +212,6 @@ class TestConfigLoaderValidation:
                     "memory_threshold": 85,
                     "gpu_threshold": 90,
                 },
-                "node_groups": {
-                    "gpu_instances": ["g4dn.xlarge"],
-                    "min_size": 0,
-                    "max_size": 10,
-                    "desired_size": 1,
-                },
                 "global_accelerator": {
                     "name": "test",
                     "health_check_grace_period": 30,
@@ -285,12 +261,6 @@ class TestConfigLoaderValidation:
                     "memory_threshold": 85,
                     "gpu_threshold": 90,
                 },  # Invalid: > 100
-                "node_groups": {
-                    "gpu_instances": ["g4dn.xlarge"],
-                    "min_size": 0,
-                    "max_size": 10,
-                    "desired_size": 1,
-                },
                 "global_accelerator": {
                     "name": "test",
                     "health_check_grace_period": 30,
@@ -339,12 +309,6 @@ class TestConfigLoaderValidation:
                     "cpu_threshold": 80,
                     "memory_threshold": 85,
                 },  # Missing gpu_threshold
-                "node_groups": {
-                    "gpu_instances": ["g4dn.xlarge"],
-                    "min_size": 0,
-                    "max_size": 10,
-                    "desired_size": 1,
-                },
                 "global_accelerator": {
                     "name": "test",
                     "health_check_grace_period": 30,
@@ -380,228 +344,6 @@ class TestConfigLoaderValidation:
         with pytest.raises(ConfigValidationError, match="Missing threshold configuration"):
             ConfigLoader(app)
 
-    def test_config_loader_validates_invalid_gpu_instance(self):
-        """Test that ConfigLoader validates invalid GPU instance types."""
-        from gco.config.config_loader import ConfigLoader, ConfigValidationError
-
-        app = cdk.App(
-            context={
-                "project_name": "test",
-                "deployment_regions": {"regional": ["us-east-1"]},
-                "kubernetes_version": "1.35",
-                "resource_thresholds": {
-                    "cpu_threshold": 80,
-                    "memory_threshold": 85,
-                    "gpu_threshold": 90,
-                },
-                "node_groups": {
-                    "gpu_instances": ["t3.micro"],
-                    "min_size": 0,
-                    "max_size": 10,
-                    "desired_size": 1,
-                },  # Invalid GPU type
-                "global_accelerator": {
-                    "name": "test",
-                    "health_check_grace_period": 30,
-                    "health_check_interval": 30,
-                    "health_check_timeout": 5,
-                    "health_check_path": "/health",
-                },
-                "alb_config": {
-                    "health_check_interval": 30,
-                    "health_check_timeout": 5,
-                    "healthy_threshold": 2,
-                    "unhealthy_threshold": 2,
-                },
-                "manifest_processor": {
-                    "image": "test",
-                    "replicas": 1,
-                    "resource_limits": {"cpu": "1", "memory": "1Gi"},
-                },
-                "job_validation_policy": {
-                    "allowed_namespaces": ["default"],
-                    "resource_quotas": {},
-                },
-                "api_gateway": {
-                    "throttle_rate_limit": 100,
-                    "throttle_burst_limit": 200,
-                    "log_level": "INFO",
-                    "metrics_enabled": True,
-                    "tracing_enabled": True,
-                },
-            }
-        )
-
-        with pytest.raises(ConfigValidationError, match="Invalid GPU instance type"):
-            ConfigLoader(app)
-
-    def test_config_loader_validates_empty_gpu_instances(self):
-        """Test that ConfigLoader validates empty GPU instances list."""
-        from gco.config.config_loader import ConfigLoader, ConfigValidationError
-
-        app = cdk.App(
-            context={
-                "project_name": "test",
-                "deployment_regions": {"regional": ["us-east-1"]},
-                "kubernetes_version": "1.35",
-                "resource_thresholds": {
-                    "cpu_threshold": 80,
-                    "memory_threshold": 85,
-                    "gpu_threshold": 90,
-                },
-                "node_groups": {
-                    "gpu_instances": [],
-                    "min_size": 0,
-                    "max_size": 10,
-                    "desired_size": 1,
-                },
-                "global_accelerator": {
-                    "name": "test",
-                    "health_check_grace_period": 30,
-                    "health_check_interval": 30,
-                    "health_check_timeout": 5,
-                    "health_check_path": "/health",
-                },
-                "alb_config": {
-                    "health_check_interval": 30,
-                    "health_check_timeout": 5,
-                    "healthy_threshold": 2,
-                    "unhealthy_threshold": 2,
-                },
-                "manifest_processor": {
-                    "image": "test",
-                    "replicas": 1,
-                    "resource_limits": {"cpu": "1", "memory": "1Gi"},
-                },
-                "job_validation_policy": {
-                    "allowed_namespaces": ["default"],
-                    "resource_quotas": {},
-                },
-                "api_gateway": {
-                    "throttle_rate_limit": 100,
-                    "throttle_burst_limit": 200,
-                    "log_level": "INFO",
-                    "metrics_enabled": True,
-                    "tracing_enabled": True,
-                },
-            }
-        )
-
-        with pytest.raises(ConfigValidationError, match="gpu_instances must be a non-empty list"):
-            ConfigLoader(app)
-
-    def test_config_loader_validates_min_greater_than_max(self):
-        """Test that ConfigLoader validates min_size > max_size."""
-        from gco.config.config_loader import ConfigLoader, ConfigValidationError
-
-        app = cdk.App(
-            context={
-                "project_name": "test",
-                "deployment_regions": {"regional": ["us-east-1"]},
-                "kubernetes_version": "1.35",
-                "resource_thresholds": {
-                    "cpu_threshold": 80,
-                    "memory_threshold": 85,
-                    "gpu_threshold": 90,
-                },
-                "node_groups": {
-                    "gpu_instances": ["g4dn.xlarge"],
-                    "min_size": 10,
-                    "max_size": 5,
-                    "desired_size": 7,
-                },
-                "global_accelerator": {
-                    "name": "test",
-                    "health_check_grace_period": 30,
-                    "health_check_interval": 30,
-                    "health_check_timeout": 5,
-                    "health_check_path": "/health",
-                },
-                "alb_config": {
-                    "health_check_interval": 30,
-                    "health_check_timeout": 5,
-                    "healthy_threshold": 2,
-                    "unhealthy_threshold": 2,
-                },
-                "manifest_processor": {
-                    "image": "test",
-                    "replicas": 1,
-                    "resource_limits": {"cpu": "1", "memory": "1Gi"},
-                },
-                "job_validation_policy": {
-                    "allowed_namespaces": ["default"],
-                    "resource_quotas": {},
-                },
-                "api_gateway": {
-                    "throttle_rate_limit": 100,
-                    "throttle_burst_limit": 200,
-                    "log_level": "INFO",
-                    "metrics_enabled": True,
-                    "tracing_enabled": True,
-                },
-            }
-        )
-
-        with pytest.raises(ConfigValidationError, match="min_size cannot be greater than max_size"):
-            ConfigLoader(app)
-
-    def test_config_loader_validates_desired_out_of_range(self):
-        """Test that ConfigLoader validates desired_size out of range."""
-        from gco.config.config_loader import ConfigLoader, ConfigValidationError
-
-        app = cdk.App(
-            context={
-                "project_name": "test",
-                "deployment_regions": {"regional": ["us-east-1"]},
-                "kubernetes_version": "1.35",
-                "resource_thresholds": {
-                    "cpu_threshold": 80,
-                    "memory_threshold": 85,
-                    "gpu_threshold": 90,
-                },
-                "node_groups": {
-                    "gpu_instances": ["g4dn.xlarge"],
-                    "min_size": 2,
-                    "max_size": 5,
-                    "desired_size": 10,
-                },  # desired > max
-                "global_accelerator": {
-                    "name": "test",
-                    "health_check_grace_period": 30,
-                    "health_check_interval": 30,
-                    "health_check_timeout": 5,
-                    "health_check_path": "/health",
-                },
-                "alb_config": {
-                    "health_check_interval": 30,
-                    "health_check_timeout": 5,
-                    "healthy_threshold": 2,
-                    "unhealthy_threshold": 2,
-                },
-                "manifest_processor": {
-                    "image": "test",
-                    "replicas": 1,
-                    "resource_limits": {"cpu": "1", "memory": "1Gi"},
-                },
-                "job_validation_policy": {
-                    "allowed_namespaces": ["default"],
-                    "resource_quotas": {},
-                },
-                "api_gateway": {
-                    "throttle_rate_limit": 100,
-                    "throttle_burst_limit": 200,
-                    "log_level": "INFO",
-                    "metrics_enabled": True,
-                    "tracing_enabled": True,
-                },
-            }
-        )
-
-        with pytest.raises(
-            ConfigValidationError, match="desired_size must be between min_size and max_size"
-        ):
-            ConfigLoader(app)
-
     def test_config_loader_validates_invalid_health_check_path(self):
         """Test that ConfigLoader validates health check path."""
         from gco.config.config_loader import ConfigLoader, ConfigValidationError
@@ -615,12 +357,6 @@ class TestConfigLoaderValidation:
                     "cpu_threshold": 80,
                     "memory_threshold": 85,
                     "gpu_threshold": 90,
-                },
-                "node_groups": {
-                    "gpu_instances": ["g4dn.xlarge"],
-                    "min_size": 0,
-                    "max_size": 10,
-                    "desired_size": 1,
                 },
                 "global_accelerator": {
                     "name": "test",
@@ -670,12 +406,6 @@ class TestConfigLoaderValidation:
                     "cpu_threshold": 80,
                     "memory_threshold": 85,
                     "gpu_threshold": 90,
-                },
-                "node_groups": {
-                    "gpu_instances": ["g4dn.xlarge"],
-                    "min_size": 0,
-                    "max_size": 10,
-                    "desired_size": 1,
                 },
                 "global_accelerator": {
                     "name": "test",
@@ -728,12 +458,6 @@ class TestConfigLoaderValidation:
                     "memory_threshold": 85,
                     "gpu_threshold": 90,
                 },
-                "node_groups": {
-                    "gpu_instances": ["g4dn.xlarge"],
-                    "min_size": 0,
-                    "max_size": 10,
-                    "desired_size": 1,
-                },
                 "global_accelerator": {
                     "name": "test",
                     "health_check_grace_period": 30,
@@ -783,12 +507,6 @@ class TestConfigLoaderValidation:
                     "memory_threshold": 85,
                     "gpu_threshold": 90,
                 },
-                "node_groups": {
-                    "gpu_instances": ["g4dn.xlarge"],
-                    "min_size": 0,
-                    "max_size": 10,
-                    "desired_size": 1,
-                },
                 "global_accelerator": {
                     "name": "test",
                     "health_check_grace_period": 30,
@@ -837,12 +555,6 @@ class TestConfigLoaderValidation:
                     "cpu_threshold": 80,
                     "memory_threshold": 85,
                     "gpu_threshold": 90,
-                },
-                "node_groups": {
-                    "gpu_instances": ["g4dn.xlarge"],
-                    "min_size": 0,
-                    "max_size": 10,
-                    "desired_size": 1,
                 },
                 "global_accelerator": {
                     "name": "test",
