@@ -1061,6 +1061,29 @@ class GCORegionalStack(Stack):
             apply_to_children=True,
         )
 
+        # cdk-nag suppression: the ServiceAccountRole grants ec2:Describe*
+        # and elasticloadbalancing:Describe* for the AWS Load Balancer
+        # Controller. These AWS APIs do not support resource-level IAM
+        # scoping — Resource: * is the only valid form.
+        NagSuppressions.add_resource_suppressions(
+            self.service_account_role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "The ServiceAccountRole grants ec2:Describe* and "
+                        "elasticloadbalancing:Describe* for the AWS Load Balancer "
+                        "Controller. These AWS APIs do not support resource-level "
+                        "IAM scoping — Resource: * is the only valid form. See "
+                        "https://docs.aws.amazon.com/service-authorization/latest/"
+                        "reference/list_amazonec2.html"
+                    ),
+                    "appliesTo": ["Resource::*"],
+                },
+            ],
+            apply_to_children=True,
+        )
+
         # Add permissions for AWS Load Balancer Controller
         self.service_account_role.add_to_policy(
             iam.PolicyStatement(
@@ -1491,6 +1514,28 @@ class GCORegionalStack(Stack):
             "KubectlProvider",
             on_event_handler=self.kubectl_lambda,
             log_group=kubectl_provider_log_group,
+        )
+
+        # cdk-nag suppression: the kubectl-applier Lambda requires broad
+        # EKS and Kubernetes API access to apply arbitrary manifests.
+        from cdk_nag import NagSuppressions
+
+        NagSuppressions.add_resource_suppressions(
+            kubectl_lambda_role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "The kubectl-applier Lambda requires broad EKS and Kubernetes API "
+                        "access to apply arbitrary manifests (RBAC, ServiceAccounts, "
+                        "Deployments, Jobs, NetworkPolicies) across multiple namespaces. "
+                        "Resource: * is required because the set of Kubernetes resources "
+                        "is dynamic and not known at synth time."
+                    ),
+                    "appliesTo": ["Resource::*"],
+                },
+            ],
+            apply_to_children=True,
         )
 
     def _apply_kubernetes_manifests(self) -> None:
@@ -1955,6 +2000,27 @@ class GCORegionalStack(Stack):
         self.ga_registration_provider = ga_provider
         self.endpoint_group_arn = endpoint_group_arn
 
+        # cdk-nag suppression: the GA registration Lambda needs broad
+        # Global Accelerator and ELB Describe access with Resource: *.
+        from cdk_nag import NagSuppressions
+
+        NagSuppressions.add_resource_suppressions(
+            ga_registration_lambda,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "The GA registration Lambda needs elasticloadbalancing:Describe* "
+                        "and globalaccelerator:* to discover the Ingress-created ALB and "
+                        "register it with Global Accelerator. These APIs do not support "
+                        "resource-level IAM scoping — Resource: * is the only valid form."
+                    ),
+                    "appliesTo": ["Resource::*"],
+                },
+            ],
+            apply_to_children=True,
+        )
+
     def _get_enabled_helm_charts(self) -> list[str]:
         """Return the list of Helm charts to install based on cdk.json helm config.
 
@@ -2104,6 +2170,28 @@ class GCORegionalStack(Stack):
             "HelmInstallerProvider",
             on_event_handler=self.helm_installer_lambda,
             log_group=helm_provider_log_group,
+        )
+
+        # cdk-nag suppression: the Helm installer Lambda requires broad
+        # EKS and Kubernetes API access to install Helm charts.
+        from cdk_nag import NagSuppressions
+
+        NagSuppressions.add_resource_suppressions(
+            helm_lambda_role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "The Helm installer Lambda requires broad EKS and Kubernetes API "
+                        "access to install Helm charts (KEDA, NVIDIA DRA, etc.) that create "
+                        "CRDs, RBAC rules, and workloads across multiple namespaces. "
+                        "Resource: * is required because the set of Kubernetes resources "
+                        "is dynamic and not known at synth time."
+                    ),
+                    "appliesTo": ["Resource::*"],
+                },
+            ],
+            apply_to_children=True,
         )
 
     def _create_efs(self) -> None:
@@ -2453,6 +2541,27 @@ class GCORegionalStack(Stack):
                 ],
                 resources=["*"],
             )
+        )
+
+        # cdk-nag suppression: the FSx CSI driver role grants
+        # ec2:Describe* APIs that don't support resource-level scoping.
+        from cdk_nag import NagSuppressions
+
+        NagSuppressions.add_resource_suppressions(
+            self.fsx_csi_role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "The FSx CSI driver role grants ec2:Describe* for volume "
+                        "and network discovery. These AWS APIs do not support "
+                        "resource-level IAM scoping — Resource: * is the only "
+                        "valid form."
+                    ),
+                    "appliesTo": ["Resource::*"],
+                },
+            ],
+            apply_to_children=True,
         )
 
         # Create FSx CSI Driver add-on
