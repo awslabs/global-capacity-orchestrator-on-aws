@@ -202,6 +202,28 @@ class GCOApiGatewayGlobalStack(Stack):
         # Grant Secrets Manager permission to invoke the rotation Lambda
         rotation_lambda.grant_invoke(iam.ServicePrincipal("secretsmanager.amazonaws.com"))
 
+        # cdk-nag suppression: CDK's grant methods generate Resource: * for
+        # the rotation function's execution role.
+        from cdk_nag import NagSuppressions
+
+        NagSuppressions.add_resource_suppressions(
+            rotation_role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "The secret rotation Lambda needs secretsmanager:GetSecretValue "
+                        "and PutSecretValue on the rotation secret. CDK's grant methods "
+                        "generate Resource: * for the rotation function's execution role "
+                        "because the secret ARN includes a random suffix not known at "
+                        "synth time."
+                    ),
+                    "appliesTo": ["Resource::*"],
+                },
+            ],
+            apply_to_children=True,
+        )
+
         return rotation_lambda
 
     def _create_proxy_lambda(self) -> lambda_.Function:
@@ -246,6 +268,27 @@ class GCOApiGatewayGlobalStack(Stack):
             },
             log_group=proxy_lambda_log_group,
             tracing=lambda_.Tracing.ACTIVE,
+        )
+
+        # cdk-nag suppression: the proxy Lambda's execution role needs
+        # broad network access for VPC Lambda execution.
+        from cdk_nag import NagSuppressions
+
+        NagSuppressions.add_resource_suppressions(
+            lambda_role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "The API Gateway proxy Lambda forwards requests to regional ALBs. "
+                        "Its execution role needs broad network access "
+                        "(ec2:CreateNetworkInterface, etc.) for VPC Lambda execution. "
+                        "These APIs do not support resource-level scoping."
+                    ),
+                    "appliesTo": ["Resource::*"],
+                },
+            ],
+            apply_to_children=True,
         )
 
         return proxy_lambda
@@ -306,6 +349,27 @@ class GCOApiGatewayGlobalStack(Stack):
             log_group=aggregator_log_group,
             description="Aggregates data from all regional GCO clusters",
             tracing=lambda_.Tracing.ACTIVE,
+        )
+
+        # cdk-nag suppression: the aggregator Lambda reads SSM parameters
+        # and invokes regional endpoints.
+        from cdk_nag import NagSuppressions
+
+        NagSuppressions.add_resource_suppressions(
+            aggregator_role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "The cross-region aggregator Lambda reads SSM parameters and "
+                        "invokes regional endpoints. Its execution role needs "
+                        "ssm:GetParameter on the project's parameter namespace and "
+                        "secretsmanager:GetSecretValue for the auth token."
+                    ),
+                    "appliesTo": ["Resource::*"],
+                },
+            ],
+            apply_to_children=True,
         )
 
         return aggregator_lambda
