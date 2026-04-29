@@ -5,7 +5,7 @@ Deeper coverage of validation paths not covered by test_models.py:
 RequestedResources (rejects negative cpu_vcpus/memory_gb/gpus and
 non-numeric types, accepts zero), ResourceUtilization negative-gpu
 and over-100 rejection plus integer acceptance, and additional
-NodeGroupConfig, KubernetesManifest, and ResourceStatus edge cases.
+KubernetesManifest and ResourceStatus edge cases.
 Pins the exact error strings so downstream callers can assert on them.
 """
 
@@ -18,7 +18,6 @@ from gco.models import (
     KubernetesManifest,
     ManifestSubmissionRequest,
     ManifestSubmissionResponse,
-    NodeGroupConfig,
     RequestedResources,
     ResourceStatus,
     ResourceThresholds,
@@ -249,68 +248,6 @@ class TestResourceThresholdsExtended:
         """Test all max thresholds."""
         thresholds = ResourceThresholds(cpu_threshold=100, memory_threshold=100, gpu_threshold=100)
         assert thresholds.cpu_threshold == 100
-
-
-class TestNodeGroupConfigExtended:
-    """Extended tests for NodeGroupConfig."""
-
-    def test_desired_greater_than_max_raises_error(self):
-        """Test that desired_size > max_size raises error."""
-        with pytest.raises(ValueError, match="desired_size must be between"):
-            NodeGroupConfig(
-                name="gpu-nodes",
-                instance_types=["g4dn.xlarge"],
-                scaling_config={"min_size": 0, "max_size": 5, "desired_size": 10},
-                labels={},
-                taints=[],
-            )
-
-    def test_negative_min_size_raises_error(self):
-        """Test that negative min_size raises error."""
-        with pytest.raises(ValueError, match="Scaling values must be non-negative"):
-            NodeGroupConfig(
-                name="gpu-nodes",
-                instance_types=["g4dn.xlarge"],
-                scaling_config={"min_size": -1, "max_size": 10, "desired_size": 2},
-                labels={},
-                taints=[],
-            )
-
-    def test_multiple_instance_types(self):
-        """Test config with multiple instance types."""
-        config = NodeGroupConfig(
-            name="gpu-nodes",
-            instance_types=["g4dn.xlarge", "g4dn.2xlarge", "g5.xlarge"],
-            scaling_config={"min_size": 1, "max_size": 20, "desired_size": 5},
-            labels={"gpu": "true"},
-            taints=[],
-        )
-        assert len(config.instance_types) == 3
-
-    def test_zero_min_size(self):
-        """Test config with zero min_size."""
-        config = NodeGroupConfig(
-            name="gpu-nodes",
-            instance_types=["g4dn.xlarge"],
-            scaling_config={"min_size": 0, "max_size": 10, "desired_size": 0},
-            labels={},
-            taints=[],
-        )
-        assert config.scaling_config["min_size"] == 0
-
-    def test_with_labels_and_taints(self):
-        """Test node group config with labels and taints."""
-        config = NodeGroupConfig(
-            name="gpu-nodes",
-            instance_types=["g4dn.xlarge"],
-            scaling_config={"min_size": 0, "max_size": 10, "desired_size": 2},
-            labels={"workload-type": "gpu", "team": "ml"},
-            taints=[
-                {"key": "nvidia.com/gpu", "value": "true", "effect": "NoSchedule"},
-            ],
-        )
-        assert config.labels["workload-type"] == "gpu"
-        assert len(config.taints) == 1
 
 
 class TestKubernetesManifestExtended:
@@ -608,22 +545,11 @@ class TestClusterConfigValidation:
     """Tests for ClusterConfig validation."""
 
     @pytest.fixture
-    def valid_node_group(self):
-        """Create a valid node group for testing."""
-        return NodeGroupConfig(
-            name="gpu-nodes",
-            instance_types=["g4dn.xlarge"],
-            scaling_config={"min_size": 0, "max_size": 10, "desired_size": 2},
-            labels={"workload-type": "gpu"},
-            taints=[],
-        )
-
-    @pytest.fixture
     def valid_thresholds(self):
         """Create valid thresholds for testing."""
         return ResourceThresholds(cpu_threshold=80, memory_threshold=85, gpu_threshold=90)
 
-    def test_valid_cluster_config(self, valid_node_group, valid_thresholds):
+    def test_valid_cluster_config(self, valid_thresholds):
         """Test creating valid cluster config."""
         from gco.models import ClusterConfig
 
@@ -631,14 +557,13 @@ class TestClusterConfigValidation:
             region="us-east-1",
             cluster_name="test-cluster",
             kubernetes_version="1.35",
-            node_groups=[valid_node_group],
             addons=["metrics-server"],
             resource_thresholds=valid_thresholds,
         )
         assert config.region == "us-east-1"
         assert config.cluster_name == "test-cluster"
 
-    def test_empty_region_raises_error(self, valid_node_group, valid_thresholds):
+    def test_empty_region_raises_error(self, valid_thresholds):
         """Test that empty region raises error."""
         from gco.models import ClusterConfig
 
@@ -647,12 +572,11 @@ class TestClusterConfigValidation:
                 region="",
                 cluster_name="test-cluster",
                 kubernetes_version="1.35",
-                node_groups=[valid_node_group],
                 addons=["metrics-server"],
                 resource_thresholds=valid_thresholds,
             )
 
-    def test_empty_cluster_name_raises_error(self, valid_node_group, valid_thresholds):
+    def test_empty_cluster_name_raises_error(self, valid_thresholds):
         """Test that empty cluster_name raises error."""
         from gco.models import ClusterConfig
 
@@ -661,12 +585,11 @@ class TestClusterConfigValidation:
                 region="us-east-1",
                 cluster_name="",
                 kubernetes_version="1.35",
-                node_groups=[valid_node_group],
                 addons=["metrics-server"],
                 resource_thresholds=valid_thresholds,
             )
 
-    def test_empty_kubernetes_version_raises_error(self, valid_node_group, valid_thresholds):
+    def test_empty_kubernetes_version_raises_error(self, valid_thresholds):
         """Test that empty kubernetes_version raises error."""
         from gco.models import ClusterConfig
 
@@ -675,82 +598,9 @@ class TestClusterConfigValidation:
                 region="us-east-1",
                 cluster_name="test-cluster",
                 kubernetes_version="",
-                node_groups=[valid_node_group],
                 addons=["metrics-server"],
                 resource_thresholds=valid_thresholds,
             )
-
-    def test_empty_node_groups_raises_error(self, valid_thresholds):
-        """Test that empty node_groups raises error."""
-        from gco.models import ClusterConfig
-
-        with pytest.raises(ValueError, match="At least one node group must be specified"):
-            ClusterConfig(
-                region="us-east-1",
-                cluster_name="test-cluster",
-                kubernetes_version="1.35",
-                node_groups=[],
-                addons=["metrics-server"],
-                resource_thresholds=valid_thresholds,
-            )
-
-    def test_duplicate_node_group_names_raises_error(self, valid_thresholds):
-        """Test that duplicate node group names raises error."""
-        from gco.models import ClusterConfig
-
-        node_group1 = NodeGroupConfig(
-            name="gpu-nodes",
-            instance_types=["g4dn.xlarge"],
-            scaling_config={"min_size": 0, "max_size": 10, "desired_size": 2},
-            labels={},
-            taints=[],
-        )
-        node_group2 = NodeGroupConfig(
-            name="gpu-nodes",  # Same name as node_group1
-            instance_types=["g5.xlarge"],
-            scaling_config={"min_size": 0, "max_size": 5, "desired_size": 1},
-            labels={},
-            taints=[],
-        )
-
-        with pytest.raises(ValueError, match="Node group names must be unique"):
-            ClusterConfig(
-                region="us-east-1",
-                cluster_name="test-cluster",
-                kubernetes_version="1.35",
-                node_groups=[node_group1, node_group2],
-                addons=["metrics-server"],
-                resource_thresholds=valid_thresholds,
-            )
-
-    def test_multiple_unique_node_groups(self, valid_thresholds):
-        """Test cluster config with multiple unique node groups."""
-        from gco.models import ClusterConfig
-
-        node_group1 = NodeGroupConfig(
-            name="gpu-nodes",
-            instance_types=["g4dn.xlarge"],
-            scaling_config={"min_size": 0, "max_size": 10, "desired_size": 2},
-            labels={},
-            taints=[],
-        )
-        node_group2 = NodeGroupConfig(
-            name="cpu-nodes",
-            instance_types=["m5.xlarge"],
-            scaling_config={"min_size": 0, "max_size": 5, "desired_size": 1},
-            labels={},
-            taints=[],
-        )
-
-        config = ClusterConfig(
-            region="us-east-1",
-            cluster_name="test-cluster",
-            kubernetes_version="1.35",
-            node_groups=[node_group1, node_group2],
-            addons=["metrics-server"],
-            resource_thresholds=valid_thresholds,
-        )
-        assert len(config.node_groups) == 2
 
 
 class TestResourceThresholdsNonIntegerValidation:

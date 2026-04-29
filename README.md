@@ -292,7 +292,7 @@ See [Architecture Details](docs/ARCHITECTURE.md) for the full deep dive.
 ### Prerequisites
 
 - AWS CLI configured with appropriate credentials
-- Python 3.10+ and Node.js LTS (v20 or v22)
+- Python 3.10+ and Node.js LTS (v24)
 - AWS CDK CLI (`npm install -g aws-cdk`)
 - Docker or Finch (for building container images)
 

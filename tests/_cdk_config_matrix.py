@@ -26,12 +26,6 @@ Notes on the list
   matrix. These matter for the compliance test because the Helm
   installer Lambda's IAM role changes shape based on which charts
   it has to install.
-
-* ``large-node-groups`` writes into the legacy ``node_groups`` context
-  key. That key is no longer consumed by the stacks (EKS Auto Mode
-  handles node groups dynamically) but the config loader still
-  validates it, so the override still has to parse. See also the
-  pending cleanup for removing the dead config surface.
 """
 
 from __future__ import annotations
@@ -240,17 +234,6 @@ CONFIGS.extend(
                     "log_level": "ERROR",
                     "metrics_enabled": True,
                     "tracing_enabled": False,
-                }
-            },
-        ),
-        (
-            "large-node-groups",
-            {
-                "node_groups": {
-                    "gpu_instances": ["p4d.24xlarge", "g5.48xlarge"],
-                    "min_size": 0,
-                    "max_size": 500,
-                    "desired_size": 10,
                 }
             },
         ),

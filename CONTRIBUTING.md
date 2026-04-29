@@ -32,7 +32,7 @@ Thank you for contributing to GCO (Global Capacity Orchestrator on AWS)! This gu
 
 - AWS account with appropriate permissions
 - Python 3.10+ (required for type union syntax `str | None`)
-- Node.js 20+ (for CDK)
+- Node.js 24+ (for CDK)
 - Docker or Finch
 - kubectl
 - Git

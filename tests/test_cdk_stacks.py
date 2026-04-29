@@ -46,17 +46,6 @@ class MockConfigLoader:
 
         return ResourceThresholds(cpu_threshold=80, memory_threshold=85, gpu_threshold=90)
 
-    def get_node_group_config(self):
-        from gco.models import NodeGroupConfig
-
-        return NodeGroupConfig(
-            name="gpu-nodes",
-            instance_types=["g4dn.xlarge"],
-            scaling_config={"min_size": 0, "max_size": 10, "desired_size": 1},
-            labels={"workload-type": "gpu"},
-            taints=[],
-        )
-
     def get_cluster_config(self, region):
         from gco.models import ClusterConfig
 
@@ -64,7 +53,6 @@ class MockConfigLoader:
             region=region,
             cluster_name=f"gco-test-{region}",
             kubernetes_version="1.35",
-            node_groups=[self.get_node_group_config()],
             addons=["metrics-server"],
             resource_thresholds=self.get_resource_thresholds(),
         )
@@ -350,7 +338,6 @@ class TestConfigIntegration:
         assert config.get_kubernetes_version() == "1.35"
         assert isinstance(config.get_tags(), dict)
         assert config.get_resource_thresholds() is not None
-        assert config.get_node_group_config() is not None
         assert config.get_cluster_config("us-east-1") is not None
         assert config.get_global_accelerator_config() is not None
         assert config.get_alb_config() is not None

@@ -182,6 +182,33 @@ def add_iam_suppressions(
         global_region: Global region for SSM parameters and DynamoDB tables
     """
     # Build dynamic applies_to list based on configured regions
+    #
+    # NOTE ON BLANKET ENTRIES:
+    # "Resource::*" and "Action::eks:*" are intentionally broad at the
+    # stack-suppression level. They match the cdk-nag finding string
+    # "Resource::*" (or "Action::eks:*"), which is identical for every
+    # construct that uses ``Resource: "*"`` in its IAM policy. There's
+    # no way to distinguish between (say) the kubectl Lambda's
+    # ``Resource: *`` and the VPC Flow Logs role's ``Resource: *`` at
+    # this layer — both produce the same finding string.
+    #
+    # To tighten these further, each would need to be moved to a
+    # construct-level ``NagSuppressions.add_resource_suppressions``
+    # call on the specific IAM role. That's a larger refactor tracked
+    # separately. The ``tests/test_nag_compliance.py`` gate prevents
+    # new unsuppressed wildcards from shipping regardless.
+    #
+    # Constructs currently covered by "Resource::*":
+    #   - KubectlApplierFunction Lambda execution role (EKS admin)
+    #   - HelmInstallerFunction Lambda execution role (EKS admin)
+    #   - GaRegistrationFunction Lambda execution role (GA + SSM)
+    #   - CDK Provider Framework Lambda roles (invoke target Lambda)
+    #   - VPC Flow Logs role (CloudWatch Logs)
+    #   - ServiceAccountRole ec2:Describe*/elasticloadbalancing:Describe*
+    #     (AWS APIs that don't support resource-level scoping)
+    #
+    # Constructs currently covered by "Action::eks:*":
+    #   - EKS cluster admin access entries for kubectl and helm Lambdas
     applies_to = [
         "Resource::*",
         "Action::eks:*",

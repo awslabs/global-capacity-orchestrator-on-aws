@@ -37,12 +37,6 @@ def base_context():
         "project_name": "gco",
         "kubernetes_version": "1.35",
         "resource_thresholds": {"cpu_threshold": 80, "memory_threshold": 85, "gpu_threshold": 90},
-        "node_groups": {
-            "gpu_instances": ["g4dn.xlarge", "g5.xlarge"],
-            "min_size": 0,
-            "max_size": 10,
-            "desired_size": 2,
-        },
         "global_accelerator": {
             "name": "gco-accelerator",
             "health_check_grace_period": 30,

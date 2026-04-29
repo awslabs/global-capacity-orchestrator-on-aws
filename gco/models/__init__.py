@@ -2,14 +2,14 @@
 Data models for GCO (Global Capacity Orchestrator on AWS).
 
 This module provides Pydantic-style dataclasses for:
-- Cluster configuration (EKS settings, node groups, thresholds)
+- Cluster configuration (EKS settings, thresholds)
 - Health monitoring (resource utilization, health status)
 - Manifest processing (Kubernetes manifests, submission requests/responses)
 
 All models include validation in __post_init__ to ensure data integrity.
 """
 
-from .cluster_models import ClusterConfig, NodeGroupConfig, ResourceThresholds
+from .cluster_models import ClusterConfig, ResourceThresholds
 from .health_models import HealthStatus, RequestedResources, ResourceUtilization
 from .inference_models import (
     EndpointState,
@@ -28,7 +28,6 @@ from .manifest_models import (
 __all__ = [
     # Cluster configuration models
     "ClusterConfig",
-    "NodeGroupConfig",
     "ResourceThresholds",
     # Health monitoring models
     "HealthStatus",
