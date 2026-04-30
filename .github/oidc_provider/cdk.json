@@ -1,0 +1,8 @@
+{
+  "app": "python3 app.py",
+  "context": {
+    "@aws-cdk/core:stackRelativeExports": true,
+    "github_repo": "awslabs/global-capacity-orchestrator-on-aws",
+    "github_branch": "*"
+  }
+}
