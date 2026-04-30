@@ -33,6 +33,7 @@ concurrency:
 permissions:
   contents: read
   issues: write
+  id-token: write  # Required for OIDC authentication to AWS
 
 env:
   HELM_VERSION: "v4.1.4"
@@ -69,6 +70,14 @@ jobs:
           curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
           sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
           kubectl version --client --output=yaml | head -5
+      - name: Configure AWS credentials (OIDC)
+        if: env.GCO_CI_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        env:
+          GCO_CI_ROLE_ARN: ${{ secrets.GCO_CI_ROLE_ARN }}
+        with:
+          role-to-assume: ${{ secrets.GCO_CI_ROLE_ARN }}
+          aws-region: us-east-2
       - name: Run dependency scan
         id: scan
         env:
