@@ -867,6 +867,46 @@ gco stacks fsx enable --storage-capacity 1200 -y
 gco stacks fsx disable -y
 ```
 
+#### `gco stacks valkey`
+
+Manage Valkey Serverless cache.
+
+```bash
+gco stacks valkey COMMAND [OPTIONS]
+```
+
+**Subcommands:**
+- `status` - Show Valkey configuration status
+- `enable` - Enable Valkey Serverless cache
+- `disable` - Disable Valkey Serverless cache
+
+**Example:**
+```bash
+gco stacks valkey status
+gco stacks valkey enable --max-storage 10 --max-ecpu 10000 -y
+gco stacks valkey disable -y
+```
+
+#### `gco stacks aurora`
+
+Manage Aurora PostgreSQL (pgvector) database.
+
+```bash
+gco stacks aurora COMMAND [OPTIONS]
+```
+
+**Subcommands:**
+- `status` - Show Aurora pgvector configuration status
+- `enable` - Enable Aurora Serverless v2 with pgvector
+- `disable` - Disable Aurora pgvector
+
+**Example:**
+```bash
+gco stacks aurora status
+gco stacks aurora enable --min-acu 2 --max-acu 32 --deletion-protection -y
+gco stacks aurora disable -y
+```
+
 ---
 
 ### DAG Commands

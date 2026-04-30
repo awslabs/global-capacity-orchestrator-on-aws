@@ -1506,110 +1506,20 @@ def get_stack_destroy_order(stacks: list[str]) -> list[str]:
     return list(reversed(deployment_order))
 
 
-def get_fsx_config(region: str | None = None) -> dict[str, Any]:
-    """Get current FSx for Lustre configuration from cdk.json.
+# =============================================================================
+# Feature toggle helpers
+# =============================================================================
 
-    Args:
-        region: Optional region to get config for. If provided, checks for
-                region-specific overrides first.
-
-    Returns:
-        FSx configuration dictionary
-    """
-    cdk_json_path = _find_cdk_json()
-    if not cdk_json_path:
-        raise RuntimeError("cdk.json not found")
-
-    import json
-
-    with open(cdk_json_path, encoding="utf-8") as f:
-        cdk_config = json.load(f)
-
-    # Default FSx config
-    default_config = {
-        "enabled": False,
-        "storage_capacity_gib": 1200,
-        "deployment_type": "SCRATCH_2",
-        "per_unit_storage_throughput": 200,
-        "data_compression_type": "LZ4",
-        "import_path": None,
-        "export_path": None,
-        "auto_import_policy": "NEW_CHANGED_DELETED",
-    }
-
-    # Get global FSx config
-    global_config = cdk_config.get("context", {}).get("fsx_lustre", default_config)
-
-    # Check for region-specific override
-    if region:
-        region_overrides = cdk_config.get("context", {}).get("fsx_lustre_regions", {})
-        if region in region_overrides:
-            # Merge region config over global config
-            region_config = region_overrides[region]
-            merged = {**global_config, **region_config}
-            merged["region"] = region
-            merged["is_region_specific"] = True
-            return merged
-
-    result = {**default_config, **global_config}
-    result["is_region_specific"] = False
-    return result
-
-
-def update_fsx_config(settings: dict[str, Any], region: str | None = None) -> None:
-    """Update FSx for Lustre configuration in cdk.json.
-
-    Args:
-        settings: FSx settings to update
-        region: Optional region for region-specific config. If None, updates global config.
-    """
-    cdk_json_path = _find_cdk_json()
-    if not cdk_json_path:
-        raise RuntimeError("cdk.json not found")
-
-    import json
-
-    with open(cdk_json_path, encoding="utf-8") as f:
-        cdk_config = json.load(f)
-
-    # Ensure context exists
-    if "context" not in cdk_config:
-        cdk_config["context"] = {}
-
-    if region:
-        # Update region-specific config
-        if "fsx_lustre_regions" not in cdk_config["context"]:
-            cdk_config["context"]["fsx_lustre_regions"] = {}
-
-        if region not in cdk_config["context"]["fsx_lustre_regions"]:
-            cdk_config["context"]["fsx_lustre_regions"][region] = {}
-
-        # Update with new settings
-        for key, value in settings.items():
-            if value is not None or key == "enabled":
-                cdk_config["context"]["fsx_lustre_regions"][region][key] = value
-    else:
-        # Update global config
-        if "fsx_lustre" not in cdk_config["context"]:
-            cdk_config["context"]["fsx_lustre"] = {
-                "enabled": False,
-                "storage_capacity_gib": 1200,
-                "deployment_type": "SCRATCH_2",
-                "per_unit_storage_throughput": 200,
-                "data_compression_type": "LZ4",
-                "import_path": None,
-                "export_path": None,
-                "auto_import_policy": "NEW_CHANGED_DELETED",
-            }
-
-        # Update with new settings
-        for key, value in settings.items():
-            if value is not None or key == "enabled":
-                cdk_config["context"]["fsx_lustre"][key] = value
-
-    # Write back
-    with open(cdk_json_path, "w", encoding="utf-8") as f:
-        json.dump(cdk_config, f, indent=2)
+_FSX_DEFAULTS: dict[str, Any] = {
+    "enabled": False,
+    "storage_capacity_gib": 1200,
+    "deployment_type": "SCRATCH_2",
+    "per_unit_storage_throughput": 200,
+    "data_compression_type": "LZ4",
+    "import_path": None,
+    "export_path": None,
+    "auto_import_policy": "NEW_CHANGED_DELETED",
+}
 
 
 def _find_cdk_json() -> Path | None:
@@ -1620,3 +1530,162 @@ def _find_cdk_json() -> Path | None:
         if cdk_path.exists():
             return cdk_path
     return None
+
+
+def get_fsx_config(region: str | None = None) -> dict[str, Any]:
+    """Get current FSx for Lustre configuration from cdk.json.
+
+    Args:
+        region: Optional region to get config for. If provided, checks for
+                region-specific overrides first.
+
+    Returns:
+        FSx configuration dictionary
+    """
+    return _get_feature_config("fsx_lustre", _FSX_DEFAULTS, region)
+
+
+def update_fsx_config(settings: dict[str, Any], region: str | None = None) -> None:
+    """Update FSx for Lustre configuration in cdk.json.
+
+    Args:
+        settings: FSx settings to update
+        region: Optional region for region-specific config. If None, updates global config.
+    """
+    _update_feature_config("fsx_lustre", settings, _FSX_DEFAULTS, region)
+
+
+# =============================================================================
+# Generic feature toggle helpers (used by FSx, Valkey, Aurora, and future features)
+# =============================================================================
+
+
+def _get_feature_config(
+    feature_key: str,
+    default_config: dict[str, Any],
+    region: str | None = None,
+) -> dict[str, Any]:
+    """Get configuration for a toggleable feature from cdk.json.
+
+    Args:
+        feature_key: The cdk.json context key (e.g. "valkey", "aurora_pgvector").
+        default_config: Default configuration values when the key is missing.
+        region: Optional region for region-specific overrides.
+
+    Returns:
+        Merged configuration dictionary.
+    """
+    cdk_json_path = _find_cdk_json()
+    if not cdk_json_path:
+        raise RuntimeError("cdk.json not found")
+
+    import json
+
+    with open(cdk_json_path, encoding="utf-8") as f:
+        cdk_config = json.load(f)
+
+    global_config = cdk_config.get("context", {}).get(feature_key, default_config)
+
+    if region:
+        region_key = f"{feature_key}_regions"
+        region_overrides = cdk_config.get("context", {}).get(region_key, {})
+        if region in region_overrides:
+            merged = {**global_config, **region_overrides[region]}
+            merged["region"] = region
+            merged["is_region_specific"] = True
+            return merged
+
+    result = {**default_config, **global_config}
+    result["is_region_specific"] = False
+    return result
+
+
+def _update_feature_config(
+    feature_key: str,
+    settings: dict[str, Any],
+    default_config: dict[str, Any],
+    region: str | None = None,
+) -> None:
+    """Update configuration for a toggleable feature in cdk.json.
+
+    Args:
+        feature_key: The cdk.json context key (e.g. "valkey", "aurora_pgvector").
+        settings: Settings to update.
+        default_config: Default configuration values when the key is missing.
+        region: Optional region for region-specific config.
+    """
+    cdk_json_path = _find_cdk_json()
+    if not cdk_json_path:
+        raise RuntimeError("cdk.json not found")
+
+    import json
+
+    with open(cdk_json_path, encoding="utf-8") as f:
+        cdk_config = json.load(f)
+
+    if "context" not in cdk_config:
+        cdk_config["context"] = {}
+
+    if region:
+        region_key = f"{feature_key}_regions"
+        if region_key not in cdk_config["context"]:
+            cdk_config["context"][region_key] = {}
+        if region not in cdk_config["context"][region_key]:
+            cdk_config["context"][region_key][region] = {}
+        for key, value in settings.items():
+            if value is not None or key == "enabled":
+                cdk_config["context"][region_key][region][key] = value
+    else:
+        if feature_key not in cdk_config["context"]:
+            cdk_config["context"][feature_key] = {**default_config}
+        for key, value in settings.items():
+            if value is not None or key == "enabled":
+                cdk_config["context"][feature_key][key] = value
+
+    with open(cdk_json_path, "w", encoding="utf-8") as f:
+        json.dump(cdk_config, f, indent=2)
+
+
+# =============================================================================
+# Valkey configuration
+# =============================================================================
+
+_VALKEY_DEFAULTS: dict[str, Any] = {
+    "enabled": False,
+    "max_data_storage_gb": 5,
+    "max_ecpu_per_second": 5000,
+    "snapshot_retention_limit": 1,
+}
+
+
+def get_valkey_config(region: str | None = None) -> dict[str, Any]:
+    """Get current Valkey Serverless configuration from cdk.json."""
+    return _get_feature_config("valkey", _VALKEY_DEFAULTS, region)
+
+
+def update_valkey_config(settings: dict[str, Any], region: str | None = None) -> None:
+    """Update Valkey Serverless configuration in cdk.json."""
+    _update_feature_config("valkey", settings, _VALKEY_DEFAULTS, region)
+
+
+# =============================================================================
+# Aurora pgvector configuration
+# =============================================================================
+
+_AURORA_DEFAULTS: dict[str, Any] = {
+    "enabled": False,
+    "min_acu": 0,
+    "max_acu": 16,
+    "backup_retention_days": 7,
+    "deletion_protection": False,
+}
+
+
+def get_aurora_config(region: str | None = None) -> dict[str, Any]:
+    """Get current Aurora pgvector configuration from cdk.json."""
+    return _get_feature_config("aurora_pgvector", _AURORA_DEFAULTS, region)
+
+
+def update_aurora_config(settings: dict[str, Any], region: str | None = None) -> None:
+    """Update Aurora pgvector configuration in cdk.json."""
+    _update_feature_config("aurora_pgvector", settings, _AURORA_DEFAULTS, region)

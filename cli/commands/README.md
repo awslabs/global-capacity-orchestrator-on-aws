@@ -23,7 +23,7 @@ This separation keeps the Click wiring thin and the business logic testable with
 |------|----------|-------------|
 | `jobs_cmd.py` | `gco jobs submit`, `submit-sqs`, `submit-direct`, `list`, `get`, `logs`, `events`, `delete`, `health`, `queue-status` | Job submission and lifecycle |
 | `inference_cmd.py` | `gco inference deploy`, `list`, `status`, `scale`, `update-image`, `stop`, `start`, `delete`, `canary`, `promote`, `rollback`, `invoke`, `chat`, `health`, `models` | Inference endpoint management |
-| `stacks_cmd.py` | `gco stacks deploy`, `deploy-all`, `destroy`, `destroy-all`, `list`, `status`, `access`, `bootstrap`, `fsx` | CDK stack deployment and management |
+| `stacks_cmd.py` | `gco stacks deploy`, `deploy-all`, `destroy`, `destroy-all`, `list`, `status`, `access`, `bootstrap`, `fsx`, `valkey`, `aurora` | CDK stack deployment and management |
 | `capacity_cmd.py` | `gco capacity check`, `status`, `recommend-region`, `spot-prices`, `ai-recommend`, `reservations`, `reservation-check`, `reserve` | GPU capacity and recommendations |
 | `queue_cmd.py` | `gco queue submit`, `list`, `get`, `stats` | Global DynamoDB job queue |
 | `costs_cmd.py` | `gco costs summary`, `regions`, `trend`, `workloads`, `forecast` | Cost tracking via Cost Explorer |

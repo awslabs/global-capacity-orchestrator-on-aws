@@ -52,6 +52,8 @@ Tests are organized by the component they test:
 | CDK Stacks | `test_*_stack*.py` | Infrastructure-as-code tests |
 | Storage | `test_template_store.py` | DynamoDB storage layer tests |
 | Integration | `test_integration.py`, `test_sqs_integration.py` | End-to-end integration tests |
+| MCP Server | `test_mcp_server.py`, `test_mcp_audit.py`, `test_mcp_resources_new.py`, `test_mcp_integration.py` | MCP tools, resources, audit logging, protocol tests |
+| Infrastructure | `test_oidc_stack.py`, `test_feature_toggles.py` | OIDC provider stack, feature toggle helpers (Valkey, Aurora, FSx) |
 
 ## Test Files by Category
 
@@ -244,6 +246,22 @@ actually deploy anything, hit AWS, or spawn long-running subprocesses.
 | `test_bump_version.py` | `scripts/bump_version.py` | SemVer parsing, bump paths (major/minor/patch), dry-run mode, argparse dispatch, keeping `VERSION`, `gco/_version.py`, and `cli/__init__.py` in sync |
 | `test_webhook_delivery_script.py` | `scripts/test_webhook_delivery.py` | `WebhookHandler` do_POST capture and 200 response, silenced `log_message`, `start_local_server` port binding + daemon thread + clean shutdown, `create_mock_job` fixture shape, `main()` argparse branches between local-server and external-URL modes |
 | `test_cdk_synthesis_script.py` | `scripts/test_cdk_synthesis.py` | `CONFIGS` matrix structural integrity (unique names, correct tuple shape, baseline first), `synth_with_config` overlay merging for dict vs scalar values, cdk.json restoration after success/error/exception, return-code classification (real error vs NOTICES-only), TimeoutExpired handling, `main()` aggregation/exit code |
+
+### MCP Server Tests
+
+| File | Description |
+|------|-------------|
+| `test_mcp_server.py` | Unit tests for the MCP server — `_run_cli` wrapper, tool registration, tool argument passing, resource registration, resource content reading |
+| `test_mcp_audit.py` | Audit logging — argument sanitization (redaction, truncation), `@audit_logged` decorator, startup log, Hypothesis property tests for completeness and sanitization |
+| `test_mcp_resources_new.py` | Tests for `tests://`, `config://`, and `docs://gco/examples/guide` resource groups, enhanced example metadata, module structure verification |
+| `test_mcp_integration.py` | End-to-end MCP protocol tests via FastMCP Client — tool discovery, tool call round trips, resource reading, schema validation, stdio subprocess transport |
+
+### Infrastructure Tests
+
+| File | Description |
+|------|-------------|
+| `test_oidc_stack.py` | GitHub OIDC provider CDK stack — synthesis, OIDC provider config, trust policy (wildcard/branch/custom repo), IAM policy actions, role properties, `policy.json` validation |
+| `test_feature_toggles.py` | Generic feature toggle helpers, Valkey config (get/update/enable/disable), Aurora config (get/update/enable/disable), FSx refactor regression |
 
 ### Configuration Files
 

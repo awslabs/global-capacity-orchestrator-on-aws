@@ -1093,7 +1093,26 @@ See `examples/fsx-lustre-job.yaml` for a complete example.
 
 GCO can deploy an ElastiCache Serverless Valkey cache in each regional stack for low-latency key-value storage. Use cases include prompt caching for inference, session state, feature stores, and shared state across pods.
 
-Edit `cdk.json` to enable:
+Enable via CLI:
+
+```bash
+# Enable Valkey
+gco stacks valkey enable -y
+
+# Enable with custom settings
+gco stacks valkey enable --max-storage 10 --max-ecpu 10000 -y
+
+# Check current status
+gco stacks valkey status
+
+# Disable
+gco stacks valkey disable -y
+
+# Redeploy to apply
+gco stacks deploy-all -y
+```
+
+Or edit `cdk.json` directly:
 
 ```json
 {
@@ -1151,7 +1170,26 @@ GCO can deploy an Aurora Serverless v2 PostgreSQL cluster with the pgvector exte
 
 Aurora Serverless v2 supports scaling to 0 ACU — the cluster automatically pauses after a period of inactivity and resumes in ~15 seconds on the first connection. You pay only for storage while paused. This is ideal for dev/test environments and workloads that can tolerate a brief cold start.
 
-Edit `cdk.json` to enable:
+Enable via CLI:
+
+```bash
+# Enable Aurora pgvector
+gco stacks aurora enable -y
+
+# Enable with custom settings
+gco stacks aurora enable --min-acu 2 --max-acu 32 --deletion-protection -y
+
+# Check current status
+gco stacks aurora status
+
+# Disable
+gco stacks aurora disable -y
+
+# Redeploy to apply
+gco stacks deploy-all -y
+```
+
+Or edit `cdk.json` directly:
 
 ```json
 {

@@ -746,3 +746,245 @@ def fsx_disable(config: Any, region: Any, yes: Any) -> None:
     except Exception as e:
         formatter.print_error(f"Failed to disable FSx: {e}")
         sys.exit(1)
+
+
+# =============================================================================
+# Valkey commands
+# =============================================================================
+
+
+@stacks.group("valkey")
+@pass_config
+def valkey_cmd(config: Any) -> None:
+    """Manage Valkey Serverless cache configuration."""
+    pass
+
+
+@valkey_cmd.command("status")
+@pass_config
+def valkey_status(config: Any) -> None:
+    """Show current Valkey Serverless configuration status."""
+    from ..stacks import get_valkey_config
+
+    formatter = get_output_formatter(config)
+
+    try:
+        valkey_config = get_valkey_config()
+        formatter.print_info("Valkey config:")
+        formatter.print(valkey_config)
+    except Exception as e:
+        formatter.print_error(f"Failed to get Valkey config: {e}")
+        sys.exit(1)
+
+
+@valkey_cmd.command("enable")
+@click.option("--max-storage", default=5, help="Max data storage in GB (default: 5)")
+@click.option("--max-ecpu", default=5000, help="Max eCPU per second (default: 5000)")
+@click.option("--snapshot-retention", default=1, help="Snapshot retention in days (default: 1)")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@pass_config
+def valkey_enable(
+    config: Any,
+    max_storage: Any,
+    max_ecpu: Any,
+    snapshot_retention: Any,
+    yes: Any,
+) -> None:
+    """Enable Valkey Serverless cache in the stack configuration.
+
+    Valkey provides a serverless key-value cache for prompt caching,
+    feature stores, session state, and low-latency data access.
+
+    Examples:
+        gco stacks valkey enable
+        gco stacks valkey enable --max-storage 10 --max-ecpu 10000
+    """
+    from ..stacks import update_valkey_config
+
+    formatter = get_output_formatter(config)
+
+    if not yes:
+        formatter.print_info("Valkey Serverless configuration:")
+        formatter.print_info(f"  Max Data Storage: {max_storage} GB")
+        formatter.print_info(f"  Max eCPU/second: {max_ecpu}")
+        formatter.print_info(f"  Snapshot Retention: {snapshot_retention} days")
+        click.confirm("\nEnable Valkey Serverless?", abort=True)
+
+    try:
+        valkey_settings = {
+            "enabled": True,
+            "max_data_storage_gb": max_storage,
+            "max_ecpu_per_second": max_ecpu,
+            "snapshot_retention_limit": snapshot_retention,
+        }
+
+        update_valkey_config(valkey_settings)
+        formatter.print_success("Valkey Serverless enabled in cdk.json")
+        formatter.print_info("Run 'gco stacks deploy-all -y' to apply changes")
+
+    except Exception as e:
+        formatter.print_error(f"Failed to enable Valkey: {e}")
+        sys.exit(1)
+
+
+@valkey_cmd.command("disable")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@pass_config
+def valkey_disable(config: Any, yes: Any) -> None:
+    """Disable Valkey Serverless cache in the stack configuration.
+
+    Note: This only updates the configuration. Run 'gco stacks deploy-all -y'
+    to apply changes. Existing Valkey caches will be deleted.
+
+    Examples:
+        gco stacks valkey disable
+    """
+    from ..stacks import update_valkey_config
+
+    formatter = get_output_formatter(config)
+
+    if not yes:
+        formatter.print_warning("This will disable Valkey Serverless.")
+        formatter.print_warning("Existing Valkey caches will be deleted on next deploy.")
+        click.confirm("Are you sure?", abort=True)
+
+    try:
+        update_valkey_config({"enabled": False})
+        formatter.print_success("Valkey Serverless disabled in cdk.json")
+        formatter.print_info("Run 'gco stacks deploy-all -y' to apply changes")
+
+    except Exception as e:
+        formatter.print_error(f"Failed to disable Valkey: {e}")
+        sys.exit(1)
+
+
+# =============================================================================
+# Aurora pgvector commands
+# =============================================================================
+
+
+@stacks.group("aurora")
+@pass_config
+def aurora_cmd(config: Any) -> None:
+    """Manage Aurora PostgreSQL (pgvector) configuration."""
+    pass
+
+
+@aurora_cmd.command("status")
+@pass_config
+def aurora_status(config: Any) -> None:
+    """Show current Aurora PostgreSQL (pgvector) configuration status."""
+    from ..stacks import get_aurora_config
+
+    formatter = get_output_formatter(config)
+
+    try:
+        aurora_config = get_aurora_config()
+        formatter.print_info("Aurora pgvector config:")
+        formatter.print(aurora_config)
+    except Exception as e:
+        formatter.print_error(f"Failed to get Aurora config: {e}")
+        sys.exit(1)
+
+
+@aurora_cmd.command("enable")
+@click.option("--min-acu", default=0, help="Minimum ACU (0 = scale to zero, default: 0)")
+@click.option("--max-acu", default=16, help="Maximum ACU (default: 16)")
+@click.option("--backup-retention", default=7, help="Backup retention in days (default: 7)")
+@click.option(
+    "--deletion-protection/--no-deletion-protection",
+    default=False,
+    help="Enable deletion protection",
+)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@pass_config
+def aurora_enable(
+    config: Any,
+    min_acu: Any,
+    max_acu: Any,
+    backup_retention: Any,
+    deletion_protection: Any,
+    yes: Any,
+) -> None:
+    """Enable Aurora PostgreSQL with pgvector in the stack configuration.
+
+    Aurora Serverless v2 with pgvector provides vector similarity search
+    for RAG applications, semantic search, and embedding storage.
+
+    Examples:
+        gco stacks aurora enable
+        gco stacks aurora enable --min-acu 2 --max-acu 32 --deletion-protection
+    """
+    from ..stacks import update_aurora_config
+
+    formatter = get_output_formatter(config)
+
+    if min_acu < 0:
+        formatter.print_error("Minimum ACU must be >= 0")
+        sys.exit(1)
+    if max_acu < 1:
+        formatter.print_error("Maximum ACU must be >= 1")
+        sys.exit(1)
+    if max_acu < min_acu:
+        formatter.print_error("Maximum ACU must be >= minimum ACU")
+        sys.exit(1)
+
+    if not yes:
+        formatter.print_info("Aurora pgvector configuration:")
+        formatter.print_info(f"  Min ACU: {min_acu} {'(scale to zero)' if min_acu == 0 else ''}")
+        formatter.print_info(f"  Max ACU: {max_acu}")
+        formatter.print_info(f"  Backup Retention: {backup_retention} days")
+        formatter.print_info(f"  Deletion Protection: {deletion_protection}")
+        click.confirm("\nEnable Aurora pgvector?", abort=True)
+
+    try:
+        aurora_settings = {
+            "enabled": True,
+            "min_acu": min_acu,
+            "max_acu": max_acu,
+            "backup_retention_days": backup_retention,
+            "deletion_protection": deletion_protection,
+        }
+
+        update_aurora_config(aurora_settings)
+        formatter.print_success("Aurora pgvector enabled in cdk.json")
+        formatter.print_info("Run 'gco stacks deploy-all -y' to apply changes")
+
+    except Exception as e:
+        formatter.print_error(f"Failed to enable Aurora: {e}")
+        sys.exit(1)
+
+
+@aurora_cmd.command("disable")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@pass_config
+def aurora_disable(config: Any, yes: Any) -> None:
+    """Disable Aurora PostgreSQL (pgvector) in the stack configuration.
+
+    Note: This only updates the configuration. Run 'gco stacks deploy-all -y'
+    to apply changes. Existing Aurora clusters will be deleted unless
+    deletion protection is enabled.
+
+    Examples:
+        gco stacks aurora disable
+    """
+    from ..stacks import update_aurora_config
+
+    formatter = get_output_formatter(config)
+
+    if not yes:
+        formatter.print_warning("This will disable Aurora pgvector.")
+        formatter.print_warning(
+            "Existing Aurora clusters will be deleted on next deploy "
+            "(unless deletion protection is enabled)."
+        )
+        click.confirm("Are you sure?", abort=True)
+
+    try:
+        update_aurora_config({"enabled": False})
+        formatter.print_success("Aurora pgvector disabled in cdk.json")
+        formatter.print_info("Run 'gco stacks deploy-all -y' to apply changes")
+
+    except Exception as e:
+        formatter.print_error(f"Failed to disable Aurora: {e}")
+        sys.exit(1)
