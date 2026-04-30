@@ -2,12 +2,34 @@
 Stack management for GCO CLI.
 
 Provides commands for deploying, updating, and managing CDK stacks.
+This is the largest CLI module (~1600 lines) because it orchestrates the
+full deployment lifecycle including container runtime detection, CDK
+bootstrapping, Lambda source synchronization, and parallel regional deploys.
 
 This module handles:
-- Container runtime detection (Docker, Finch, Podman)
-- CDK stack deployment with proper dependency ordering
-- Parallel deployment of regional stacks
-- Lambda source synchronization before deployment
+    - Container runtime detection (Docker, Finch, Podman) with automatic fallback
+    - CDK bootstrap across all target regions (idempotent)
+    - Lambda source synchronization (copies handler code + dependencies before synth)
+    - CDK stack deployment with proper dependency ordering:
+        1. Global stack (Global Accelerator, DynamoDB)
+        2. API Gateway stack (auth secret, Lambda proxy)
+        3. Regional stacks in parallel (EKS, VPC, ALB per region)
+        4. Monitoring stack (CloudWatch dashboards, alarms)
+    - Parallel deployment of regional stacks via ThreadPoolExecutor
+    - Stack destruction in reverse dependency order
+    - FSx for Lustre enable/disable toggle
+    - kubectl access configuration (EKS access entries + kubeconfig)
+
+Key Design Decisions:
+    - Regional stacks deploy in parallel for speed; global/API/monitoring are sequential
+    - Lambda build directories are synced before every deploy to avoid stale code
+    - Container runtime is auto-detected; CDK_DOCKER env var overrides
+    - All destructive operations require -y/--yes confirmation
+    - Stack status is read from CloudFormation, not cached locally
+
+Environment Variables:
+    CDK_DOCKER: Override container runtime (default: auto-detect Docker/Finch/Podman)
+    AWS_REGION: Default region for single-region operations
 """
 
 from __future__ import annotations

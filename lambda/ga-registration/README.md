@@ -2,6 +2,13 @@
 
 Registers the Ingress-created ALB with AWS Global Accelerator during stack deployment. Also stores the ALB hostname in SSM Parameter Store for cross-region discovery.
 
+## Table of Contents
+
+- [Trigger](#trigger)
+- [How It Works](#how-it-works)
+- [CloudFormation Properties](#cloudformation-properties)
+- [IAM Permissions](#iam-permissions)
+
 ## Trigger
 
 CloudFormation Custom Resource — runs on stack Create, Update, and Delete.

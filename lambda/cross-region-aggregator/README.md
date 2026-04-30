@@ -2,6 +2,15 @@
 
 Aggregates data (jobs, health, status) from all regional GCO clusters into a single response. Powers the global API endpoints by querying each regional ALB in parallel and merging results.
 
+## Table of Contents
+
+- [Trigger](#trigger)
+- [Routes](#routes)
+- [How It Works](#how-it-works)
+- [Environment Variables](#environment-variables)
+- [IAM Permissions](#iam-permissions)
+- [Dependencies](#dependencies)
+
 ## Trigger
 
 API Gateway (proxy integration) — handles `/api/v1/global/*` routes.

@@ -2,6 +2,12 @@
 
 The `gco` command-line interface for managing GCO infrastructure, jobs, inference endpoints, and operations.
 
+## Table of Contents
+
+- [Structure](#structure)
+- [Installation](#installation)
+- [Reference](#reference)
+
 ## Structure
 
 | File | Description |

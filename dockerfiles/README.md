@@ -2,6 +2,11 @@
 
 This directory contains Dockerfiles for the Kubernetes services deployed to the EKS cluster.
 
+## Table of Contents
+
+- [Files](#files)
+- [Usage](#usage)
+
 ## Files
 
 - `health-monitor-dockerfile` - Health monitoring service that tracks cluster resource utilization

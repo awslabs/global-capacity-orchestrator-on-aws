@@ -3,6 +3,14 @@
 Applied to the EKS cluster by the `kubectl-applier` Lambda during CDK deployment.
 Files are applied in **sorted filename order**, so the numeric prefix controls sequencing.
 
+## Table of Contents
+
+- [Naming Convention](#naming-convention)
+- [File Groups](#file-groups)
+- [Files](#files)
+- [Template Variables](#template-variables)
+- [Adding New Manifests](#adding-new-manifests)
+
 ## Naming Convention
 
 ```

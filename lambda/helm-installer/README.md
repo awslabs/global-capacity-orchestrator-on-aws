@@ -2,6 +2,17 @@
 
 Installs and manages Helm charts on EKS clusters during CDK deployment. Supports KEDA, NVIDIA GPU Operator, NVIDIA DRA Driver, Volcano, KubeRay, Kueue, and more.
 
+## Table of Contents
+
+- [Trigger](#trigger)
+- [How It Works](#how-it-works)
+- [Packaging](#packaging)
+- [Charts](#charts-from-chartsyaml)
+- [CloudFormation Properties](#cloudformation-properties)
+- [Environment Variables](#environment-variables)
+- [IAM Permissions](#iam-permissions)
+- [Dependencies](#dependencies)
+
 ## Trigger
 
 CloudFormation Custom Resource — runs on stack Create, Update, and Delete.

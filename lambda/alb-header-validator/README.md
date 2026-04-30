@@ -2,6 +2,13 @@
 
 Validates the `X-GCO-Auth-Token` secret header on incoming requests to ensure they came through the authenticated API Gateway path. Deployed as a Lambda@Edge function on the ALB.
 
+## Table of Contents
+
+- [Trigger](#trigger)
+- [How It Works](#how-it-works)
+- [Environment Variables](#environment-variables)
+- [IAM Permissions](#iam-permissions)
+
 ## Trigger
 
 ALB (Lambda target) — invoked on every request hitting the ALB.

@@ -1,21 +1,62 @@
 """
 Regional stack for GCO (Global Capacity Orchestrator on AWS) - EKS cluster and ALB per region.
 
-This stack creates all regional resources for a single AWS region:
-- VPC with public/private subnets across 3 AZs
-- EKS Auto Mode cluster with system and general-purpose nodepools
-- Application Load Balancer (created by Ingress via AWS Load Balancer Controller)
-- Lambda function for applying Kubernetes manifests
-- ECR repositories and Docker images for services
+This is the largest stack in the project (~3200 lines) and creates all regional
+resources for a single AWS region. One instance is deployed per region defined
+in cdk.json.
 
-The stack also:
-- Registers the ALB with Global Accelerator (via custom resource)
-- Creates IRSA role for service account to access Secrets Manager
-- Applies Kubernetes manifests (namespaces, RBAC, deployments, services)
+Resources Created:
+    VPC & Networking:
+        - VPC with 3 AZs, public subnets (ALB), private subnets (EKS nodes)
+        - 2 NAT Gateways for high availability
+        - VPC endpoints for ECR, S3, STS, Secrets Manager, SSM, CloudWatch
+        - VPC Flow Logs (CloudWatch Logs, 30-day retention)
+
+    EKS Cluster (Auto Mode):
+        - Managed control plane with full logging (API, Audit, Authenticator, Controller Manager, Scheduler)
+        - NodePools: system, general-purpose, gpu-x86, gpu-arm, inference, gpu-efa, neuron, cpu-general
+        - IRSA roles for service accounts (Secrets Manager, SQS, DynamoDB, CloudWatch, S3, EFS)
+
+    Load Balancing:
+        - ALB (created by Ingress via AWS Load Balancer Controller)
+        - Internal NLB for regional API Gateway VPC Link
+        - Global Accelerator endpoint registration (via ga-registration Lambda)
+
+    Storage:
+        - EFS with dynamic provisioning (CSI driver, access points, encryption at rest + in transit)
+        - FSx for Lustre (optional, toggled via cdk.json)
+        - Valkey Serverless cache (optional)
+        - Aurora Serverless v2 with pgvector (optional)
+
+    Lambda Functions:
+        - kubectl-applier: applies K8s manifests during deployment
+        - helm-installer: installs Helm charts (KEDA, Volcano, KubeRay, GPU Operator, etc.)
+        - ga-registration: registers ALB with Global Accelerator
+        - regional-api-proxy: proxies regional API Gateway to internal ALB
+
+    Container Images:
+        - ECR repositories + Docker image builds for health-monitor, manifest-processor,
+          inference-monitor, queue-processor
+
+    SQS:
+        - Regional job queue + dead letter queue (for gco jobs submit-sqs)
+
+Key Design Decisions:
+    - EKS Auto Mode handles node provisioning — no managed node groups or Karpenter provisioners
+    - NodePools use WhenEmpty consolidation for inference to avoid disrupting long-running pods
+    - IRSA (IAM Roles for Service Accounts) for least-privilege pod-level AWS access
+    - All optional features (FSx, Valkey, Aurora) are toggled via cdk.json context variables
+    - Template variables in K8s manifests ({{PLACEHOLDER}}) are replaced at deploy time
 
 Dependencies:
-- GCOGlobalStack (for Global Accelerator endpoint group)
-- GCOApiGatewayGlobalStack (for auth secret ARN)
+    - GCOGlobalStack (for Global Accelerator endpoint group ARN, DynamoDB table names, S3 bucket)
+    - GCOApiGatewayGlobalStack (for auth secret ARN)
+
+Modification Guide:
+    - To add a new NodePool: add a YAML manifest in lambda/kubectl-applier-simple/manifests/ (40-49 range)
+    - To add a new service: add ECR image build here, Dockerfile in dockerfiles/, manifest in manifests/
+    - To add a new optional feature: add a cdk.json context toggle, guard with if/else in this file
+    - To change EKS version: update KUBERNETES_VERSION in constants.py
 """
 
 from __future__ import annotations

@@ -1,4 +1,35 @@
-"""Single-region EC2 capacity checker using real AWS signals."""
+"""
+Single-region EC2 capacity checker using real AWS signals.
+
+This is the core capacity intelligence module (~1265 lines). It queries multiple
+AWS APIs to build a comprehensive picture of GPU/accelerator availability in a
+single region. The MultiRegionCapacityChecker in multi_region.py calls this for
+each region in parallel.
+
+Data Sources:
+    - EC2 GetSpotPlacementScores: likelihood of getting spot capacity (1-10 score)
+    - EC2 DescribeSpotPriceHistory: current and historical spot prices (7-day window)
+    - EC2 DescribeInstanceTypes: vCPU, memory, GPU count/type/memory, EFA support
+    - EC2 DescribeInstanceTypeOfferings: which instance types are available in the region
+    - EC2 DescribeCapacityBlockOfferings: purchasable Capacity Blocks for ML workloads
+    - EC2 PurchaseCapacityBlock: (optional) purchase a Capacity Block by offering ID
+
+Key Classes:
+    CapacityChecker: Main class. Instantiated with a region and optional GCOConfig.
+        - check_capacity(instance_type) → CapacityEstimate
+        - get_spot_prices(instance_type) → list[SpotPriceInfo]
+        - get_instance_info(instance_type) → InstanceTypeInfo
+        - check_capacity_blocks(instance_type, count, duration) → list[dict]
+
+Output Models (defined in models.py):
+    - CapacityEstimate: spot score, price, trend, on-demand price, instance specs
+    - SpotPriceInfo: AZ, price, timestamp
+    - InstanceTypeInfo: vCPU, memory, GPU count/type/memory, EFA, architecture
+
+The GPU_INSTANCE_SPECS lookup table in models.py provides offline specs for common
+GPU instances so the checker can return useful information even when the EC2 API
+is unavailable or the instance type isn't offered in the region.
+"""
 
 from __future__ import annotations
 

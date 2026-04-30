@@ -2,6 +2,13 @@
 
 Rotates the GCO API Gateway authentication token in AWS Secrets Manager. Follows the standard 4-step Secrets Manager rotation protocol.
 
+## Table of Contents
+
+- [Trigger](#trigger)
+- [How It Works](#how-it-works)
+- [IAM Permissions](#iam-permissions)
+- [Dependencies](#dependencies)
+
 ## Trigger
 
 Secrets Manager automatic rotation (daily schedule).

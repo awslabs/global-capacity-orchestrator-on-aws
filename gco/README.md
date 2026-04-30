@@ -2,6 +2,14 @@
 
 CDK infrastructure stacks, Kubernetes services, data models, and configuration for the Global Capacity Orchestrator.
 
+## Table of Contents
+
+- [Structure](#structure)
+  - [stacks/](#stacks)
+  - [services/](#services)
+  - [models/](#models)
+  - [config/](#config)
+
 ## Structure
 
 ### stacks/

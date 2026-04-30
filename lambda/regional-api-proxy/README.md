@@ -2,6 +2,14 @@
 
 Proxies authenticated requests from the regional API Gateway directly to the internal ALB via VPC networking. Used when public access is disabled and the ALB is internal-only.
 
+## Table of Contents
+
+- [Trigger](#trigger)
+- [How It Works](#how-it-works)
+- [Environment Variables](#environment-variables)
+- [IAM Permissions](#iam-permissions)
+- [Dependencies](#dependencies)
+
 ## Trigger
 
 Regional API Gateway (proxy integration) — all routes are forwarded through this Lambda.

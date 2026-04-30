@@ -2,6 +2,17 @@
 
 Applies Kubernetes manifests to EKS clusters during CDK deployment. Pure Python implementation using the `kubernetes` client library — no Docker or kubectl binary required.
 
+## Table of Contents
+
+- [Trigger](#trigger)
+- [How It Works](#how-it-works)
+- [Supported Resource Kinds](#supported-resource-kinds)
+- [CloudFormation Properties](#cloudformation-properties)
+- [Environment Variables](#environment-variables)
+- [IAM Permissions](#iam-permissions)
+- [Dependencies](#dependencies)
+- [Build](#build)
+
 ## Trigger
 
 CloudFormation Custom Resource — runs on stack Create, Update, and Delete.

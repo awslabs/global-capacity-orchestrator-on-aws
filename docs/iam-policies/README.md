@@ -2,6 +2,16 @@
 
 This directory contains example IAM policies for controlling access to the GCO manifest submission API through AWS API Gateway.
 
+## Table of Contents
+
+- [Policy Templates](#policy-templates)
+- [Getting API Gateway Information](#getting-api-gateway-information)
+- [Applying Policies](#applying-policies)
+- [Multi-Region Considerations](#multi-region-considerations)
+- [Testing Permissions](#testing-permissions)
+- [Troubleshooting](#troubleshooting)
+- [Security Best Practices](#security-best-practices)
+
 ## Policy Templates
 
 ### 1. Full Access Policy (`full-access-policy.json`)

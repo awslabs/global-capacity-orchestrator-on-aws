@@ -2,6 +2,14 @@
 
 Proxies authenticated requests from the global API Gateway through Global Accelerator to regional ALBs. Injects the secret `X-GCO-Auth-Token` header to prove the request came through the IAM-authenticated API Gateway path.
 
+## Table of Contents
+
+- [Trigger](#trigger)
+- [How It Works](#how-it-works)
+- [Environment Variables](#environment-variables)
+- [IAM Permissions](#iam-permissions)
+- [Dependencies](#dependencies)
+
 ## Trigger
 
 API Gateway (proxy integration) — all routes are forwarded through this Lambda.

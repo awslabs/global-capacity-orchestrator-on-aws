@@ -2,6 +2,17 @@
 
 This directory contains working examples for interacting with the GCO API Gateway using various tools and programming languages.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Available Examples](#available-examples)
+- [Getting Started](#getting-started)
+- [API Endpoints](#api-endpoints)
+- [Authentication Errors](#authentication-errors)
+- [Troubleshooting](#troubleshooting)
+- [Best Practices](#best-practices)
+- [Additional Resources](#additional-resources)
+
 ## Overview
 
 The GCO API Gateway requires AWS IAM authentication using AWS Signature Version 4 (SigV4). All requests must be signed with valid AWS credentials that have the appropriate `execute-api:Invoke` permissions.

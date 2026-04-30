@@ -4,6 +4,13 @@ Comprehensive guides for understanding, deploying, operating, and customizing GC
 
 > **💡 Tip:** Connect the [MCP server](../mcp/) to an agent and explore the codebase through conversation. Ask things like *"What CDK stacks does GCO create?"* or *"How does the manifest processor validate jobs?"* — the agent reads the source code and docs to answer. See [mcp/README.md](../mcp/README.md) for setup.
 
+## Table of Contents
+
+- [Guides](#guides)
+- [Schedulers & Orchestrators](#schedulers--orchestrators)
+- [Supplementary](#supplementary)
+- [Reading Order](#reading-order)
+
 ## Guides
 
 | Document | Audience | Description |
