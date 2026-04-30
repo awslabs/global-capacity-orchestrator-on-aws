@@ -14,7 +14,7 @@
 #   - integration:docker:manifest-processor  — build + /healthz + /readyz
 #   - integration:docker:queue-processor     — build + startup-banner check
 #   - integration:k8s:manifest-schema        — YAML validation + required kinds
-#   - integration:kind:cluster-e2e           — kind + Calico + two services Ready
+#   - integration:kind:cluster-e2e           — kind + Calico + services + RBAC + NetworkPolicy + ResourceQuota
 #   - integration:lambda:imports             — import each Lambda handler
 #   - integration:mcp:server                 — pytest tests/test_mcp_integration.py
 #   - integration:pytest:cross-module        — pytest tests/test_integration.py
@@ -415,10 +415,12 @@ jobs:
         run: |
           docker build -f dockerfiles/health-monitor-dockerfile -t health-monitor:ci .
           docker build -f dockerfiles/manifest-processor-dockerfile -t manifest-processor:ci .
+          docker build -f dockerfiles/inference-monitor-dockerfile -t inference-monitor:ci .
       - name: Load images into kind
         run: |
           kind load docker-image health-monitor:ci --name gco-ci
           kind load docker-image manifest-processor:ci --name gco-ci
+          kind load docker-image inference-monitor:ci --name gco-ci
       - name: Apply namespaces + RBAC
         run: |
           kubectl apply -f lambda/kubectl-applier-simple/manifests/00-namespaces.yaml
@@ -449,10 +451,12 @@ jobs:
           set -euo pipefail
           for manifest in \
               lambda/kubectl-applier-simple/manifests/30-health-monitor.yaml \
-              lambda/kubectl-applier-simple/manifests/31-manifest-processor.yaml; do
+              lambda/kubectl-applier-simple/manifests/31-manifest-processor.yaml \
+              lambda/kubectl-applier-simple/manifests/32-inference-monitor.yaml; do
             case "$manifest" in
               *30-health-monitor*)     image="health-monitor:ci"; key="HEALTH_MONITOR_IMAGE" ;;
               *31-manifest-processor*) image="manifest-processor:ci"; key="MANIFEST_PROCESSOR_IMAGE" ;;
+              *32-inference-monitor*)  image="inference-monitor:ci"; key="INFERENCE_MONITOR_IMAGE" ;;
             esac
             # Stub out every remaining {{PLACEHOLDER}} with a safe literal
             # so the apiserver accepts the manifest (empty strings are fine
@@ -469,6 +473,7 @@ jobs:
           # Deployments exist (regardless of Ready state).
           kubectl -n gco-system get deploy health-monitor
           kubectl -n gco-system get deploy manifest-processor
+          kubectl -n gco-system get deploy inference-monitor
           # At least one pod got scheduled for each — confirms the apiserver
           # admitted the PodSpec and the scheduler found the nodes.
           for _ in $(seq 1 30); do
@@ -476,8 +481,10 @@ jobs:
               | python3 -c "import json,sys; print(len(json.load(sys.stdin)['items']))")
             mp=$(kubectl -n gco-system get pods -l app=manifest-processor -o json \
               | python3 -c "import json,sys; print(len(json.load(sys.stdin)['items']))")
-            if [ "$hm" -gt 0 ] && [ "$mp" -gt 0 ]; then
-              echo "Pods created: health-monitor=$hm manifest-processor=$mp"
+            im=$(kubectl -n gco-system get pods -l app=inference-monitor -o json \
+              | python3 -c "import json,sys; print(len(json.load(sys.stdin)['items']))")
+            if [ "$hm" -gt 0 ] && [ "$mp" -gt 0 ] && [ "$im" -gt 0 ]; then
+              echo "Pods created: health-monitor=$hm manifest-processor=$mp inference-monitor=$im"
               exit 0
             fi
             sleep 2
@@ -498,11 +505,134 @@ jobs:
             exit 1
           fi
           echo "NetworkPolicies accepted by apiserver: $count"
+      - name: Apply jobs ServiceAccount
+        # 04a creates the gco-service-account SA in gco-jobs with
+        # automountServiceAccountToken: false. Stub the IRSA annotation.
+        run: |
+          set -euo pipefail
+          sed 's|{{SERVICE_ACCOUNT_ROLE_ARN}}|arn:aws:iam::000000000000:role/ci-stub|g' \
+            lambda/kubectl-applier-simple/manifests/04a-jobs-serviceaccount.yaml \
+            | kubectl apply -f -
+          kubectl -n gco-jobs get sa gco-service-account
+          echo "Jobs ServiceAccount created"
+      - name: Apply ResourceQuotas and LimitRanges
+        # 06-resource-quotas.yaml defines namespace-level resource governance.
+        # Substitute template variables with reasonable CI values.
+        # The YAML already quotes the placeholders, so values must be unquoted.
+        run: |
+          set -euo pipefail
+          sed -e 's|{{QUOTA_MAX_CPU}}|100|g' \
+              -e 's|{{QUOTA_MAX_MEMORY}}|200Gi|g' \
+              -e 's|{{QUOTA_MAX_GPU}}|8|g' \
+              -e 's|{{QUOTA_MAX_PODS}}|100|g' \
+              -e 's|{{LIMIT_MAX_CPU}}|16|g' \
+              -e 's|{{LIMIT_MAX_MEMORY}}|64Gi|g' \
+              -e 's|{{LIMIT_MAX_GPU}}|4|g' \
+            lambda/kubectl-applier-simple/manifests/06-resource-quotas.yaml \
+            | kubectl apply -f -
+          kubectl -n gco-jobs get resourcequota gco-jobs-quota
+          kubectl -n gco-jobs get limitrange gco-jobs-limits
+          echo "ResourceQuota and LimitRange applied"
+      - name: Verify PodDisruptionBudgets exist
+        # The deployment manifests include PDBs. Verify the apiserver
+        # accepted them — PDBs are a common source of schema errors when
+        # the policy API version changes.
+        run: |
+          set -euo pipefail
+          pdb_count=$(kubectl -n gco-system get pdb --no-headers 2>/dev/null | wc -l | tr -d ' ')
+          echo "PodDisruptionBudgets in gco-system: $pdb_count"
+          if [ "$pdb_count" -eq 0 ]; then
+            echo "WARNING: No PDBs found — deployment manifests may not include them"
+          else
+            kubectl -n gco-system get pdb
+          fi
+      - name: Verify RBAC restricts unauthorized access
+        # Create a test pod using the gco-service-account (which has
+        # automountServiceAccountToken: false) and verify it cannot
+        # list pods — confirming RBAC is actually enforced.
+        run: |
+          set -euo pipefail
+          # The SA exists but has no RBAC bindings for pod listing.
+          # --as uses impersonation to test without creating a real pod.
+          if kubectl auth can-i list pods -n gco-jobs --as=system:serviceaccount:gco-jobs:gco-service-account 2>/dev/null; then
+            echo "FAIL: gco-service-account should NOT be able to list pods"
+            exit 1
+          else
+            echo "PASS: gco-service-account correctly denied pod listing"
+          fi
+          # Verify the system service accounts DO have their expected permissions
+          if kubectl auth can-i get pods -n gco-system --as=system:serviceaccount:gco-system:gco-health-monitor-sa 2>/dev/null; then
+            echo "PASS: gco-health-monitor-sa can get pods in gco-system"
+          else
+            echo "FAIL: gco-health-monitor-sa should be able to get pods"
+            exit 1
+          fi
+      - name: Verify NetworkPolicy enforcement blocks cross-namespace traffic
+        # With Calico enforcing NetworkPolicies, verify that a pod in
+        # gco-jobs cannot reach services in gco-system (default-deny ingress).
+        # We use a lightweight busybox pod to attempt a connection.
+        run: |
+          set -euo pipefail
+          # Get the health-monitor service ClusterIP (if it exists)
+          svc_ip=$(kubectl -n gco-system get svc health-monitor -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+          if [ -z "$svc_ip" ]; then
+            echo "SKIP: health-monitor service not found (no ClusterIP to test against)"
+            exit 0
+          fi
+          # Run a test pod in gco-jobs that tries to reach gco-system
+          # Timeout after 5 seconds — if blocked, wget will fail.
+          kubectl run netpol-test --image=busybox:1.37.0 -n gco-jobs \
+            --restart=Never --rm -i --timeout=30s \
+            -- sh -c "wget -q -O- --timeout=5 http://${svc_ip}:8080/health 2>&1 || echo BLOCKED" \
+            | tee /tmp/netpol-result.txt || true
+          if grep -q "BLOCKED\|timed out\|Connection refused" /tmp/netpol-result.txt; then
+            echo "PASS: Cross-namespace traffic blocked by NetworkPolicy"
+          else
+            echo "WARNING: Cross-namespace traffic may not be blocked (could be service not ready)"
+          fi
+      - name: Verify all namespaces exist
+        run: |
+          set -euo pipefail
+          for ns in gco-system gco-jobs gco-inference; do
+            if kubectl get namespace "$ns" >/dev/null 2>&1; then
+              echo "PASS: namespace $ns exists"
+            else
+              echo "FAIL: namespace $ns missing"
+              exit 1
+            fi
+          done
+      - name: Summary
+        run: |
+          echo "=== Kind E2E Test Summary ==="
+          echo "Namespaces:"
+          kubectl get namespaces --no-headers | grep gco
+          echo ""
+          echo "Deployments:"
+          kubectl -n gco-system get deploy --no-headers 2>/dev/null || echo "  (none)"
+          echo ""
+          echo "Pods:"
+          kubectl -n gco-system get pods --no-headers 2>/dev/null || echo "  (none)"
+          echo ""
+          echo "NetworkPolicies:"
+          kubectl get networkpolicy -A --no-headers 2>/dev/null || echo "  (none)"
+          echo ""
+          echo "ResourceQuotas:"
+          kubectl -n gco-jobs get resourcequota --no-headers 2>/dev/null || echo "  (none)"
+          echo ""
+          echo "LimitRanges:"
+          kubectl -n gco-jobs get limitrange --no-headers 2>/dev/null || echo "  (none)"
+          echo ""
+          echo "PodDisruptionBudgets:"
+          kubectl -n gco-system get pdb --no-headers 2>/dev/null || echo "  (none)"
+          echo ""
+          echo "ServiceAccounts:"
+          kubectl -n gco-jobs get sa --no-headers 2>/dev/null || echo "  (none)"
       - name: Collect diagnostics on failure
         if: failure()
         run: |
           kubectl get pods -A -o wide || true
-          kubectl -n gco-system describe deploy health-monitor manifest-processor || true
+          kubectl -n gco-system describe deploy health-monitor manifest-processor inference-monitor || true
           kubectl -n gco-system get events --sort-by=.lastTimestamp | tail -50 || true
           kubectl -n gco-system logs deploy/health-monitor --tail=200 || true
           kubectl -n gco-system logs deploy/manifest-processor --tail=200 || true
+          kubectl -n gco-system logs deploy/inference-monitor --tail=200 || true

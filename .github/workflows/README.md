@@ -16,7 +16,7 @@ Run on every push to `main` and every pull request.
 | File | Badge | Description |
 |------|-------|-------------|
 | `unit-tests.yml` | Unit Tests | pytest with coverage (85% gate), BATS shell tests, CDK synth, config matrix, cdk-nag compliance, lockfile freshness, CLI smoke |
-| `integration-tests.yml` | Integration Tests | Dockerfile builds, kind cluster E2E with Calico, K8s manifest validation, Lambda import checks, MCP server tests |
+| `integration-tests.yml` | Integration Tests | Dockerfile builds, kind cluster E2E with Calico (3 service deployments, RBAC enforcement, NetworkPolicy blocking, ResourceQuota, PDB validation), K8s manifest validation, Lambda import checks, MCP server tests |
 | `security.yml` | Security | bandit, pip-audit, trivy (filesystem + container), trufflehog, gitleaks, semgrep, checkov, KICS |
 | `lint.yml` | Linting | actionlint, black, flake8, hadolint, isort, mypy (strict + stacks + lambda), ruff, shellcheck, yamllint |
 

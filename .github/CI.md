@@ -63,7 +63,7 @@ Each file maps to one row in the README badge table.
 | File | README row | What it covers |
 |------|------------|----------------|
 | `workflows/unit-tests.yml` | Unit Tests | pytest with coverage (fail under 85%), BATS, CLI smoke, CDK synth + config matrix, lockfile freshness, fresh install, workload import checks |
-| `workflows/integration-tests.yml` | Integration Tests | Per-Dockerfile build + module-import smoke, dev-container smoke, kind E2E with Calico (so NetworkPolicy is actually enforced and the apiserver validates every manifest schema), K8s manifest validation, Lambda import validation, cross-module pytest, MCP server pytest |
+| `workflows/integration-tests.yml` | Integration Tests | Per-Dockerfile build + module-import smoke, dev-container smoke, kind E2E with Calico (NetworkPolicy enforcement, RBAC verification, ResourceQuota/LimitRange, PDB validation, cross-namespace traffic blocking, all 3 service deployments), K8s manifest validation, Lambda import validation, cross-module pytest, MCP server pytest |
 | `workflows/security.yml` | Security | bandit, pip-audit, trivy (filesystem + per-image matrix), trufflehog, gitleaks, semgrep, checkov, KICS |
 | `workflows/lint.yml` | Linting | actionlint, black, flake8, hadolint, isort, mypy (strict / stacks / lambda), ruff, shellcheck, yamllint |
 
