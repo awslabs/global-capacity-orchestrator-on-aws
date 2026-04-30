@@ -22,7 +22,7 @@ Usage:
 try:
     from gco._version import __version__
 except ImportError:
-    __version__ = "0.5.0"
+    __version__ = "0.6.0"
 
 from .aws_client import GCOAWSClient, get_aws_client
 from .capacity import CapacityChecker, CapacityEstimate, get_capacity_checker
