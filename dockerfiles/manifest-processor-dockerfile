@@ -2,7 +2,7 @@
 # Validates and applies Kubernetes manifests submitted via API Gateway.
 # Enforces namespace restrictions, resource limits, and security policies.
 # Runs as a Deployment in gco-system behind the ALB.
-FROM python:3.14.4-slim
+FROM python:3.15.0a8-slim
 
 # Set working directory
 WORKDIR /app
