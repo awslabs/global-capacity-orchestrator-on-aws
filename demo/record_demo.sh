@@ -18,8 +18,8 @@
 #   bash demo/record_demo.sh
 #
 # Options (via environment variables):
-#   DEMO_COLS=160        Terminal width for recording (default: 160)
-#   DEMO_ROWS=40         Terminal height for recording (default: 40)
+#   DEMO_COLS=120        Terminal width for recording (default: 120)
+#   DEMO_ROWS=35         Terminal height for recording (default: 35)
 #   DEMO_SPEED=2         Playback speed multiplier for GIF (default: 2)
 #   DEMO_THEME=monokai   agg color theme (default: monokai)
 #   DEMO_FONT_FAMILY     agg font fallback chain (default: see lib_demo.sh —
@@ -57,13 +57,9 @@ setup_colors
 CAST_FILE="${SCRIPT_DIR}/live_demo.cast"
 GIF_FILE="${SCRIPT_DIR}/live_demo.gif"
 
-# Recording dimensions — 160 cols × 40 rows gives enough width for the
-# widest lines the live demo emits (kubectl table rows, long ARNs, pip
-# install output) without forcing the terminal to wrap mid-line. See
-# scripts/analyze_casts.py history in git for the width distribution that
-# informed these values — p95 across all three cast files fits inside 160.
-COLS="${DEMO_COLS:-160}"
-ROWS="${DEMO_ROWS:-40}"
+# Recording dimensions — 120 cols × 37 rows gives a wide, readable terminal.
+COLS="${DEMO_COLS:-120}"
+ROWS="${DEMO_ROWS:-37}"
 
 # GIF playback speed — 2x is comfortable for watching; 1 is real-time.
 SPEED="${DEMO_SPEED:-2}"
@@ -226,7 +222,7 @@ cat > "$WRAPPER" <<'WRAPPER_SCRIPT'
 set -euo pipefail
 
 cd "$REPO_ROOT"
-export COLUMNS="$COLS"
+export COLUMNS=120
 export GCO_DEMO_FAST=1
 export GCO_DEMO_NONINTERACTIVE=1
 bash --norc --noprofile demo/live_demo.sh

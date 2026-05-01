@@ -198,14 +198,18 @@ def add_iam_suppressions(
                 f"Resource::arn:aws:eks:{region}:<AWS::AccountId>:addon/<GCOEksCluster841A896A>/*"
             )
 
-    # Add SSM parameter patterns for global region and all regional regions
-    ssm_regions = set()
+    # Add SSM parameter patterns for global region and all regional regions.
+    # Using ``dict.fromkeys`` (insertion-ordered) + sorting gives a stable
+    # ordering so the cdk-nag metadata block doesn't churn between synths
+    # when PYTHONHASHSEED changes — previous ``set()`` iteration order was
+    # hash-based and produced non-deterministic template diffs.
+    ssm_regions_set: set[str] = set()
     if global_region:
-        ssm_regions.add(global_region)
+        ssm_regions_set.add(global_region)
     if regions:
-        ssm_regions.update(regions)
+        ssm_regions_set.update(regions)
 
-    for region in ssm_regions:
+    for region in sorted(ssm_regions_set):
         applies_to.append(f"Resource::arn:aws:ssm:{region}:<AWS::AccountId>:parameter/gco/*")
 
     # Add DynamoDB index wildcard patterns for global region
