@@ -36,7 +36,7 @@ spec:
         runAsGroup: 1000
       containers:
       - name: slurm-test
-        image: python:3.14-slim
+        image: python:3.14.4-slim
         command: ["python3", "-c"]
         args:
         - |

@@ -28,9 +28,9 @@ SCRIPT="demo/record_destroy.sh"
     [ "$output" = "10" ]
 }
 
-@test "default dimensions are 120x37" {
-    grep -q 'COLS="${DEMO_COLS:-120}"' "$SCRIPT"
-    grep -q 'ROWS="${DEMO_ROWS:-37}"' "$SCRIPT"
+@test "default dimensions are 160x40" {
+    grep -q 'COLS="${DEMO_COLS:-160}"' "$SCRIPT"
+    grep -q 'ROWS="${DEMO_ROWS:-40}"' "$SCRIPT"
 }
 
 @test "output files go to demo/ directory" {

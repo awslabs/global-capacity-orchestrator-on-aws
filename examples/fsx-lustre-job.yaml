@@ -39,7 +39,7 @@ spec:
       # FSx Lustre root is owned by root. Create the job directory
       # with correct ownership before the non-root main container runs.
       - name: init-scratch
-        image: python:3.14-slim
+        image: python:3.14.4-slim
         command: ["sh", "-c", "mkdir -p /scratch/fsx-lustre-example && chown 1000:1000 /scratch/fsx-lustre-example"]
         securityContext:
           runAsUser: 0
@@ -56,7 +56,7 @@ spec:
           mountPath: /scratch
       containers:
       - name: worker
-        image: python:3.14-slim
+        image: python:3.14.4-slim
         securityContext:
           runAsNonRoot: true
           allowPrivilegeEscalation: false

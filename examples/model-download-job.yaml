@@ -8,7 +8,7 @@
 #
 # After completion, deploy inference with:
 #   gco inference deploy my-model \
-#     -i vllm/vllm-openai:v0.19.1 \
+#     -i vllm/vllm-openai:v0.20.0 \
 #     --model-path /models/opt-125m
 #
 # To download from S3 instead of HuggingFace, change the command to:
@@ -31,7 +31,7 @@ spec:
         fsGroup: 1000
       containers:
       - name: downloader
-        image: python:3.14-slim
+        image: python:3.14.4-slim
         command:
         - python
         - -c

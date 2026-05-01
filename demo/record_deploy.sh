@@ -19,8 +19,8 @@
 #   bash demo/record_deploy.sh
 #
 # Options (via environment variables):
-#   DEMO_COLS=120        Terminal width (default: 120)
-#   DEMO_ROWS=37         Terminal height (default: 37)
+#   DEMO_COLS=160        Terminal width (default: 160)
+#   DEMO_ROWS=40         Terminal height (default: 40)
 #   DEMO_SPEED=10        Playback speed for GIF (default: 10 — deploy is long)
 #   DEMO_THEME=monokai   agg color theme (default: monokai)
 #   DEMO_FONT_FAMILY     agg font fallback chain (default: see lib_demo.sh)
@@ -53,8 +53,8 @@ CAST_FILE="${SCRIPT_DIR}/deploy.cast"
 GIF_FILE="${SCRIPT_DIR}/deploy.gif"
 
 # Terminal dimensions (same as record_demo.sh)
-COLS="${DEMO_COLS:-120}"
-ROWS="${DEMO_ROWS:-37}"
+COLS="${DEMO_COLS:-160}"
+ROWS="${DEMO_ROWS:-40}"
 
 # Deploy takes 20-30 minutes — 10x speed makes the GIF watchable (~2-3 min)
 SPEED="${DEMO_SPEED:-10}"

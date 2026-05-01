@@ -116,16 +116,36 @@ CDK dependencies are in a separate `[cdk]` extras group so operators who only us
 
 #### Regenerating the Lockfile
 
-After updating any dependency version in `pyproject.toml`, regenerate the lockfile:
+After updating any dependency version in `pyproject.toml`, regenerate the
+lockfile using `Dockerfile.dev`. This is the only supported workflow — it
+produces a deterministic, Linux-targeted lockfile that matches CI, avoids
+host-specific path leakage, and doesn't require `pip-tools` on your machine.
 
 ```bash
-pip install pip-tools
-pip-compile --no-emit-index-url --strip-extras --all-extras -o requirements-lock.txt pyproject.toml
+# Build the dev image once (cached between runs, ~5 minutes the first time)
+docker build -f Dockerfile.dev -t gco-dev .
+
+# Regenerate the lockfile and strip the project self-reference
+docker run --rm -v "$(pwd):/workspace" -w /workspace gco-dev bash -c '
+  pip-compile --no-emit-index-url --strip-extras --all-extras \
+    -o requirements-lock.txt pyproject.toml &&
+  sed -i "/^gco-cli @ file:/,+1d" requirements-lock.txt
+'
 ```
 
-Remove any `gco-cli @ file:///...` line from the output if present — the Dockerfile installs the project separately with `pip install --no-deps .`.
+The `sed` step removes the `gco-cli @ file:///workspace` self-reference that
+`pip-compile` always emits (two lines — the `file://` URI and its `    # via`
+continuation). CI installs the project separately with `pip install --no-deps`,
+and the staleness check strips `^gco-cli @ file` anyway, but we keep it out of
+the committed file for readability.
 
-Commit the updated `requirements-lock.txt` alongside your `pyproject.toml` changes. The lockfile pins all transitive dependencies to ensure reproducible builds across environments.
+Running on Linux directly (native or WSL) matches the container's environment
+— macOS-only resolutions will produce a different lockfile that CI rejects,
+which is why the Docker path is the only supported workflow.
+
+Commit the updated `requirements-lock.txt` alongside your `pyproject.toml`
+changes. The lockfile pins all transitive dependencies to ensure reproducible
+builds across environments.
 
 #### Installing from the Lockfile
 
@@ -361,8 +381,14 @@ pytest tests/test_nag_compliance.py -n auto
 # Run CDK config matrix (matches unit:cdk:config-matrix)
 python scripts/test_cdk_synthesis.py
 
-# Regenerate the lockfile (after dependency changes)
-pip-compile --no-emit-index-url --strip-extras --all-extras -o requirements-lock.txt pyproject.toml
+# Regenerate the lockfile (after dependency changes — use the Docker workflow
+# documented in Dependency Management above; pip-compile on the host produces
+# a macOS-resolved lockfile that CI rejects)
+docker run --rm -v "$(pwd):/workspace" -w /workspace gco-dev bash -c '
+  pip-compile --no-emit-index-url --strip-extras --all-extras \
+    -o requirements-lock.txt pyproject.toml &&
+  sed -i "/^gco-cli @ file:/,+1d" requirements-lock.txt
+'
 ```
 
 #### Debugging a failing check

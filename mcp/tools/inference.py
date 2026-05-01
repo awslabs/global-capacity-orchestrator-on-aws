@@ -23,7 +23,7 @@ def deploy_inference(
 
     Args:
         name: Endpoint name (e.g. my-llm).
-        image: Container image (e.g. vllm/vllm-openai:v0.19.1).
+        image: Container image (e.g. vllm/vllm-openai:v0.20.0).
         gpu_count: GPUs per replica.
         replicas: Number of replicas per region.
         port: Container port.

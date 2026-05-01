@@ -351,7 +351,10 @@ jobs:
           if ! diff /tmp/lock-no-comments.txt /tmp/fresh-no-comments.txt; then
             echo ""
             echo "ERROR: requirements-lock.txt is stale."
-            echo "Run: pip-compile --all-extras --no-emit-index-url --strip-extras -o requirements-lock.txt pyproject.toml"
+            echo "Regenerate using the Docker workflow documented in CONTRIBUTING.md"
+            echo "(Dependency Management → Regenerating the Lockfile)."
+            echo "Do not run pip-compile directly on the host — the result depends"
+            echo "on your OS and will diverge from the Linux-targeted lockfile CI expects."
             echo "Then commit the updated lockfile."
             exit 1
           fi

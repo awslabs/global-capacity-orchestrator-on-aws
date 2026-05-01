@@ -58,7 +58,7 @@ spec:
         runAsGroup: 1000
       containers:
       - name: worker
-        image: python:3.14-slim
+        image: python:3.14.4-slim
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -185,7 +185,7 @@ spec:
         runAsGroup: 1000
       containers:
       - name: gang-worker
-        image: python:3.14-slim
+        image: python:3.14.4-slim
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true

@@ -33,14 +33,14 @@ SCRIPT="demo/record_demo.sh"
 
 # ── Configuration Defaults (functional) ──────────────────────────────────────
 
-@test "default terminal width is 120 columns" {
-    run bash -c 'COLS="${DEMO_COLS:-120}"; echo "$COLS"'
-    [ "$output" = "120" ]
+@test "default terminal width is 160 columns" {
+    run bash -c 'COLS="${DEMO_COLS:-160}"; echo "$COLS"'
+    [ "$output" = "160" ]
 }
 
-@test "default terminal height is 35 rows" {
-    run bash -c 'ROWS="${DEMO_ROWS:-35}"; echo "$ROWS"'
-    [ "$output" = "35" ]
+@test "default terminal height is 40 rows" {
+    run bash -c 'ROWS="${DEMO_ROWS:-40}"; echo "$ROWS"'
+    [ "$output" = "40" ]
 }
 
 @test "default playback speed is 2x" {
@@ -54,8 +54,8 @@ SCRIPT="demo/record_demo.sh"
 }
 
 @test "DEMO_COLS env var overrides default width" {
-    run bash -c 'export DEMO_COLS=160; COLS="${DEMO_COLS:-120}"; echo "$COLS"'
-    [ "$output" = "160" ]
+    run bash -c 'export DEMO_COLS=200; COLS="${DEMO_COLS:-160}"; echo "$COLS"'
+    [ "$output" = "200" ]
 }
 
 @test "DEMO_SPEED env var overrides default speed" {

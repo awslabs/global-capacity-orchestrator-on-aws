@@ -39,7 +39,7 @@ spec:
           runAsGroup: 1000
         containers:
         - name: processor
-          image: python:3.14-slim
+          image: python:3.14.4-slim
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

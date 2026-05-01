@@ -44,7 +44,7 @@ spec:
         fsGroup: 1000
       containers:
       - name: trainer
-        image: python:3.14-slim
+        image: python:3.14.4-slim
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true

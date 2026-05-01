@@ -81,7 +81,7 @@ spec:
       # ── Init container: download model weights to EFS if not cached ──
       initContainers:
       - name: model-downloader
-        image: python:3.14-slim
+        image: python:3.14.4-slim
         securityContext:
           runAsNonRoot: true
           runAsUser: 1000
