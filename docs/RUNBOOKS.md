@@ -47,12 +47,14 @@ kubectl get nodes
 1. **If EKS API is unreachable:** Check VPC networking, security groups, and EKS control plane status in the AWS console. EKS Auto Mode manages nodes automatically — if the control plane is healthy, nodes should recover.
 
 2. **If ALB health checks are failing:** Check the health monitor and manifest processor pods:
+
    ```bash
    kubectl get pods -n gco-system
    kubectl logs -n gco-system deployment/health-monitor
    ```
 
 3. **If nodes are NotReady:** EKS Auto Mode should replace unhealthy nodes automatically. Check CloudWatch for node group scaling events. If stuck, check the NodePool configuration:
+
    ```bash
    kubectl get nodepools
    ```
@@ -92,6 +94,7 @@ aws secretsmanager get-secret-value \
 1. **If rotation Lambda is failing:** Check IAM permissions on the rotation Lambda role. It needs `secretsmanager:GetSecretValue`, `secretsmanager:PutSecretValue`, and `secretsmanager:UpdateSecretVersionStage`.
 
 2. **If rotation is stuck (AWSPENDING exists but never promoted):**
+
    ```bash
    # Cancel the stuck rotation
    aws secretsmanager cancel-rotate-secret --secret-id gco-auth-token
@@ -101,6 +104,7 @@ aws secretsmanager get-secret-value \
    ```
 
 3. **If API requests are failing with 403 right now:** The auth middleware caches tokens for 5 minutes. After fixing the secret, wait up to 5 minutes for caches to refresh, or restart the manifest-processor pods to force a cache clear:
+
    ```bash
    kubectl rollout restart deployment/manifest-processor -n gco-system
    ```
@@ -140,6 +144,7 @@ aws logs filter-log-events \
 **Resolution:**
 
 1. **If ALB is not registered:** The GA registration Lambda runs during stack deployment. Trigger a stack update to re-register:
+
    ```bash
    gco stacks deploy -r <region> -y
    ```
@@ -181,6 +186,7 @@ kubectl logs -n gco-system deployment/sqs-consumer --tail=100
 1. **If messages are malformed YAML:** The DLQ message body contains the original manifest. Fix the YAML and resubmit via `gco jobs submit-sqs`.
 
 2. **If the queue processor is crashing:** Check pod status and restart:
+
    ```bash
    kubectl get pods -n gco-system -l app=sqs-consumer
    kubectl rollout restart deployment/sqs-consumer -n gco-system
@@ -189,6 +195,7 @@ kubectl logs -n gco-system deployment/sqs-consumer --tail=100
 3. **If messages are valid but failing validation:** Check resource limits in `cdk.json` under `manifest_processor`. The job may exceed CPU/memory/GPU limits.
 
 4. **To replay DLQ messages** (after fixing the root cause):
+
    ```bash
    # Move messages from DLQ back to main queue
    aws sqs start-message-move-task \
@@ -221,6 +228,7 @@ gco config-cmd show | grep -A5 allowed_namespaces
 **Resolution:**
 
 1. **Resource limit exceeded:** Update `resource_quotas` in `cdk.json` and redeploy:
+
    ```json
    "manifest_processor": {
      "max_cpu_per_manifest": "32",
@@ -228,9 +236,11 @@ gco config-cmd show | grep -A5 allowed_namespaces
      "max_gpu_per_manifest": 8
    }
    ```
+
    Then: `gco stacks deploy -r <region> -y`
 
 2. **Namespace not allowed:** Add the namespace to `allowed_namespaces` in `cdk.json`:
+
    ```json
    "manifest_processor": {
      "allowed_namespaces": ["default", "gco-jobs", "my-namespace"]
@@ -238,6 +248,7 @@ gco config-cmd show | grep -A5 allowed_namespaces
    ```
 
 3. **Untrusted image source:** Add the registry to `trusted_registries` in `cdk.json`:
+
    ```json
    "manifest_processor": {
      "trusted_registries": ["docker.io", "gcr.io", "my-registry.example.com"]
@@ -274,6 +285,7 @@ aws logs filter-log-events \
 **Resolution:**
 
 1. **Lambda cold starts:** The proxy Lambda has a 29s timeout. Cold starts add 1-3s. If cold starts are frequent, consider provisioned concurrency:
+
    ```bash
    aws lambda put-provisioned-concurrency-config \
      --function-name gco-api-proxy \
@@ -312,11 +324,13 @@ aws ec2 describe-vpc-endpoints \
 1. **If cluster status is not ACTIVE:** Wait for the cluster to finish updating. EKS updates can take 10-20 minutes.
 
 2. **If kubeconfig is stale:** Refresh it:
+
    ```bash
    gco stacks access -r <region>
    ```
 
 3. **If endpoint access mode is PRIVATE:** You need to be on the VPC or use the regional API Gateway:
+
    ```bash
    gco jobs list -r <region> --regional-api
    ```
@@ -350,6 +364,7 @@ gco inference models <name>
 2. **If pods are running but not ready:** The readiness probe may be failing. Check if the model finished loading (large models can take 5-10 minutes).
 
 3. **If the service is unreachable:** Check the Kubernetes Service and Ingress:
+
    ```bash
    kubectl get svc,ingress -n gco-inference
    ```
@@ -382,12 +397,14 @@ gco nodepools list -r us-east-1
 **Resolution:**
 
 1. **Forgotten inference endpoints:** Stop or delete unused endpoints:
+
    ```bash
    gco inference stop <name>
    gco inference delete <name>
    ```
 
 2. **Stuck jobs:** Delete completed/failed jobs that are still holding resources:
+
    ```bash
    gco jobs bulk-delete --status completed --older-than-days 7 --all-regions --execute -y
    gco jobs bulk-delete --status failed --older-than-days 3 --all-regions --execute -y
@@ -396,6 +413,7 @@ gco nodepools list -r us-east-1
 3. **Unexpected node scaling:** EKS Auto Mode scales nodes based on pending pods. Check if there are pods stuck in Pending that are triggering unnecessary scaling.
 
 4. **For ongoing monitoring:** Set up AWS Budgets with alerts:
+
    ```bash
    aws budgets create-budget \
      --account-id <account-id> \

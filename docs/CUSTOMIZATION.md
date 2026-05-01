@@ -76,6 +76,7 @@ GCO deploys multiple stacks to different AWS regions. All regions are configurab
 | `gco-{region}` | (configurable) | Regional EKS clusters, ALBs, and workload infrastructure |
 
 **Why separate regions?**
+
 - Global infrastructure (API Gateway, Global Accelerator) is kept separate from workload regions
 - Prevents resource conflicts and simplifies management
 - Edge-optimized API Gateway uses CloudFront, so the "home" region has minimal latency impact
@@ -163,6 +164,7 @@ export GCO_MONITORING_REGION=us-west-2
 ```
 
 **Configuration precedence (highest to lowest):**
+
 1. Environment variables (`GCO_*`)
 2. User config file (`~/.gco/config.yaml`)
 3. Project config (`cdk.json`)
@@ -400,7 +402,7 @@ spec:
 
 ### GPU Time-Slicing (Fractional GPUs)
 
-You can share a single GPU across multiple pods using NVIDIA time-slicing. The NVIDIA device plugin is already installed via the GPU Operator, but time-slicing is not enabled by default. To enable it, apply a ConfigMap that sets the number of replicas per physical GPU (e.g., `replicas: 4` makes one GPU appear as four schedulable units). The kube-scheduler can then place several lightweight workloads onto one GPU node. Note that Karpenter does not currently account for time-slicing replicas when provisioning nodes ([kubernetes-sigs/karpenter#2140](https://github.com/kubernetes-sigs/karpenter/issues/2140)), so it may over-provision initially.
+You can share a single GPU across multiple pods using NVIDIA time-slicing. The NVIDIA device plugin is already installed via the GPU Operator, but time-slicing is not enabled by default. To enable it, apply a ConfigMap that sets the number of replicas per physical GPU (e.g., `replicas: 4` makes one GPU appear as four schedulable units). The kube-scheduler can then place several lightweight workloads onto one GPU node. Note that Karpenter does not currently account for time-slicing replicas when provisioning nodes ([Kubernetes-sigs/karpenter#2140](https://github.com/kubernetes-sigs/karpenter/issues/2140)), so it may over-provision initially.
 
 See `examples/gpu-timeslicing-job.yaml` for a complete example with setup instructions.
 
@@ -665,6 +667,7 @@ post-helm-name.yaml     # Post-Helm pass (applied after Helm installs CRDs)
 ```
 
 **Number ranges:**
+
 - `00-09` — Foundation (namespaces, service accounts, RBAC, network policies)
 - `10-19` — Networking (IngressClass, Ingress)
 - `20-29` — Storage (EFS, FSx, Valkey)
@@ -1037,16 +1040,19 @@ Edit `cdk.json` to customize FSx storage settings:
 ```
 
 **Deployment Types:**
+
 - `SCRATCH_1`: Temporary storage, no replication (cheapest)
 - `SCRATCH_2`: Temporary storage with better burst performance (recommended for most workloads)
 - `PERSISTENT_1`: Persistent storage with data replication
 - `PERSISTENT_2`: Latest persistent storage with higher throughput
 
 **File System Type Version:**
+
 - `2.15`: Latest version, recommended (default)
 - `2.12`: Compatible with kernel 6.x
 
 **Storage Capacity:**
+
 - Minimum: 1200 GiB for SCRATCH_2
 - Must be in increments of 2400 GiB for SCRATCH_2
 
@@ -1083,6 +1089,7 @@ spec:
 ```
 
 **Available PVCs:**
+
 - `gco-fsx-storage` in `default` namespace
 - `gco-fsx-storage` in `gco-jobs` namespace
 - `gco-fsx-storage` in `gco-system` namespace
@@ -1291,6 +1298,7 @@ All checks run automatically during `cdk synth` and `cdk deploy`.
 ### Customizing Suppressions
 
 Suppressions are centralized in `gco/stacks/nag_suppressions.py`. Each suppression includes:
+
 - The rule ID being suppressed
 - A detailed reason explaining why the suppression is justified
 - The specific resources the suppression applies to (when applicable)
@@ -1429,6 +1437,7 @@ gco stacks deploy-all -y
 ```
 
 When enabled, this provides:
+
 - NVIDIA Network Operator (RDMA, GPUDirect)
 - AWS EFA Kubernetes Device Plugin (advertises `vpc.amazonaws.com/efa` resources)
 - EFA-optimized nodepool (`gpu-efa-pool`) for p4d/p5 instances
@@ -1577,6 +1586,7 @@ This bypasses the need for Global Accelerator and public ALB exposure.
 ### Using Regional APIs
 
 **CLI:**
+
 ```bash
 # Use --regional-api flag
 gco --regional-api jobs list --region us-east-1
@@ -1588,6 +1598,7 @@ gco jobs list --region us-east-1
 ```
 
 **When to Use:**
+
 - ALB is internal-only (no public exposure)
 - Maximum security posture required
 - Compliance requirements prohibit public endpoints
@@ -1596,6 +1607,7 @@ gco jobs list --region us-east-1
 ### Security Considerations
 
 Regional APIs maintain the same security model as the global API:
+
 - IAM authentication (SigV4) at API Gateway
 - Secret header injection by VPC Lambda
 - Backend validation of secret header

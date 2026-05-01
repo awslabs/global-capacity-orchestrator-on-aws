@@ -7,6 +7,7 @@ GCO includes [Volcano](https://volcano.sh/) as a batch scheduler for AI/ML and H
 Volcano extends Kubernetes with a `batch.volcano.sh/v1alpha1 Job` CRD and a custom scheduler that integrates with kube-scheduler via plugins. It doesn't replace the default scheduler — it augments it.
 
 **When to use Volcano:**
+
 - Distributed training that requires gang scheduling (all-or-nothing pod placement)
 - Batch workloads that need fair-share scheduling across teams
 - Jobs with master/worker topology (e.g., PyTorch distributed, MPI)
@@ -138,6 +139,7 @@ Available actions: `RestartJob`, `AbortJob`, `CompleteJob`, `TerminateJob`. Avai
 Gang scheduling guarantees all-or-nothing placement, but this can cause deadlocks. If two gang-scheduled jobs each need 4 GPUs but only 6 are available, neither can start — classic resource deadlock.
 
 Mitigation strategies:
+
 - Set `minAvailable` conservatively relative to cluster capacity
 - Use priority-based preemption so higher-priority jobs can evict lower-priority ones
 - Enable backfill scheduling (configured by default in GCO) to fill gaps with smaller jobs
@@ -199,6 +201,7 @@ GCO deploys Volcano, Kueue, and Slurm simultaneously. They operate at different 
 **Key point:** Volcano Jobs are not subject to Kueue admission control. Kueue only manages resources for jobs it admits (those with `kueue.x-k8s.io/queue-name` labels). Volcano manages its own resource accounting via Queues.
 
 **Avoiding GPU overcommitment:** If you configure both Volcano Queues and Kueue ClusterQueues with GPU quotas, ensure the sum doesn't exceed your physical GPU count. For example, if you have 8 GPUs:
+
 - Volcano Queue: `nvidia.com/gpu: "4"` (for gang-scheduled training)
 - Kueue ClusterQueue: `nominalQuota: 4` (for standard batch jobs)
 

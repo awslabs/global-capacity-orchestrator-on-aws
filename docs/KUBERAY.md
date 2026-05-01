@@ -7,6 +7,7 @@ GCO includes the [KubeRay Operator](https://ray-project.github.io/kuberay/) for 
 Ray is a framework for distributed computing that handles training, hyperparameter tuning, reinforcement learning, and model serving. KubeRay manages Ray clusters as Kubernetes custom resources, handling scaling, fault tolerance, and lifecycle management.
 
 **When to use KubeRay:**
+
 - Distributed training with Ray Train (PyTorch, TensorFlow, XGBoost)
 - Hyperparameter tuning with Ray Tune
 - Model serving with Ray Serve

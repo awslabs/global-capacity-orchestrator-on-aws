@@ -89,9 +89,11 @@ All inference endpoints share the same ALB as the main GCO services via EKS Auto
 ### Self-Healing
 
 The health monitor periodically verifies the ALB hostname stored in SSM matches the actual ALB from the Kubernetes Ingress status. If the ALB changes (e.g., due to cluster recreation or IngressClassParams updates), SSM is updated automatically so the cross-region aggregator and API Gateway proxy continue routing correctly.
-   - If `model_source` is set, adds an init container that syncs model weights from S3 to local EFS
-   - Reports per-region status (replicas ready, errors) back to DynamoDB
-4. State transitions (`deploying` → `running` → `stopped` → `deleted`) are driven by the CLI and reconciled by the monitor
+
+- If `model_source` is set, adds an init container that syncs model weights from S3 to local EFS
+- Reports per-region status (replicas ready, errors) back to DynamoDB
+
+1. State transitions (`deploying` → `running` → `stopped` → `deleted`) are driven by the CLI and reconciled by the monitor
 
 ### Inference-Optimized NodePool
 
@@ -118,6 +120,7 @@ gco models list
 ```
 
 Output:
+
 ```
   Models (2 found)
   ----------------------------------------------------------------------
@@ -347,6 +350,7 @@ gco inference rollback my-llm -y
 ```
 
 How it works:
+
 - `canary` stores the canary config (image, weight, replicas) in the endpoint spec in DynamoDB
 - The inference_monitor creates a second deployment (`{name}-canary`) and service in each target region
 - The ingress is updated with ALB weighted routing annotations to split traffic
@@ -368,11 +372,13 @@ gco inference deploy my-llm -i vllm/vllm-openai:v0.20.0 --gpu-count 1 --capacity
 When `--capacity-type spot` is set, the inference_monitor adds a `karpenter.sh/capacity-type: spot` node selector to the deployment. Karpenter then provisions spot GPU instances for those pods.
 
 When to use spot for inference:
+
 - Development and testing environments
 - Non-critical inference endpoints with multiple replicas (if one gets interrupted, others continue serving)
 - Cost-sensitive workloads where occasional brief interruptions are acceptable
 
 When to use on-demand (default):
+
 - Production inference endpoints requiring high availability
 - Single-replica deployments where interruption means downtime
 
@@ -419,6 +425,7 @@ gco inference invoke my-llm -d '{"model": "meta-llama/Llama-3.1-8B-Instruct", "p
 ```
 
 The CLI auto-detects the serving framework from the container image and builds the appropriate request body:
+
 - **vLLM** → `/v1/completions` (OpenAI-compatible)
 - **TGI** → `/generate` (HuggingFace format)
 - **Triton** → `/v2/models` (Triton HTTP API)
@@ -705,6 +712,7 @@ Note: Direct manifest submission creates resources in a single region only. For 
 ---
 
 **Related documentation:**
+
 - [CLI Reference](CLI.md) — Full command reference for `inference` and `models` commands
 - [Architecture Details](ARCHITECTURE.md) — Infrastructure deep dive
 - [Quick Start Guide](../QUICKSTART.md) — Get running in under 60 minutes

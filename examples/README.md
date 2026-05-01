@@ -83,6 +83,7 @@ Connects to the regional Aurora Serverless v2 PostgreSQL cluster with pgvector f
 **Prerequisites:** Enable Aurora in `cdk.json`: `"aurora_pgvector": { "enabled": true }` and redeploy.
 
 **Usage:**
+
 ```bash
 gco jobs submit-direct examples/aurora-pgvector-job.yaml -r us-east-1
 ```
@@ -100,6 +101,7 @@ gco jobs submit-direct examples/aurora-pgvector-job.yaml -r us-east-1
 A multi-step pipeline with dependency ordering. The preprocess step generates training data on shared EFS, then the train step reads it and produces model artifacts. Steps only run after their dependencies complete successfully.
 
 **Usage:**
+
 ```bash
 # Validate the DAG
 gco dag validate examples/pipeline-dag.yaml
@@ -122,6 +124,7 @@ gco dag run examples/pipeline-dag.yaml -r us-east-1
 Uses Elastic Fabric Adapter (EFA) for high-bandwidth inter-node communication — up to 3.2 Tbps on P5/Trn2 instances and up to 28.8 Tbps on P6e-GB200 UltraServers. Critical for large-scale distributed training.
 
 **Usage:**
+
 ```bash
 gco jobs submit-direct examples/efa-distributed-training.yaml -r us-east-1
 ```
@@ -139,6 +142,7 @@ gco jobs submit-direct examples/efa-distributed-training.yaml -r us-east-1
 Writes output to shared EFS storage, demonstrating how to persist job results that survive pod termination.
 
 **Usage:**
+
 ```bash
 gco jobs submit-direct examples/efs-output-job.yaml --region us-east-1 -n gco-jobs
 gco files ls -r us-east-1
@@ -159,12 +163,14 @@ cat ./efs-results/results.json
 Uses FSx for Lustre high-performance parallel storage for I/O-intensive workloads.
 
 **Prerequisites:**
+
 ```bash
 gco stacks fsx enable -y
 gco stacks deploy gco-us-east-1 -y
 ```
 
 **Usage:**
+
 ```bash
 gco jobs submit-direct examples/fsx-lustre-job.yaml --region us-east-1 -n gco-jobs
 gco files download fsx-lustre-example ./fsx-results -r us-east-1 -t fsx
@@ -190,6 +196,7 @@ gco files download fsx-lustre-example ./fsx-results -r us-east-1 -t fsx
 A job that requests GPU resources and runs on GPU-enabled nodes.
 
 **Usage:**
+
 ```bash
 gco jobs submit-sqs examples/gpu-job.yaml --region us-east-1
 kubectl logs job/gpu-test-job
@@ -208,6 +215,7 @@ kubectl logs job/gpu-test-job
 Uses a fractional GPU via NVIDIA time-slicing. Multiple pods share a single physical GPU by taking turns, letting you run lightweight GPU workloads without dedicating a full GPU to each pod.
 
 **Usage:**
+
 ```bash
 kubectl apply -f examples/gpu-timeslicing-job.yaml
 kubectl logs job/gpu-timeslice-job -n gco-jobs
@@ -232,11 +240,13 @@ GCO includes example manifests for multiple inference frameworks. Each creates a
 | `inference-vllm.yaml` | vLLM | OpenAI-compatible LLM serving with PagedAttention | [Inference Guide](../docs/INFERENCE.md) |
 
 **Deploy via CLI (recommended for multi-region):**
+
 ```bash
 gco inference deploy my-llm -i vllm/vllm-openai:v0.20.0 --gpu-count 1
 ```
 
 **Deploy a manifest directly (single region):**
+
 ```bash
 gco jobs submit-direct examples/inference-vllm.yaml -r us-east-1
 ```
@@ -252,6 +262,7 @@ See the [Inference Guide](../docs/INFERENCE.md) for canary deployments, scaling,
 Runs on an AWS Inferentia2 instance using the Neuron SDK. Inferentia is optimized for low-cost, high-throughput inference.
 
 **Usage:**
+
 ```bash
 gco jobs submit examples/inferentia-job.yaml --region us-east-1
 gco jobs logs inferentia-test -r us-east-1
@@ -270,6 +281,7 @@ gco jobs logs inferentia-test -r us-east-1
 A custom SQS-triggered ScaledJob using KEDA. Scales job replicas based on SQS queue depth. Note: GCO ships with a built-in SQS consumer — use this example as a starting point for custom SQS-triggered workloads.
 
 **Usage:**
+
 ```bash
 # Edit the manifest to set your JOB_QUEUE_URL and REGION, then:
 kubectl apply -f examples/keda-scaled-job.yaml
@@ -288,6 +300,7 @@ kubectl apply -f examples/keda-scaled-job.yaml
 Demonstrates job queueing with resource quotas and fair-sharing. Creates ClusterQueue, LocalQueue, ResourceFlavors, and sample CPU + GPU jobs. Jobs are queued and scheduled based on available cluster resources.
 
 **Usage:**
+
 ```bash
 kubectl apply -f examples/kueue-job.yaml
 kubectl get clusterqueue
@@ -308,6 +321,7 @@ kubectl get workloads -n gco-jobs
 Runs SFT fine-tuning of Qwen2.5-1.5B on a single GPU using [MegaTrain](https://github.com/DLYuanGod/MegaTrain). An init container downloads model weights to shared EFS (skipped if already cached), then the main container trains on the built-in alpaca demo dataset. Change the `MODEL_NAME` env var to target a different HuggingFace model.
 
 **Usage:**
+
 ```bash
 gco jobs submit-direct examples/megatrain-sft-job.yaml -r us-east-1
 gco jobs logs megatrain-sft -r us-east-1 -f
@@ -326,6 +340,7 @@ gco jobs logs megatrain-sft -r us-east-1 -f
 Pre-downloads model weights from HuggingFace to shared EFS so inference endpoints can mount them instantly. Downloads `facebook/opt-125m` by default — change the `MODEL_ID` env var for other models. For gated models (Llama, Mistral), uncomment the `HF_TOKEN` env var.
 
 **Usage:**
+
 ```bash
 kubectl apply -f examples/model-download-job.yaml
 # After completion, deploy inference with the cached model:
@@ -343,6 +358,7 @@ gco inference deploy my-model -i vllm/vllm-openai:v0.20.0 --model-path /models/o
 Distributed training across multiple GPUs using PyTorch DistributedDataParallel (DDP). Creates indexed pods with a headless service for DNS-based peer discovery.
 
 **Usage:**
+
 ```bash
 kubectl apply -f examples/multi-gpu-training.yaml
 kubectl get pods -n gco-jobs -l job-name=pytorch-ddp-training
@@ -362,6 +378,7 @@ kubectl logs -f job/pytorch-ddp-training -n gco-jobs
 Creates a Ray cluster for distributed computing — training, hyperparameter tuning, and model serving. Includes a head node and auto-scaling CPU worker group (1–5 replicas).
 
 **Usage:**
+
 ```bash
 kubectl apply -f examples/ray-cluster.yaml
 kubectl get raycluster -n gco-jobs
@@ -384,6 +401,7 @@ ray job submit --address http://localhost:8265 -- python -c "import ray; ray.ini
 A basic Kubernetes Job that runs a simple command and completes. Start here to verify your cluster is working.
 
 **Usage:**
+
 ```bash
 gco jobs submit-sqs examples/simple-job.yaml --region us-east-1
 # or directly:
@@ -402,6 +420,7 @@ kubectl logs job/hello-gco
 A self-contained Kubernetes Job that writes a Slurm batch script into the login pod, submits it via `sbatch`, waits for completion, and prints the output.
 
 **Usage:**
+
 ```bash
 kubectl apply -f examples/slurm-cluster-job.yaml
 kubectl logs job/slurm-test -n gco-jobs -f
@@ -420,6 +439,7 @@ kubectl logs job/slurm-test -n gco-jobs -f
 Demonstrates the recommended SQS-based submission path. Contains two example jobs (CPU and GPU) that you submit via the SQS queue. The built-in KEDA consumer automatically picks up messages and applies manifests to the cluster.
 
 **Usage:**
+
 ```bash
 gco jobs submit-sqs examples/sqs-job-submission.yaml --region us-east-1
 gco jobs submit-sqs examples/sqs-job-submission.yaml --auto-region
@@ -437,6 +457,7 @@ gco jobs submit-sqs examples/sqs-job-submission.yaml --priority 10
 Runs on an AWS Trainium instance using the Neuron SDK. Trainium is a purpose-built ML accelerator designed by AWS, offering lower cost than GPU instances for training workloads.
 
 **Usage:**
+
 ```bash
 gco jobs submit examples/trainium-job.yaml --region us-east-1
 gco jobs logs trainium-test -r us-east-1
@@ -457,6 +478,7 @@ Connects to the regional Valkey Serverless cache for K/V caching, session state,
 **Prerequisites:** Enable Valkey in `cdk.json`: `"valkey": { "enabled": true }` and redeploy.
 
 **Usage:**
+
 ```bash
 gco jobs submit-direct examples/valkey-cache-job.yaml -r us-east-1
 ```
@@ -474,6 +496,7 @@ gco jobs submit-direct examples/valkey-cache-job.yaml -r us-east-1
 Demonstrates gang scheduling for distributed training — all pods must be scheduled together or none at all. Creates a master + 2 workers with automatic restart policies.
 
 **Usage:**
+
 ```bash
 kubectl apply -f examples/volcano-gang-job.yaml
 kubectl get vcjob -n gco-jobs
@@ -493,6 +516,7 @@ kubectl get pods -n gco-jobs -l volcano.sh/job-name=distributed-training
 Demonstrates Apache YuniKorn's app-aware scheduling with hierarchical queues, gang scheduling, and GPU queue placement.
 
 **Usage:**
+
 ```bash
 kubectl apply -f examples/yunikorn-job.yaml
 kubectl get pods -n gco-jobs -l app=yunikorn-demo -w
@@ -626,6 +650,7 @@ Namespaces provide isolation and organization.
 ### 5. Set Restart Policies
 
 For Jobs:
+
 ```yaml
 spec:
   template:
@@ -634,6 +659,7 @@ spec:
 ```
 
 For Deployments:
+
 ```yaml
 spec:
   template:

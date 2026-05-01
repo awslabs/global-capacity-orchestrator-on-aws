@@ -54,30 +54,37 @@ These tools operate at different layers and can be combined:
 ## Choosing the Right Tool
 
 ### "I need to run a simple batch job"
+
 Use a standard Kubernetes Job. No special scheduler needed.
 → `examples/simple-job.yaml`
 
 ### "I need all pods to start together (gang scheduling)"
+
 Use **Volcano** or **YuniKorn**. Both support gang scheduling where all pods in a group must be schedulable before any start.
 → `examples/volcano-gang-job.yaml` or `examples/yunikorn-job.yaml`
 
 ### "I need resource quotas per team"
+
 Use **Kueue** for Kubernetes-native quota management, or **YuniKorn** for hierarchical queue-based quotas.
 → `examples/kueue-job.yaml`
 
 ### "I need to scale workloads based on SQS/Kafka/metrics"
+
 Use **KEDA**. It scales Deployments and Jobs from zero based on 60+ event sources.
 → `examples/keda-scaled-job.yaml`
 
 ### "I need distributed training with Ray"
+
 Use **KubeRay**. It manages Ray clusters with autoscaling worker groups.
 → `examples/ray-cluster.yaml`
 
 ### "My team uses Slurm and I want to keep sbatch/srun"
+
 Use **Slurm (Slinky)**. GCO deploys a ready-to-use Slurm cluster by default.
 → `examples/slurm-cluster-job.yaml`
 
 ### "I need multi-tenant fair sharing with a web UI"
+
 Use **YuniKorn**. It provides hierarchical queues, DRF fair sharing, and a built-in web dashboard.
 → `examples/yunikorn-job.yaml`
 
@@ -108,13 +115,12 @@ Each pod is handled by exactly one scheduler, determined by `schedulerName`:
 | `default-scheduler` | Kubernetes default (or omitted) | kube-scheduler |
 
 YuniKorn's admission controller is disabled in GCO. Pods must explicitly set `schedulerName: yunikorn` to use YuniKorn. This means:
+
 - Standard Kubernetes Jobs → default kube-scheduler
 - Jobs with `schedulerName: yunikorn` → YuniKorn
 - Volcano Jobs → Volcano (explicit `schedulerName: volcano`)
 - Slurm worker pods → default kube-scheduler
 - System pods (KEDA, Kueue, cert-manager) → default kube-scheduler (no interference)
-
-### GPU Quota Coordination
 
 ### GPU Quota Coordination
 

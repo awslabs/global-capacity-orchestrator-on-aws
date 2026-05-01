@@ -62,4 +62,4 @@ Configuration loading and validation.
 
 | File | Description |
 |------|-------------|
-| `config_loader.py` | Loads and validates configuration from cdk.json, environment variables, and user config files |
+| `config_loader.py` | Loads and validates configuration from cdk.JSON, environment variables, and user config files |

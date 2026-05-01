@@ -19,5 +19,6 @@ This directory contains Dockerfiles for the Kubernetes services deployed to the 
 These Dockerfiles are automatically built by CDK during deployment. The images are pushed to ECR and referenced in the Kubernetes deployments.
 
 To modify a service:
+
 1. Edit the service code in `gco/services/`
 2. Run `gco stacks deploy-all -y` to rebuild and deploy

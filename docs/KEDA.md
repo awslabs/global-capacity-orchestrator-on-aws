@@ -7,6 +7,7 @@ GCO includes [KEDA](https://keda.sh/) (Kubernetes Event-Driven Autoscaling) for 
 KEDA extends Kubernetes with event-driven autoscaling. It can scale Deployments, Jobs, and custom resources from zero to N based on metrics from external systems like SQS, Kafka, Prometheus, CloudWatch, and 60+ other sources.
 
 **When to use KEDA:**
+
 - Scale-to-zero workloads that should only run when there's work to do
 - SQS-triggered job processing (GCO's built-in queue processor uses this)
 - Autoscaling based on custom metrics (Prometheus, CloudWatch, Datadog)

@@ -26,22 +26,26 @@ The GCO API Gateway requires AWS IAM authentication using AWS Signature Version 
 A complete Python example using boto3 and the `aws-requests-auth` library to automatically sign requests.
 
 **Requirements:**
+
 ```bash
 pip install boto3 requests aws-requests-auth
 ```
 
 **Usage:**
+
 ```bash
 python python_boto3_example.py
 ```
 
 **Features:**
+
 - Automatically retrieves API Gateway endpoint from CloudFormation
 - Uses your AWS credentials (from environment, ~/.aws/credentials, or IAM role)
 - Supports temporary credentials (STS, IAM roles)
 - Includes examples for all operations: submit, get, list, delete
 
 **When to use:**
+
 - Production applications
 - CI/CD pipelines
 - Automated workflows
@@ -52,6 +56,7 @@ python python_boto3_example.py
 Examples using AWS CLI and curl with manual SigV4 signing.
 
 **Requirements:**
+
 ```bash
 # AWS CLI v2
 brew install awscli
@@ -61,17 +66,20 @@ brew install jq
 ```
 
 **Usage:**
+
 ```bash
 ./aws_cli_examples.sh
 ```
 
 **Features:**
+
 - Shows how to get API Gateway endpoint from CloudFormation
 - Demonstrates curl command structure
 - Includes IAM permission checking
 - Useful for understanding the API structure
 
 **When to use:**
+
 - Quick testing and debugging
 - Learning how the API works
 - Checking IAM permissions
@@ -84,6 +92,7 @@ brew install jq
 Uses `aws-sigv4-proxy` to automatically sign curl requests with AWS SigV4.
 
 **Requirements:**
+
 ```bash
 # macOS
 brew install aws-sigv4-proxy
@@ -95,17 +104,20 @@ sudo mv aws-sigv4-proxy-linux-amd64 /usr/local/bin/aws-sigv4-proxy
 ```
 
 **Usage:**
+
 ```bash
 ./curl_sigv4_proxy_example.sh
 ```
 
 **Features:**
+
 - Automatically starts and manages aws-sigv4-proxy
 - Uses familiar curl syntax
 - Interactive examples with all operations
 - Shows authentication failure scenarios
 
 **When to use:**
+
 - Manual testing during development
 - Debugging API issues
 - When you prefer curl over Python
@@ -160,9 +172,11 @@ python python_boto3_example.py
 All endpoints require AWS SigV4 authentication.
 
 ### POST /api/v1/manifests
+
 Submit a new Kubernetes manifest
 
 **Request:**
+
 ```json
 {
   "manifest": {
@@ -176,6 +190,7 @@ Submit a new Kubernetes manifest
 ```
 
 **Response (200):**
+
 ```json
 {
   "status": "success",
@@ -185,9 +200,11 @@ Submit a new Kubernetes manifest
 ```
 
 ### GET /api/v1/manifests
+
 List all submitted manifests
 
 **Response (200):**
+
 ```json
 {
   "manifests": [...]
@@ -195,9 +212,11 @@ List all submitted manifests
 ```
 
 ### GET /api/v1/manifests/{namespace}/{name}
+
 Get status of a specific manifest
 
 **Response (200):**
+
 ```json
 {
   "status": "success",
@@ -206,9 +225,11 @@ Get status of a specific manifest
 ```
 
 ### DELETE /api/v1/manifests/{namespace}/{name}
+
 Delete a specific manifest
 
 **Response (200):**
+
 ```json
 {
   "status": "success",
@@ -219,22 +240,27 @@ Delete a specific manifest
 ## Authentication Errors
 
 ### 403 Forbidden - Missing Authentication Token
+
 **Cause:** Request is not signed with AWS SigV4
 
 **Solution:** Use one of the provided examples that automatically signs requests
 
 ### 403 Forbidden - Invalid signature
+
 **Cause:** Request signature is incorrect or credentials are invalid
 
 **Solution:**
+
 - Verify your AWS credentials are valid: `aws sts get-caller-identity`
 - Check that your system clock is synchronized (SigV4 is time-sensitive)
 - Ensure you're using the correct region
 
 ### 403 Forbidden - User is not authorized
+
 **Cause:** Your IAM user/role lacks `execute-api:Invoke` permission
 
 **Solution:**
+
 - Attach the appropriate IAM policy (see `../iam-policies/`)
 - Verify permissions: `aws iam get-user-policy --user-name YOUR_USER --policy-name POLICY_NAME`
 
@@ -297,6 +323,7 @@ pip install aws-requests-auth
 ## Support
 
 For issues or questions:
+
 1. Check CloudWatch Logs for API Gateway execution logs
 2. Verify IAM permissions using `aws iam simulate-principal-policy`
 3. Test with the curl example to isolate client vs. server issues

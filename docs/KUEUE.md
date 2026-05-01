@@ -7,6 +7,7 @@ GCO includes [Kueue](https://kueue.sigs.k8s.io/) for Kubernetes-native job queue
 Kueue complements the default kube-scheduler by handling job-level admission control. It doesn't replace the scheduler — it decides *when* jobs are allowed to start based on available quota, then lets kube-scheduler handle pod placement. This makes it the least disruptive scheduler option.
 
 **When to use Kueue:**
+
 - Job queueing with resource quotas per team or project
 - Fair sharing of GPU resources across multiple users
 - Priority-based job admission with preemption

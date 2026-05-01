@@ -95,9 +95,11 @@ gco jobs submit MANIFEST_PATH [OPTIONS]
 ```
 
 **Arguments:**
+
 - `MANIFEST_PATH` - Path to YAML manifest file
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--namespace` | `-n` | Fallback namespace for manifests that don't declare their own (manifest `metadata.namespace` takes precedence) |
@@ -108,6 +110,7 @@ gco jobs submit MANIFEST_PATH [OPTIONS]
 | `--timeout` | | Wait timeout in seconds (default: 3600) |
 
 **Example:**
+
 ```bash
 gco jobs submit examples/simple-job.yaml -n gco-jobs
 gco jobs submit job.yaml --dry-run
@@ -123,6 +126,7 @@ gco jobs submit-sqs MANIFEST_PATH [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Target region for SQS queue |
@@ -131,6 +135,7 @@ gco jobs submit-sqs MANIFEST_PATH [OPTIONS]
 | `--namespace` | `-n` | Fallback namespace for manifests that don't declare their own (manifest `metadata.namespace` takes precedence) |
 
 **Example:**
+
 ```bash
 gco jobs submit-sqs examples/simple-job.yaml --region us-east-1
 gco jobs submit-sqs job.yaml --auto-region --priority 10
@@ -141,6 +146,7 @@ gco jobs submit-sqs job.yaml --auto-region --priority 10
 Submit a job directly via kubectl (requires EKS access).
 
 If a job with the same name already exists:
+
 - Completed or failed jobs are silently deleted and replaced
 - Active (running/pending) jobs are preserved, and the new submission is auto-renamed with a `-{5char}` suffix
 
@@ -149,12 +155,14 @@ gco jobs submit-direct MANIFEST_PATH [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Target region |
 | `--namespace` | `-n` | Fallback namespace for manifests that don't declare their own (manifest `metadata.namespace` takes precedence) |
 
 **Example:**
+
 ```bash
 gco jobs submit-direct examples/simple-job.yaml --region us-east-1 -n gco-jobs
 ```
@@ -170,6 +178,7 @@ gco jobs submit-queue MANIFEST_PATH [OPTIONS]
 Jobs are stored in DynamoDB and picked up by the target region's manifest processor. This enables global job submission with centralized tracking and status history.
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Target region for job execution (required) |
@@ -178,6 +187,7 @@ Jobs are stored in DynamoDB and picked up by the target region's manifest proces
 | `--label` | `-l` | Add labels (key=value), can be repeated |
 
 **Example:**
+
 ```bash
 gco jobs submit-queue examples/simple-job.yaml --region us-east-1
 gco jobs submit-queue job.yaml -r us-west-2 --priority 50
@@ -195,6 +205,7 @@ gco jobs list [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Target region (required unless --all-regions) |
@@ -204,6 +215,7 @@ gco jobs list [OPTIONS]
 | `--limit` | `-l` | Maximum results (default: 50) |
 
 **Example:**
+
 ```bash
 gco jobs list --region us-east-1
 gco jobs list --all-regions
@@ -219,12 +231,14 @@ gco jobs get JOB_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Job region (required) |
 | `--namespace` | `-n` | Job namespace |
 
 **Example:**
+
 ```bash
 gco jobs get my-job --region us-east-1
 gco jobs get training-job -r us-west-2 -n ml-jobs
@@ -239,6 +253,7 @@ gco jobs logs JOB_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Job region (required) |
@@ -247,6 +262,7 @@ gco jobs logs JOB_NAME [OPTIONS]
 | `--container` | `-c` | Container name (for multi-container pods) |
 
 **Example:**
+
 ```bash
 gco jobs logs my-job --region us-east-1
 gco jobs logs my-job -r us-east-1 --tail 500
@@ -262,6 +278,7 @@ gco jobs delete JOB_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Job region (required) |
@@ -269,6 +286,7 @@ gco jobs delete JOB_NAME [OPTIONS]
 | `--yes` | `-y` | Skip confirmation |
 
 **Example:**
+
 ```bash
 gco jobs delete my-job --region us-east-1
 gco jobs delete old-job -r us-west-2 -n ml-jobs -y
@@ -283,12 +301,14 @@ gco jobs events JOB_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Job region (required) |
 | `--namespace` | `-n` | Job namespace |
 
 **Example:**
+
 ```bash
 gco jobs events my-job --region us-east-1
 gco jobs events training-job -r us-west-2 -n ml-jobs
@@ -303,12 +323,14 @@ gco jobs pods JOB_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Job region (required) |
 | `--namespace` | `-n` | Job namespace |
 
 **Example:**
+
 ```bash
 gco jobs pods my-job --region us-east-1
 gco jobs pods training-job -r us-west-2 -n ml-jobs
@@ -323,12 +345,14 @@ gco jobs metrics JOB_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Job region (required) |
 | `--namespace` | `-n` | Job namespace |
 
 **Example:**
+
 ```bash
 gco jobs metrics my-job --region us-east-1
 gco jobs metrics training-job -r us-west-2 -n ml-jobs
@@ -343,6 +367,7 @@ gco jobs retry JOB_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Job region (required) |
@@ -350,6 +375,7 @@ gco jobs retry JOB_NAME [OPTIONS]
 | `--yes` | `-y` | Skip confirmation |
 
 **Example:**
+
 ```bash
 gco jobs retry failed-job --region us-east-1
 gco jobs retry training-job -r us-west-2 -n ml-jobs -y
@@ -364,6 +390,7 @@ gco jobs bulk-delete [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Target region (required unless --all-regions) |
@@ -377,6 +404,7 @@ gco jobs bulk-delete [OPTIONS]
 | `--yes` | `-y` | Skip confirmation |
 
 **Example:**
+
 ```bash
 gco jobs bulk-delete --region us-east-1 --status completed --older-than-days 7
 gco jobs bulk-delete -r us-west-2 -n gco-jobs -s failed --execute -y
@@ -392,12 +420,14 @@ gco jobs health [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Target region (required unless --all-regions) |
 | `--all-regions` | `-a` | Get health across all regions |
 
 **Example:**
+
 ```bash
 gco jobs health --region us-east-1
 gco jobs health --all-regions
@@ -412,12 +442,14 @@ gco jobs queue-status [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Filter by region |
 | `--all-regions` | | Show all regions |
 
 **Example:**
+
 ```bash
 gco jobs queue-status --all-regions
 gco jobs queue-status -r us-east-1
@@ -438,6 +470,7 @@ gco queue submit MANIFEST_PATH [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Target region for job execution (required) |
@@ -446,6 +479,7 @@ gco queue submit MANIFEST_PATH [OPTIONS]
 | `--label` | `-l` | Add labels (key=value), can be repeated |
 
 **Example:**
+
 ```bash
 gco queue submit job.yaml --region us-east-1
 gco queue submit job.yaml -r us-west-2 --priority 50
@@ -461,6 +495,7 @@ gco queue list [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Filter by target region |
@@ -469,6 +504,7 @@ gco queue list [OPTIONS]
 | `--limit` | `-l` | Maximum results (default: 50) |
 
 **Example:**
+
 ```bash
 gco queue list
 gco queue list --region us-east-1 --status queued
@@ -484,11 +520,13 @@ gco queue get JOB_ID [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Region to query (any region works) |
 
 **Example:**
+
 ```bash
 gco queue get abc123-def456
 gco queue get abc123-def456 --region us-east-1
@@ -503,6 +541,7 @@ gco queue cancel JOB_ID [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--reason` | | Cancellation reason |
@@ -510,6 +549,7 @@ gco queue cancel JOB_ID [OPTIONS]
 | `--yes` | `-y` | Skip confirmation |
 
 **Example:**
+
 ```bash
 gco queue cancel abc123-def456
 gco queue cancel abc123-def456 --reason "No longer needed" -y
@@ -524,11 +564,13 @@ gco queue stats [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Region to query (any region works) |
 
 **Example:**
+
 ```bash
 gco queue stats
 ```
@@ -548,11 +590,13 @@ gco templates list [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Region to query |
 
 **Example:**
+
 ```bash
 gco templates list
 ```
@@ -566,11 +610,13 @@ gco templates get TEMPLATE_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Region to query |
 
 **Example:**
+
 ```bash
 gco templates get gpu-training-template
 ```
@@ -584,6 +630,7 @@ gco templates create MANIFEST_PATH [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--name` | `-n` | Template name (required) |
@@ -592,6 +639,7 @@ gco templates create MANIFEST_PATH [OPTIONS]
 | `--region` | `-r` | Region to create in |
 
 **Example:**
+
 ```bash
 gco templates create job.yaml --name gpu-training -d "GPU training template"
 gco templates create job.yaml -n my-template -p image=pytorch:latest -p gpus=4
@@ -606,12 +654,14 @@ gco templates delete TEMPLATE_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Region |
 | `--yes` | `-y` | Skip confirmation |
 
 **Example:**
+
 ```bash
 gco templates delete old-template -y
 ```
@@ -625,6 +675,7 @@ gco templates run TEMPLATE_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--name` | `-n` | Job name (required) |
@@ -633,6 +684,7 @@ gco templates run TEMPLATE_NAME [OPTIONS]
 | `--param` | `-p` | Parameter override (key=value), can be repeated |
 
 **Example:**
+
 ```bash
 gco templates run gpu-training --name my-job --region us-east-1
 gco templates run gpu-template -n my-job -r us-east-1 -p image=custom:v1 -p gpus=8
@@ -653,12 +705,14 @@ gco webhooks list [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--namespace` | `-n` | Filter by namespace |
 | `--region` | `-r` | Region to query |
 
 **Example:**
+
 ```bash
 gco webhooks list
 gco webhooks list --namespace gco-jobs
@@ -673,6 +727,7 @@ gco webhooks create [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--url` | `-u` | Webhook URL (required) |
@@ -682,6 +737,7 @@ gco webhooks create [OPTIONS]
 | `--region` | `-r` | Region to create in |
 
 **Example:**
+
 ```bash
 gco webhooks create --url https://example.com/webhook -e job.completed -e job.failed
 gco webhooks create -u https://slack.com/webhook -e job.failed -n gco-jobs
@@ -696,12 +752,14 @@ gco webhooks delete WEBHOOK_ID [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Region |
 | `--yes` | `-y` | Skip confirmation |
 
 **Example:**
+
 ```bash
 gco webhooks delete abc12345 -y
 ```
@@ -721,6 +779,7 @@ gco stacks list [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Filter by region |
@@ -735,11 +794,13 @@ gco stacks status STACK_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Stack region |
 
 **Example:**
+
 ```bash
 gco stacks status gco-us-east-1 --region us-east-1
 ```
@@ -753,12 +814,14 @@ gco stacks deploy STACK_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Stack region |
 | `--yes` | `-y` | Skip confirmation |
 
 **Example:**
+
 ```bash
 gco stacks deploy gco-us-east-1 -y
 ```
@@ -772,6 +835,7 @@ gco stacks deploy-all [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--yes` | `-y` | Skip confirmation |
@@ -779,6 +843,7 @@ gco stacks deploy-all [OPTIONS]
 | `--max-workers` | `-w` | Max parallel workers (default: 4) |
 
 **Example:**
+
 ```bash
 gco stacks deploy-all -y
 gco stacks deploy-all -y --parallel --max-workers 8
@@ -793,6 +858,7 @@ gco stacks destroy STACK_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Stack region |
@@ -807,6 +873,7 @@ gco stacks destroy-all [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--yes` | `-y` | Skip confirmation |
@@ -822,6 +889,7 @@ gco stacks bootstrap [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Region to bootstrap |
@@ -835,12 +903,14 @@ gco stacks access [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--cluster` | `-c` | Cluster name (default: gco-{region}) |
 | `--region` | `-r` | AWS region (default: first deployment region) |
 
 **Examples:**
+
 ```bash
 gco stacks access                             # Auto-detect region from cdk.json
 gco stacks access -r us-west-2                # Specific region
@@ -856,11 +926,13 @@ gco stacks fsx COMMAND [OPTIONS]
 ```
 
 **Subcommands:**
+
 - `status` - Show FSx status
 - `enable` - Enable FSx for Lustre
 - `disable` - Disable FSx for Lustre
 
 **Example:**
+
 ```bash
 gco stacks fsx status
 gco stacks fsx enable --storage-capacity 1200 -y
@@ -876,11 +948,13 @@ gco stacks valkey COMMAND [OPTIONS]
 ```
 
 **Subcommands:**
+
 - `status` - Show Valkey configuration status
 - `enable` - Enable Valkey Serverless cache
 - `disable` - Disable Valkey Serverless cache
 
 **Example:**
+
 ```bash
 gco stacks valkey status
 gco stacks valkey enable --max-storage 10 --max-ecpu 10000 -y
@@ -896,11 +970,13 @@ gco stacks aurora COMMAND [OPTIONS]
 ```
 
 **Subcommands:**
+
 - `status` - Show Aurora pgvector configuration status
 - `enable` - Enable Aurora Serverless v2 with pgvector
 - `disable` - Disable Aurora pgvector
 
 **Example:**
+
 ```bash
 gco stacks aurora status
 gco stacks aurora enable --min-acu 2 --max-acu 32 --deletion-protection -y
@@ -922,6 +998,7 @@ gco dag run DAG_FILE [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Region to run in (default: from DAG file or first deployed) |
@@ -929,6 +1006,7 @@ gco dag run DAG_FILE [OPTIONS]
 | `--dry-run` | | Validate and show execution order without running |
 
 **Examples:**
+
 ```bash
 # Run a pipeline
 gco dag run pipeline.yaml -r us-east-1
@@ -946,6 +1024,7 @@ gco dag validate DAG_FILE
 ```
 
 **Example:**
+
 ```bash
 gco dag validate examples/pipeline-dag.yaml
 ```
@@ -1004,12 +1083,14 @@ gco costs summary [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--days` | `-d` | Number of days to look back (default: 30) |
 | `--all` | | Show all account costs, not filtered by GCO tag |
 
 **Examples:**
+
 ```bash
 # Last 30 days (default)
 gco costs summary
@@ -1033,11 +1114,13 @@ gco costs regions [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--days` | `-d` | Number of days to look back (default: 30) |
 
 **Examples:**
+
 ```bash
 gco costs regions
 gco costs regions --days 7
@@ -1052,12 +1135,14 @@ gco costs trend [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--days` | `-d` | Number of days to show (default: 14) |
 | `--all` | | Show all account costs, not filtered by GCO tag |
 
 **Examples:**
+
 ```bash
 gco costs trend
 gco costs trend --days 7
@@ -1073,11 +1158,13 @@ gco costs workloads [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Region to check (default: all deployment regions) |
 
 **Examples:**
+
 ```bash
 # All regions
 gco costs workloads
@@ -1095,11 +1182,13 @@ gco costs forecast [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--days` | `-d` | Days to forecast ahead (default: 30) |
 
 **Examples:**
+
 ```bash
 gco costs forecast
 gco costs forecast --days 60
@@ -1122,6 +1211,7 @@ gco capacity check [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--instance-type` | `-i` | Instance type to check |
@@ -1129,6 +1219,7 @@ gco capacity check [OPTIONS]
 | `--type` | `-t` | Capacity type: `spot`, `on-demand`, or `both` |
 
 **Example:**
+
 ```bash
 gco capacity check --instance-type g4dn.xlarge --region us-east-1
 gco capacity check -i g5.xlarge -r us-west-2 -t spot
@@ -1143,6 +1234,7 @@ gco capacity status [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Filter by region |
@@ -1156,6 +1248,7 @@ gco capacity recommend [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--instance-type` | `-i` | Instance type |
@@ -1170,6 +1263,7 @@ gco capacity recommend-region [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--gpu` | | Recommend for GPU workloads |
@@ -1182,6 +1276,7 @@ scoring that combines spot placement scores, spot-vs-on-demand pricing, queue de
 GPU utilization, and running job counts. Without it, a simpler composite score is used.
 
 **Example:**
+
 ```bash
 gco capacity recommend-region --gpu
 gco capacity recommend-region -i g5.xlarge
@@ -1199,6 +1294,7 @@ gco capacity ai-recommend [OPTIONS]
 ```
 
 This command gathers comprehensive capacity data including:
+
 - Spot placement scores and pricing across regions
 - On-demand availability and pricing
 - Current cluster utilization (queue depth, GPU/CPU usage)
@@ -1207,10 +1303,12 @@ This command gathers comprehensive capacity data including:
 The data is analyzed by an LLM (Claude by default) to provide intelligent recommendations.
 
 **Requirements:**
+
 - AWS credentials with `bedrock:InvokeModel` permission
 - The specified Bedrock model must be enabled in your account
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--workload` | `-w` | Description of your workload |
@@ -1225,6 +1323,7 @@ The data is analyzed by an LLM (Claude by default) to provide intelligent recomm
 | `--raw` | | Show raw AI response |
 
 **Example:**
+
 ```bash
 # Basic recommendation
 gco capacity ai-recommend --workload "Training a large language model"
@@ -1310,9 +1409,11 @@ gco inference deploy ENDPOINT_NAME [OPTIONS]
 ```
 
 **Arguments:**
+
 - `ENDPOINT_NAME` - Unique name for the endpoint
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--image` | `-i` | Container image (required) |
@@ -1336,6 +1437,7 @@ gco inference deploy ENDPOINT_NAME [OPTIONS]
 | `--extra-args` | | Extra arguments passed to the container (e.g. `--kv-transfer-config {...}`). Repeatable |
 
 **Example:**
+
 ```bash
 gco inference deploy my-llm -i vllm/vllm-openai:v0.20.0
 gco inference deploy llama3-70b \
@@ -1362,12 +1464,14 @@ gco inference list [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--state` | `-s` | Filter by state (deploying, running, stopped, deleted) |
 | `--region` | `-r` | Filter by target region |
 
 **Example:**
+
 ```bash
 gco inference list
 gco inference list --state running
@@ -1383,6 +1487,7 @@ gco inference status ENDPOINT_NAME
 ```
 
 **Example:**
+
 ```bash
 gco inference status my-llm
 ```
@@ -1396,11 +1501,13 @@ gco inference scale ENDPOINT_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--replicas` | `-r` | New replica count (required) |
 
 **Example:**
+
 ```bash
 gco inference scale my-llm --replicas 4
 ```
@@ -1414,11 +1521,13 @@ gco inference stop ENDPOINT_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--yes` | `-y` | Skip confirmation |
 
 **Example:**
+
 ```bash
 gco inference stop my-llm -y
 ```
@@ -1432,6 +1541,7 @@ gco inference start ENDPOINT_NAME
 ```
 
 **Example:**
+
 ```bash
 gco inference start my-llm
 ```
@@ -1445,11 +1555,13 @@ gco inference delete ENDPOINT_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--yes` | `-y` | Skip confirmation |
 
 **Example:**
+
 ```bash
 gco inference delete my-llm -y
 ```
@@ -1463,11 +1575,13 @@ gco inference update-image ENDPOINT_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--image` | `-i` | New container image (required) |
 
 **Example:**
+
 ```bash
 gco inference update-image my-llm -i vllm/vllm-openai:v0.20.0
 ```
@@ -1481,9 +1595,11 @@ gco inference invoke ENDPOINT_NAME [OPTIONS]
 ```
 
 **Arguments:**
+
 - `ENDPOINT_NAME` - Name of the inference endpoint
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--prompt` | `-p` | Text prompt to send |
@@ -1494,6 +1610,7 @@ gco inference invoke ENDPOINT_NAME [OPTIONS]
 | `--stream/--no-stream` | | Stream the response |
 
 **Example:**
+
 ```bash
 # Simple prompt (auto-detects vLLM OpenAI-compatible format)
 gco inference invoke my-llm -p "What is GPU orchestration?"
@@ -1517,14 +1634,17 @@ gco inference health ENDPOINT_NAME [OPTIONS]
 ```
 
 **Arguments:**
+
 - `ENDPOINT_NAME` - Name of the inference endpoint
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Target region to check |
 
 **Example:**
+
 ```bash
 # Check health (nearest region via Global Accelerator)
 gco inference health my-llm
@@ -1542,14 +1662,17 @@ gco inference models ENDPOINT_NAME [OPTIONS]
 ```
 
 **Arguments:**
+
 - `ENDPOINT_NAME` - Name of the inference endpoint
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Target region to query |
 
 **Example:**
+
 ```bash
 # List loaded models
 gco inference models my-llm
@@ -1567,6 +1690,7 @@ gco inference canary ENDPOINT_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--image` | `-i` | New container image for canary (required) |
@@ -1574,6 +1698,7 @@ gco inference canary ENDPOINT_NAME [OPTIONS]
 | `--replicas` | `-r` | Number of canary replicas (default: 1) |
 
 **Examples:**
+
 ```bash
 # 10% traffic to new version
 gco inference canary my-llm -i vllm/vllm-openai:v0.20.0
@@ -1591,11 +1716,13 @@ gco inference promote ENDPOINT_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--yes` | `-y` | Skip confirmation |
 
 **Example:**
+
 ```bash
 gco inference promote my-llm -y
 ```
@@ -1609,11 +1736,13 @@ gco inference rollback ENDPOINT_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--yes` | `-y` | Skip confirmation |
 
 **Example:**
+
 ```bash
 gco inference rollback my-llm -y
 ```
@@ -1635,14 +1764,17 @@ gco models upload LOCAL_PATH [OPTIONS]
 ```
 
 **Arguments:**
+
 - `LOCAL_PATH` - Local file or directory path
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--name` | `-n` | Model name in the registry (required) |
 
 **Example:**
+
 ```bash
 gco models upload ./my-model-weights/ --name llama3-8b
 gco models upload ./weights.safetensors --name my-model
@@ -1657,6 +1789,7 @@ gco models list
 ```
 
 **Example:**
+
 ```bash
 gco models list
 ```
@@ -1670,11 +1803,13 @@ gco models delete MODEL_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--yes` | `-y` | Skip confirmation |
 
 **Example:**
+
 ```bash
 gco models delete llama3-8b -y
 ```
@@ -1688,6 +1823,7 @@ gco models uri MODEL_NAME
 ```
 
 **Example:**
+
 ```bash
 gco models uri llama3-8b
 # Output: s3://gco-models-xxx/models/llama3-8b
@@ -1709,6 +1845,7 @@ gco files ls [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Region |
@@ -1716,6 +1853,7 @@ gco files ls [OPTIONS]
 | `--path` | `-p` | Path to list |
 
 **Example:**
+
 ```bash
 gco files ls -r us-east-1
 gco files list -r us-east-1 -t fsx -p /scratch
@@ -1730,12 +1868,14 @@ gco files download REMOTE_PATH LOCAL_PATH [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Region |
 | `--type` | `-t` | Storage type: `efs` or `fsx` |
 
 **Example:**
+
 ```bash
 gco files download my-job/outputs ./results -r us-east-1
 gco files download training-run ./checkpoints -r us-west-2 -t fsx
@@ -1756,6 +1896,7 @@ gco nodepools list [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Region |
@@ -1769,6 +1910,7 @@ gco nodepools describe NODEPOOL_NAME [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--region` | `-r` | Region |
@@ -1782,6 +1924,7 @@ gco nodepools create-odcr [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--name` | `-n` | NodePool name |
@@ -1790,6 +1933,7 @@ gco nodepools create-odcr [OPTIONS]
 | `--output` | `-o` | Output file path |
 
 **Example:**
+
 ```bash
 gco nodepools create-odcr \
   --name gpu-reserved \
@@ -1816,7 +1960,7 @@ regions:
   - eu-west-1
 ```
 
-### cdk.json
+### cdk.JSON
 
 Project configuration in `cdk.json`:
 
@@ -1953,17 +2097,21 @@ gco capacity status
 ### Common Issues
 
 **"No credentials found"**
+
 ```bash
 # Ensure AWS credentials are configured
 aws sts get-caller-identity
 ```
 
 **"Endpoint request timed out"**
+
 - Wait 1-2 minutes after deployment for ALB targets to become healthy
 - Use `submit-sqs` or `submit-direct` instead of `submit`
 
 **"kubectl access denied"**
+
 - Add your IAM principal to EKS access entries:
+
 ```bash
 aws eks create-access-entry \
   --cluster-name gco-us-east-1 \
@@ -1981,6 +2129,7 @@ aws eks associate-access-policy \
 **"CDK bootstrap required"**
 
 This should resolve automatically — `deploy` and `deploy-all` auto-bootstrap un-bootstrapped regions. If it persists:
+
 ```bash
 gco stacks bootstrap --region us-east-1
 ```
@@ -1999,6 +2148,7 @@ aws eks list-clusters --region us-east-1
 ---
 
 For more help, see:
+
 - [Troubleshooting Guide](TROUBLESHOOTING.md)
 - [Inference Guide](INFERENCE.md)
 - [Architecture Documentation](ARCHITECTURE.md)

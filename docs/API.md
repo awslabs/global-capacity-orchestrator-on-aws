@@ -45,6 +45,7 @@ This document describes the REST API for the GCO Manifest Processor service.
 ## Base URL
 
 The API is available at the API Gateway endpoint configured during deployment:
+
 ```
 https://<api-gateway-endpoint>/api/v1
 ```
@@ -217,6 +218,7 @@ GET /api/v1/global/jobs
 List jobs across ALL regional clusters. This endpoint queries all regional ALBs in parallel and aggregates the results.
 
 **CLI:**
+
 ```bash
 gco jobs list --all-regions
 gco jobs list -a --namespace gco-jobs --status running
@@ -264,6 +266,7 @@ GET /api/v1/global/health
 Get health status across all regional clusters.
 
 **CLI:**
+
 ```bash
 gco jobs health --all-regions
 ```
@@ -299,6 +302,7 @@ DELETE /api/v1/global/jobs
 Bulk delete jobs across all regional clusters.
 
 **CLI:**
+
 ```bash
 gco jobs bulk-delete --all-regions --status failed --older-than-days 30 --execute
 ```
@@ -339,6 +343,7 @@ GET /api/v1/jobs
 List Kubernetes Jobs with pagination and filtering.
 
 **CLI:**
+
 ```bash
 # List jobs in a specific region
 gco jobs list --region us-east-1
@@ -413,6 +418,7 @@ GET /api/v1/jobs/{namespace}/{name}/logs
 Get logs from a Job's pods with multi-container support.
 
 **CLI:**
+
 ```bash
 # Get logs from a job
 gco jobs logs my-job --region us-east-1
@@ -462,6 +468,7 @@ GET /api/v1/jobs/{namespace}/{name}/events
 Get Kubernetes events related to a Job and its pods.
 
 **CLI:**
+
 ```bash
 gco jobs events my-job --region us-east-1
 gco jobs events training-job -n ml-jobs -r us-west-2
@@ -508,6 +515,7 @@ GET /api/v1/jobs/{namespace}/{name}/pods
 Get detailed information about all pods created by a Job.
 
 **CLI:**
+
 ```bash
 gco jobs pods my-job -r us-east-1
 gco jobs pods training-job -n ml-jobs -r us-west-2
@@ -568,6 +576,7 @@ GET /api/v1/jobs/{namespace}/{name}/metrics
 Get resource usage metrics for a Job's pods (requires metrics-server).
 
 **CLI:**
+
 ```bash
 gco jobs metrics my-job --region us-east-1
 gco jobs metrics training-job -n ml-jobs -r us-west-2
@@ -613,6 +622,7 @@ DELETE /api/v1/jobs
 Bulk delete jobs based on filters.
 
 **CLI:**
+
 ```bash
 # Dry run (preview what would be deleted)
 gco jobs bulk-delete --region us-east-1 --status completed --older-than-days 7
@@ -672,6 +682,7 @@ POST /api/v1/jobs/{namespace}/{name}/retry
 Retry a failed job by creating a new job from its spec.
 
 **CLI:**
+
 ```bash
 gco jobs retry failed-job --region us-east-1
 gco jobs retry training-job -n ml-jobs -r us-west-2 -y
@@ -713,6 +724,7 @@ POST /api/v1/queue/jobs
 Submit a job to the global queue for regional pickup.
 
 **CLI:**
+
 ```bash
 # Submit job targeting us-east-1
 gco queue submit job.yaml --region us-east-1
@@ -775,6 +787,7 @@ GET /api/v1/queue/jobs
 List jobs in the global queue with optional filters.
 
 **CLI:**
+
 ```bash
 # List all queued jobs
 gco queue list
@@ -824,6 +837,7 @@ GET /api/v1/queue/jobs/{job_id}
 Get details of a specific queued job including full status history.
 
 **CLI:**
+
 ```bash
 gco queue get abc123-def456
 gco queue get abc123-def456 --region us-east-1
@@ -866,6 +880,7 @@ DELETE /api/v1/queue/jobs/{job_id}
 Cancel a queued job. Only works for jobs in `queued` or `claimed` status.
 
 **CLI:**
+
 ```bash
 gco queue cancel abc123-def456
 gco queue cancel abc123-def456 --reason "No longer needed"
@@ -895,6 +910,7 @@ GET /api/v1/queue/stats
 Get job queue statistics grouped by region and status.
 
 **CLI:**
+
 ```bash
 gco queue stats
 ```
@@ -939,6 +955,7 @@ GET /api/v1/templates
 ```
 
 **CLI:**
+
 ```bash
 gco templates list
 ```
@@ -950,6 +967,7 @@ POST /api/v1/templates
 ```
 
 **CLI:**
+
 ```bash
 # Create from manifest file
 gco templates create job.yaml --name gpu-training-template -d "GPU training template"
@@ -997,6 +1015,7 @@ POST /api/v1/jobs/from-template/{name}
 ```
 
 **CLI:**
+
 ```bash
 # Create job from template
 gco templates run gpu-training-template --name my-job --region us-east-1
@@ -1124,6 +1143,7 @@ GET /api/v1/webhooks
 ```
 
 **CLI:**
+
 ```bash
 gco webhooks list
 gco webhooks list --namespace gco-jobs
@@ -1136,6 +1156,7 @@ POST /api/v1/webhooks
 ```
 
 **CLI:**
+
 ```bash
 # Register webhook for job events
 gco webhooks create --url https://example.com/webhook -e job.completed -e job.failed
@@ -1159,6 +1180,7 @@ gco webhooks create -u https://example.com/webhook -e job.completed --secret my-
 ```
 
 **Available Events:**
+
 - `job.started` - Job started running (transitioned from pending to running)
 - `job.completed` - Job completed successfully
 - `job.failed` - Job failed
@@ -1185,6 +1207,7 @@ DELETE /api/v1/webhooks/{id}
 ```
 
 **CLI:**
+
 ```bash
 gco webhooks delete abc12345
 gco webhooks delete abc12345 -y  # Skip confirmation

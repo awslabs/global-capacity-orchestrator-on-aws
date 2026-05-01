@@ -20,12 +20,14 @@ CloudFormation Custom Resource — runs on stack Create, Update, and Delete.
 ## How It Works
 
 ### Create/Update
+
 1. Loads default chart configs from `charts.yaml`
 2. Merges any CloudFormation property overrides
 3. Configures kubeconfig with EKS token authentication
 4. Runs `helm upgrade --install` for each enabled chart (with `--wait`)
 
 ### Delete
+
 Uninstalls charts in reverse order. Always returns SUCCESS to prevent stuck stacks.
 
 ## Packaging

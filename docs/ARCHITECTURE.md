@@ -25,14 +25,9 @@
   - [Regional HA](#regional-ha)
   - [Application HA](#application-ha)
   - [Global HA](#global-ha)
-- [Monitoring and Observability](#monitoring-and-observability)
-  - [Metrics](#metrics)
-  - [Logging](#logging)
-  - [Tracing](#tracing)
 - [Cost Optimization](#cost-optimization)
 - [Disaster Recovery](#disaster-recovery)
 - [Shared Storage (EFS)](#shared-storage-efs)
-- [Performance Characteristics](#performance-characteristics)
 - [Scale Potential](#scale-potential-back-of-the-envelope-calculation)
 
 ## Overview
@@ -44,6 +39,7 @@ GCO (Global Capacity Orchestrator on AWS) is a multi-region Kubernetes platform 
 ### 1. Global Layer
 
 **AWS Global Accelerator**
+
 - Single global endpoint for all regions
 - Automatic health-based routing
 - DDoS protection via AWS Shield
@@ -54,6 +50,7 @@ GCO (Global Capacity Orchestrator on AWS) is a multi-region Kubernetes platform 
 Each region contains:
 
 **VPC Configuration**
+
 - 3 Availability Zones
 - Public subnets (24-bit CIDR) for ALB
 - Private subnets (24-bit CIDR) for EKS nodes
@@ -62,6 +59,7 @@ Each region contains:
 - VPC Flow Logs enabled (CloudWatch Logs, 30-day retention)
 
 **EKS Auto Mode Cluster**
+
 - Kubernetes 1.35
 - Managed control plane
 - Control plane logging enabled (API, Audit, Authenticator, Controller Manager, Scheduler)
@@ -74,11 +72,13 @@ Each region contains:
   - `gpu-efa-pool`: EFA-enabled instances for distributed training (p4d, p5)
 
 **Application Load Balancer**
+
 - Internet-facing
 - Security group restricts to Global Accelerator IPs only
 - Routes traffic to Kubernetes services via Ingress
 
 **Regional API Gateway** (created by regional stack)
+
 - REST API with regional endpoint
 - IAM authentication (SigV4)
 - VPC Link to internal NLB for direct service access
@@ -88,11 +88,13 @@ Each region contains:
   - `GET /api/v1/health` - Health check
 
 **Network Load Balancer (Internal)**
+
 - Private subnets only
 - Routes regional API Gateway → Kubernetes services
 - Cross-zone load balancing enabled
 
 **Amazon EFS (Elastic File System)**
+
 - Shared storage accessible by all pods in the cluster
 - Encrypted at rest (AWS KMS) and in transit (TLS)
 - Dynamic provisioning via EFS CSI Driver with `basePath: "/dynamic"`
@@ -101,6 +103,7 @@ Each region contains:
 - PersistentVolumeClaim `gco-shared-storage` available in `default`, `gco-jobs`, and `gco-system` namespaces
 
 **Amazon FSx for Lustre** (Optional)
+
 - High-performance parallel file system for ML training workloads
 - Encrypted at rest by default (AWS-managed keys)
 - Enable via: `gco stacks fsx enable`
@@ -111,12 +114,14 @@ Each region contains:
 ### 3. Global API Gateway Layer
 
 **Global API Gateway** (gco-api-gateway stack)
+
 - Single authenticated entry point for all regions
 - IAM authentication (SigV4) required for all requests
 - Lambda proxy adds secret header for backend validation
 - Forwards requests to Global Accelerator
 
 **Lambda Proxy**
+
 - Retrieves auth secret from Secrets Manager
 - Adds X-GCO-Auth-Token header to requests
 - Forwards to Global Accelerator endpoint
@@ -124,10 +129,12 @@ Each region contains:
 ### 4. Kubernetes Layer
 
 **Namespaces:**
+
 - `gco-system`: All platform services (health monitor, manifest processor) run here
 - `gco-jobs`: User workloads submitted via the API are deployed here
 
 **Health Monitor Service**
+
 - 2 replicas for high availability
 - Pod anti-affinity spreads replicas across nodes/AZs
 - PodDisruptionBudget ensures at least 1 replica during disruptions
@@ -136,6 +143,7 @@ Each region contains:
 - Reports metrics to CloudWatch
 
 **Manifest Processor Service**
+
 - 3 replicas for high throughput
 - Pod anti-affinity spreads replicas across nodes/AZs
 - PodDisruptionBudget ensures at least 2 replicas during disruptions
@@ -144,6 +152,7 @@ Each region contains:
 - Tracks manifest lifecycle
 
 **Service Account & RBAC**
+
 - `gco-service-account`: Used by all platform services
 - `gco-cluster-role`: Cluster-wide permissions
 - Least-privilege access model
@@ -151,6 +160,7 @@ Each region contains:
 ### 5. Lambda Layer
 
 **kubectl Applier Lambda**
+
 - Python 3.14 runtime
 - Runs in VPC private subnets
 - Security group allows access to EKS cluster
@@ -158,6 +168,7 @@ Each region contains:
 - Applies Kubernetes manifests during stack deployment
 
 **Function Flow:**
+
 1. CloudFormation triggers Lambda via Custom Resource
 2. Lambda generates EKS authentication token
 3. Connects to EKS private endpoint
@@ -210,16 +221,17 @@ GCO is validated against multiple compliance frameworks using CDK-nag:
 
 All compliance checks run during `cdk synth` and deployment. Suppressions are documented in `gco/stacks/nag_suppressions.py` with justifications for each exception.
 
-
 ### Network Security
 
 **Layers of Defense:**
+
 1. Global Accelerator (DDoS protection)
 2. ALB Security Group (Global Accelerator IPs only)
 3. VPC isolation (private subnets)
 4. Security groups (least-privilege)
 
 **EKS Cluster Security:**
+
 - Private endpoint enabled
 - Public endpoint enabled (for kubectl access)
 - Cluster security group controls access
@@ -235,6 +247,7 @@ All compliance checks run during `cdk synth` and deployment. Suppressions are do
 - Users: Explicit access entries required
 
 **Access Entry Model:**
+
 - No aws-auth ConfigMap
 - IAM principals explicitly granted access
 - Policy-based permissions (AmazonEKSClusterAdminPolicy)
@@ -252,11 +265,13 @@ All compliance checks run during `cdk synth` and deployment. Suppressions are do
 ### Horizontal Scaling
 
 **Application Layer:**
+
 - Health Monitor: 2-10 replicas (HPA)
 - Manifest Processor: 3-20 replicas (HPA)
 - User workloads: Unlimited (within nodepool limits)
 
 **Compute Layer:**
+
 - EKS Auto Mode automatically provisions nodes
 - Nodepool limits configurable per instance type
 - Supports 1000s of pods per cluster
@@ -264,6 +279,7 @@ All compliance checks run during `cdk synth` and deployment. Suppressions are do
 ### Vertical Scaling
 
 **Cluster Limits:**
+
 - Control plane: Fully managed by AWS
 - Nodes: Up to 100,000 per cluster (EKS limit)
 - Pods: 110 per node (default)
@@ -335,16 +351,19 @@ All compliance checks run during `cdk synth` and deployment. Suppressions are do
 ### Recovery Procedures
 
 **Regional Failure:**
+
 1. Global Accelerator routes to healthy region
 2. No manual intervention required
 3. RTO: < 1 minute
 
 **Cluster Failure:**
+
 1. Redeploy stack: `cdk deploy gco-REGION`
 2. Manifests automatically reapplied
 3. RTO: under 1 hour
 
 **Complete Failure:**
+
 1. Deploy to new region
 2. Update Global Accelerator
 3. RTO: under 1 hour
@@ -354,6 +373,7 @@ All compliance checks run during `cdk synth` and deployment. Suppressions are do
 ### Overview
 
 Amazon EFS provides shared, persistent storage for all pods in the cluster. This enables:
+
 - Job outputs that persist after pod termination
 - Data sharing between pods and jobs
 - Checkpoint storage for ML training workloads
@@ -434,11 +454,13 @@ This section provides a theoretical upper bound for GCO's throughput when deploy
 ### Maximum Concurrent GPU Jobs (Global)
 
 **Conservative estimate (g5.xlarge, 1 GPU each):**
+
 ```
 34 regions × 100,000 nodes × 1 GPU = 3,400,000 concurrent GPU jobs
 ```
 
 **High-density estimate (g5.48xlarge, 8 GPUs each):**
+
 ```
 34 regions × 100,000 nodes × 8 GPUs = 27,200,000 concurrent GPUs
 ```
@@ -466,6 +488,7 @@ These are theoretical maximums. Actual limits depend on:
 - **Nodepool Limits**: Current config limits GPU pools to 1,000-1,500 vCPUs per region
 
 **Current nodepool limits (per region):**
+
 - `gpu-x86-pool`: 1,000 vCPUs / 4,000Gi memory (~166 g5.xlarge nodes)
 - `gpu-arm-pool`: 500 vCPUs / 2,000Gi memory (125 g5g.xlarge nodes)
 

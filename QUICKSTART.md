@@ -54,6 +54,7 @@ npm install -g aws-cdk
 Pick one of the following methods:
 
 **Option A: Using pip with virtual environment (recommended for development):**
+
 ```bash
 # Create and activate virtual environment
 python3 -m venv .venv
@@ -67,6 +68,7 @@ gco --version
 ```
 
 **Option B: Using pipx (recommended for CLI-only usage):**
+
 ```bash
 # Install pipx if you don't have it
 brew install pipx && pipx ensurepath  # macOS
@@ -100,6 +102,7 @@ gco stacks deploy-all -y
 ```
 
 Or deploy a single region:
+
 ```bash
 gco stacks deploy gco-us-east-1 -y
 ```
@@ -107,6 +110,7 @@ gco stacks deploy gco-us-east-1 -y
 > **Note:** The CLI automatically detects Docker or Finch. If you need to override, set `CDK_DOCKER=docker` or `CDK_DOCKER=finch`.
 
 **What's being created:**
+
 - VPC with public/private subnets
 - EKS Auto Mode cluster
 - Application Load Balancer
@@ -125,6 +129,7 @@ gco stacks deploy gco-us-east-1 -y
 > ```
 >
 > Then redeploy the regional stack:
+>
 > ```bash
 > gco stacks deploy gco-us-east-1 -y
 > ```
@@ -137,6 +142,7 @@ Once the endpoint is set to `PUBLIC_AND_PRIVATE`:
 ```
 
 **What this script does:**
+
 - Configures kubectl access to the cluster
 - Adds your IAM principal to the EKS access entries
 - Verifies all components are running
@@ -245,24 +251,31 @@ pip install -e ".[mcp]"
 ## Common Issues
 
 ### CDK CLI version mismatch
+
 If you see `Cloud assembly schema version mismatch`, your CDK CLI is too old. Install the latest version:
+
 ```bash
 npm install -g aws-cdk@latest
 cdk --version
 ```
 
 ### "Stack already exists"
+
 If deployment fails partway through, destroy and redeploy:
+
 ```bash
 gco stacks destroy-all -y
 gco stacks deploy-all -y
 ```
 
 ### "Unauthorized" when using kubectl
+
 Make sure you ran the cluster access setup script (Step 5) and that the endpoint mode is set to `PUBLIC_AND_PRIVATE` in `cdk.json`.
 
 ### Pods not starting
+
 Check pod events for details:
+
 ```bash
 kubectl describe pods -n gco-system
 ```

@@ -17,6 +17,7 @@ This directory contains example IAM policies for controlling access to the GCO m
 ### 1. Full Access Policy (`full-access-policy.json`)
 
 Grants complete access to all manifest operations including:
+
 - Submit new manifests (POST)
 - List manifests (GET)
 - Get manifest status (GET)
@@ -25,6 +26,7 @@ Grants complete access to all manifest operations including:
 **Use case**: Platform administrators, CI/CD pipelines with full deployment permissions
 
 **How to use**:
+
 1. Replace `ACCOUNT_ID` with your AWS account ID
 2. Replace `API_ID` with your API Gateway ID (from CloudFormation outputs)
 3. Attach to IAM users or roles that need full manifest management access
@@ -32,12 +34,14 @@ Grants complete access to all manifest operations including:
 ### 2. Read-Only Policy (`read-only-policy.json`)
 
 Grants read-only access to manifest operations:
+
 - List manifests (GET)
 - Get manifest status (GET)
 
 **Use case**: Monitoring tools, read-only users, audit systems
 
 **How to use**:
+
 1. Replace `ACCOUNT_ID` with your AWS account ID
 2. Replace `API_ID` with your API Gateway ID (from CloudFormation outputs)
 3. Attach to IAM users or roles that only need to query manifest status
@@ -45,6 +49,7 @@ Grants read-only access to manifest operations:
 ### 3. Namespace-Restricted Policy (`namespace-restricted-policy.json`)
 
 Grants access to manifest operations within a specific namespace only:
+
 - Submit manifests to specific namespace
 - List manifests in specific namespace
 - Get manifest status in specific namespace
@@ -53,6 +58,7 @@ Grants access to manifest operations within a specific namespace only:
 **Use case**: Team-specific access, multi-tenant environments, least-privilege access
 
 **How to use**:
+
 1. Replace `ACCOUNT_ID` with your AWS account ID
 2. Replace `API_ID` with your API Gateway ID (from CloudFormation outputs)
 3. Replace `NAMESPACE` with the Kubernetes namespace (e.g., `my-team-namespace`)

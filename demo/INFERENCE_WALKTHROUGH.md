@@ -267,6 +267,7 @@ gco inference delete neuron-demo -y
 ```
 
 The `--accelerator neuron` flag configures the deployment to:
+
 - Request `aws.amazon.com/neuron` resources instead of `nvidia.com/gpu`
 - Add the `aws.amazon.com/neuron` toleration for the Neuron nodepool
 - Set node selectors for Neuron-capable instances

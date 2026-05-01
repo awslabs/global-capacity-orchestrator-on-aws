@@ -15,6 +15,7 @@
 #   - lint:flake8:python          — flake8 across gco/, cli/, mcp/, tests/, lambda/, scripts/
 #   - lint:hadolint:dockerfile    — hadolint on every Dockerfile
 #   - lint:isort:imports          — isort --check-only
+#   - lint:markdownlint:md        — markdownlint-cli2 across all Markdown files
 #   - lint:mypy:strict            — mypy on gco/ (excluding stacks), cli/, mcp/, scripts/
 #   - lint:mypy:stacks            — mypy on gco/stacks/ + app.py (requires CDK)
 #   - lint:mypy:lambda            — mypy on each lambda/ subdir independently
@@ -163,6 +164,21 @@ jobs:
           pip install -e ".[lint]"
       - name: Run yamllint
         run: yamllint --strict .
+
+  lint-markdownlint-md:
+    name: "lint:markdownlint:md"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run markdownlint-cli2
+        # Pin to a specific action version so a new major rev doesn't quietly
+        # start firing new rules. Configuration (rule set, globs, ignores) lives
+        # in .markdownlint-cli2.yaml at the repo root; see CONTRIBUTING.md for
+        # how to run the same check locally.
+        uses: DavidAnson/markdownlint-cli2-action@v23
+        with:
+          globs: "**/*.md"
 
   lint-hadolint-dockerfile:
     name: "lint:hadolint:dockerfile"

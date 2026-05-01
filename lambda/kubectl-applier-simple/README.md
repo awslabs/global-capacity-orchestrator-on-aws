@@ -20,6 +20,7 @@ CloudFormation Custom Resource — runs on stack Create, Update, and Delete.
 ## How It Works
 
 ### Create/Update
+
 1. Configures a Kubernetes client with EKS token authentication
 2. Reads all YAML files from the `manifests/` directory (sorted by filename)
 3. Replaces placeholders (e.g., image URIs) with values from CloudFormation properties
@@ -27,6 +28,7 @@ CloudFormation Custom Resource — runs on stack Create, Update, and Delete.
 5. Restarts key deployments in `gco-system` to pick up new images
 
 ### Delete
+
 Always returns SUCCESS to prevent stuck stacks. Optionally skips resource deletion via `SkipDeletionOnStackDelete`.
 
 ## Supported Resource Kinds

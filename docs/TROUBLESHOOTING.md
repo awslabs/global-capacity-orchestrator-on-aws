@@ -14,7 +14,6 @@ Common issues and their solutions.
   - [kubectl Commands Hang](#kubectl-commands-hang)
 - [Pod Issues](#pod-issues)
   - [Pods Stuck in Pending](#pods-stuck-in-pending)
-  - [Pods Stuck in ContainerCreating](#pods-stuck-in-containercreating)
   - [Pods CrashLoopBackOff](#pods-crashloopbackoff)
   - [Service Account Issues](#service-account-issues)
 - [Lambda Issues](#lambda-issues)
@@ -47,12 +46,14 @@ Common issues and their solutions.
 1. **CDK not bootstrapped**
 
    This should resolve automatically — `deploy` and `deploy-all` auto-detect un-bootstrapped regions and bootstrap them. If auto-bootstrap fails:
+
    ```bash
    # Manual bootstrap
    gco stacks bootstrap -r REGION
    ```
 
 2. **Insufficient IAM permissions**
+
    ```bash
    # Check your permissions
    aws sts get-caller-identity
@@ -62,6 +63,7 @@ Common issues and their solutions.
    ```
 
 3. **Resource limits exceeded**
+
    ```bash
    # Check service quotas
    aws service-quotas list-service-quotas \
@@ -70,6 +72,7 @@ Common issues and their solutions.
    ```
 
 4. **Docker/Finch not running**
+
    ```bash
    # Start Finch
    finch vm start
@@ -134,6 +137,7 @@ aws cloudformation delete-stack \
 **Symptom**: Stack fails with "Custom resource did not receive response"
 
 **Causes**:
+
 - Lambda timeout (5 minutes)
 - VPC networking issues
 - EKS authentication failures
@@ -228,6 +232,7 @@ aws eks update-kubeconfig \
 **Symptom**: kubectl commands timeout or hang
 
 **Causes**:
+
 - Network connectivity issues
 - Cluster endpoint not accessible
 - kubeconfig misconfigured
@@ -265,6 +270,7 @@ aws eks update-kubeconfig \
 **Symptom**: Pods remain in `Pending` state
 
 **Causes**:
+
 - Insufficient resources
 - Node selector mismatch
 - Taints/tolerations mismatch
@@ -367,6 +373,7 @@ kubectl rollout restart deployment/manifest-processor -n gco-system
 **Symptom**: Lambda function times out after 5 minutes
 
 **Causes**:
+
 - Can't connect to EKS
 - Slow manifest application
 - Network issues
@@ -447,6 +454,7 @@ gco stacks deploy-all -y
 **Symptom**: Pods can't download images or access external services
 
 **Causes**:
+
 - NAT Gateway issues
 - Route table misconfiguration
 - Security group blocking outbound
@@ -559,6 +567,7 @@ aws elbv2 describe-listeners \
 **Symptom**: Pods take > 5 minutes to start
 
 **Causes**:
+
 - Large images
 - Slow image pull
 - Node provisioning delay
@@ -692,6 +701,7 @@ EOF
 **Symptom**: Pod stuck in ContainerCreating with "FailedMount" error
 
 **Causes**:
+
 - EFS CSI driver not installed
 - Security group blocking NFS traffic
 - EFS file system not accessible from VPC
@@ -727,6 +737,7 @@ kubectl run efs-test --image=busybox --rm -it -- \
 **Common Issues**:
 
 1. **FSx not enabled**
+
    ```bash
    # Check if FSx is enabled
    gco stacks fsx status
@@ -737,28 +748,30 @@ kubectl run efs-test --image=busybox --rm -it -- \
    ```
 
 2. **Mount fails with "Invalid argument" (Lustre Version Mismatch)**
-   
+
    This error occurs when the FSx file system uses Lustre 2.10, which is
    **NOT compatible with kernel 6.x** (used by AL2023 and Bottlerocket 1.19+).
-   
+
    **Check your FSx Lustre version**:
+
    ```bash
    aws fsx describe-file-systems --file-system-ids fs-XXXXX --region REGION \
      --query 'FileSystems[0].FileSystemTypeVersion'
    ```
-   
+
    **Solution**: If the version is "2.10", you need to create a new FSx file system
    with version 2.12 or 2.15. GCO defaults to 2.15 for new deployments.
-   
+
    | Lustre Version | Kernel 5.x (AL2) | Kernel 6.x (AL2023/Bottlerocket) |
    |----------------|------------------|----------------------------------|
    | 2.10           | ✅ Yes           | ❌ No                            |
    | 2.12           | ✅ Yes           | ✅ Yes                           |
    | 2.15           | ✅ Yes           | ✅ Yes                           |
-   
+
    See [AWS Lustre Client Compatibility Matrix](https://docs.aws.amazon.com/fsx/latest/LustreGuide/lustre-client-matrix.html).
 
 3. **Security group issues**
+
    ```bash
    # Check FSx security group allows Lustre traffic
    aws ec2 describe-security-groups \
@@ -821,6 +834,7 @@ tar -czf diagnostics-$(date +%Y%m%d-%H%M%S).tar.gz diagnostics/
 ### Contact Support
 
 Include:
+
 - Diagnostic bundle
 - Steps to reproduce
 - Expected vs actual behavior

@@ -28,6 +28,14 @@ repos:
     hooks:
       - id: yamllint
 
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.22.1
+    hooks:
+      # Configuration (rule set, globs, ignores) lives in
+      # .markdownlint-cli2.yaml at the repo root. See CONTRIBUTING.md for
+      # how to run the same check locally via `npx markdownlint-cli2`.
+      - id: markdownlint-cli2
+
   - repo: https://github.com/PyCQA/flake8
     rev: 7.3.0
     hooks:

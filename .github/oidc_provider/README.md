@@ -142,6 +142,7 @@ python -m pytest tests/test_oidc_stack.py -v
 ```
 
 The tests verify:
+
 - Stack synthesizes without errors
 - OIDC provider is created with the correct issuer URL
 - IAM role trust policy restricts to the correct GitHub repo

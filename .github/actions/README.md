@@ -21,6 +21,7 @@ Stages the Lambda build directories that CDK synth, pytest, and KICS scans all e
 **Prerequisite:** The calling job must set up Python (via `actions/setup-python`) before invoking this action.
 
 **Usage:**
+
 ```yaml
 steps:
   - uses: actions/checkout@v6

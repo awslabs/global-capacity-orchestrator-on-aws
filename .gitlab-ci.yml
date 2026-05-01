@@ -225,6 +225,16 @@ lint:shellcheck:
           shellcheck -x "$sh"
         done
 
+lint:markdownlint:
+  stage: validate
+  # Use the official Docker container image that bundles Node.js and the
+  # correct cli2 version, matching the GitHub Actions job.
+  image: davidanson/markdownlint-cli2:v0.22.1
+  script:
+    # Configuration (globs + ignores + rules) lives in
+    # .markdownlint-cli2.yaml at the repo root.
+    - markdownlint-cli2
+
 test:bats:
   stage: validate
   image:

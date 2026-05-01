@@ -394,9 +394,14 @@ jobs:
         uses: helm/kind-action@v1.14.0
         with:
           version: "v0.31.0"
-          kubernetes_version: "v1.35.0"
+          node_image: "kindest/node:v1.35.0"
           cluster_name: "gco-ci"
           config: ".github/kind/kind-calico.yaml"
+          # Default CNI is disabled in the kind config so Calico can take
+          # over NetworkPolicy enforcement. Skip the Ready wait here since
+          # the control-plane cannot go Ready without a CNI; the next step
+          # installs Calico and waits for Ready via `kubectl rollout status`.
+          wait: "0s"
       - name: Install Calico for NetworkPolicy enforcement
         # kind's default kindnet does not enforce NetworkPolicy. Calico does,
         # so 03-network-policies.yaml is actually exercised here.

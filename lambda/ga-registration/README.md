@@ -16,12 +16,14 @@ CloudFormation Custom Resource — runs on stack Create, Update, and Delete.
 ## How It Works
 
 ### Create/Update
+
 1. Waits for the ALB to be created by the AWS Load Balancer Controller (up to 14 minutes)
 2. Detects the ALB using multiple methods: tags, Ingress status, name prefix
 3. Registers the ALB with Global Accelerator (idempotent)
 4. Stores the ALB hostname in SSM at `/{project_name}/alb-hostname-{region}`
 
 ### Delete
+
 1. Removes all endpoints from the GA endpoint group
 2. Deletes the Kubernetes Ingress to trigger ALB cleanup
 3. Waits for ALB deletion (up to 3 minutes)

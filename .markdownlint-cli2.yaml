@@ -1,0 +1,134 @@
+# Markdownlint configuration for GCO (Global Capacity Orchestrator on AWS)
+#
+# This file is read by both `markdownlint-cli2` (the CLI used in CI and
+# pre-commit) and the vscode-markdownlint editor extension, so contributors
+# see the same warnings locally that CI enforces.
+#
+# Rule reference: https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+# cli2 reference: https://github.com/DavidAnson/markdownlint-cli2
+
+# Glob patterns matched when markdownlint-cli2 is invoked without explicit
+# file arguments (e.g. `markdownlint-cli2` with no args, or the pre-commit /
+# CI entry points below). Negated patterns come after positive ones.
+globs:
+  - "**/*.md"
+
+# Paths that are never linted. Keep this in sync with .yamllint.yml's ignore
+# list where practical — these are build artifacts, generated output, caches,
+# virtual environments, and vendored content that aren't authored here.
+ignores:
+  - ".git/**"
+  - "cdk.out/**"
+  - "build/**"
+  - "dist/**"
+  - "node_modules/**"
+  - "lambda/kubectl-applier-simple-build/**"
+  - "lambda/helm-installer-build/**"
+  - ".mypy_cache/**"
+  - ".pytest_cache/**"
+  - ".ruff_cache/**"
+  - ".hypothesis/**"
+  - ".cache/**"
+  - "**/*.egg-info/**"
+  - ".venv/**"
+  - "venv/**"
+  # IDE-local workspace content — gitignored, content-assist style only.
+  - ".kiro/**"
+
+# Also honor top-level .gitignore so anything the repo already excludes
+# from source control is excluded from linting too.
+gitignore: true
+
+# Rule configuration. Starts from the markdownlint defaults; every override
+# below is commented with the reason so future maintainers can audit it.
+config:
+  default: true
+
+  # MD013 (line-length) — disabled. Prose wrapping is enforced by reviewers,
+  # not a hard column limit. Tables, badge rows, and long URLs would force
+  # artificial line breaks that hurt readability.
+  MD013: false
+
+  # MD033 (no-inline-html) — allowed. The README uses <p align="center"> for
+  # the badge row and <details>/<summary> for collapsible sections; both
+  # render correctly on GitHub and GitLab.
+  MD033: false
+
+  # MD041 (first-line-heading) — disabled. Some files legitimately start
+  # with metadata or HTML comments (issue templates, release notes fragments)
+  # rather than a top-level heading.
+  MD041: false
+
+  # MD060 (table-column-style) — disabled. The rule enforces consistent
+  # pipe-padding within a single table, which fires thousands of times
+  # against the mixed-width tables in this repo (wide cells push pipes
+  # beyond a header's compact style). Table readability is already handled
+  # by reviewers; the noise isn't worth the signal.
+  MD060: false
+
+  # MD036 (no-emphasis-as-heading) — disabled. Architecture docs use
+  # `**Component name**` as sub-labels inside lists, which is rendered as
+  # a bold label, not a section. Promoting these to real headings would
+  # clutter the ToC.
+  MD036: false
+
+  # MD040 (fenced-code-language) — disabled for now. Enforcing a language
+  # tag on every fenced code block is a good aspiration, but several
+  # existing fences are plain copy output (tree views, kubectl output,
+  # terminal transcripts) where no language applies. Revisit once those
+  # are tagged with `text` explicitly.
+  MD040: false
+
+  # MD024 (no-duplicate-heading) — allowed when headings are in different
+  # sections (siblings_only). Common pattern: each workflow's section has
+  # its own "## Notes" or "### Inputs" subsection.
+  MD024:
+    siblings_only: true
+
+  # MD029 (ol-prefix) — allow either `1.` repeated or sequential numbers.
+  # Repeated `1.` is easier to maintain when editing long ordered lists.
+  MD029:
+    style: "one_or_ordered"
+
+  # MD007 (ul-indent) — 2-space indent for unordered lists, matching the
+  # repo's style across README.md and docs/.
+  MD007:
+    indent: 2
+
+  # MD046 (code-block-style) — require fenced code blocks (``` …) rather
+  # than 4-space-indent blocks. Matches every existing doc and avoids
+  # accidental indent-block rendering inside lists.
+  MD046:
+    style: "fenced"
+
+  # MD048 (code-fence-style) — require backticks for fences (not tildes).
+  MD048:
+    style: "backtick"
+
+  # MD049 (emphasis-style) — require `*text*` for italics.
+  MD049:
+    style: "asterisk"
+
+  # MD050 (strong-style) — require `**text**` for bold.
+  MD050:
+    style: "asterisk"
+
+  # MD004 (ul-style) — require `-` for unordered list bullets.
+  MD004:
+    style: "dash"
+
+  # MD044 (proper-names) — enforce canonical capitalization for a small
+  # list of product names that are commonly mistyped. Keep this list
+  # tight; each entry is a real source of past inconsistency.
+  MD044:
+    names:
+      - GitHub
+      - GitLab
+      - Kubernetes
+      - Dockerfile
+      - JavaScript
+      - TypeScript
+      - YAML
+      - JSON
+    code_blocks: false
+    html_elements: false

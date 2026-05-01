@@ -7,6 +7,7 @@ GCO includes [Apache YuniKorn](https://yunikorn.apache.org/) as a scheduler for 
 YuniKorn runs as a secondary scheduler alongside the default kube-scheduler. Pods must explicitly set `schedulerName: yunikorn` to be scheduled by YuniKorn — there is no auto-injection. This means YuniKorn coexists cleanly with Volcano, Kueue, and the default scheduler without interfering with system pods or other schedulers.
 
 **When to use YuniKorn:**
+
 - Multi-tenant clusters with competing teams needing guaranteed resource access
 - Hierarchical resource quota management (org → team → project)
 - Fair-sharing across queues with preemption for high-priority jobs
@@ -49,6 +50,7 @@ The `gco-jobs` namespace is created automatically by GCO during stack deployment
 ```
 
 YuniKorn uses annotations on pods to determine queue placement and scheduling behavior:
+
 - `yunikorn.apache.org/app-id` — groups pods into an application
 - `yunikorn.apache.org/queue` — places the app in a specific queue
 - `yunikorn.apache.org/task-groups` — enables gang scheduling
@@ -82,7 +84,7 @@ kubectl get svc -n yunikorn
 kubectl port-forward svc/yunikorn-service -n yunikorn 9889:9889
 ```
 
-Open http://localhost:9889 to view queues, applications, and nodes.
+Open <http://localhost:9889> to view queues, applications, and nodes.
 
 **Warning:** The Web UI shows queue configurations, application details, node allocations, and resource usage. Do not expose it via a Service or Ingress without authentication. Use `kubectl port-forward` for local access, or place an OAuth proxy in front of it for shared access.
 
@@ -111,6 +113,7 @@ placementrules:
 ```
 
 This means:
+
 - Pods are routed to a queue matching their namespace name (e.g., pods in `gco-jobs` go to `root.gco-jobs`)
 - `create: true` auto-creates child queues under `root` for namespaces that don't have an explicit queue
 - Auto-created queues inherit the parent's ACLs and have no resource limits by default
@@ -235,6 +238,7 @@ metadata:
 **Placeholder timeout:** When `placeholderTimeoutInSeconds` expires (300s = 5 minutes), YuniKorn releases the placeholder pods and the application moves to a failed state. The job does not automatically retry — you need to resubmit it or use a Kubernetes Job with `backoffLimit`.
 
 **Deadlock warning:** If two gang-scheduled jobs each need 4 GPUs but only 6 are available, neither can start. Mitigations:
+
 - Size `minMember` conservatively relative to cluster capacity
 - Use priority classes so higher-priority jobs can preempt lower-priority placeholders
 - Set `placeholderTimeoutInSeconds` to release stuck placeholders
@@ -312,6 +316,7 @@ GCO deploys YuniKorn alongside Volcano, Kueue, KEDA, and Slurm. They coexist bec
 - **KEDA** creates Jobs based on external events. Those Jobs use the default scheduler unless explicitly configured otherwise.
 
 **How it works without the admission controller:** Pods without an explicit `schedulerName` use the default kube-scheduler. Only pods that set `schedulerName: yunikorn` (via annotations in the manifest) are handled by YuniKorn. This means:
+
 - Standard Kubernetes Jobs → default kube-scheduler
 - Jobs with `schedulerName: yunikorn` → YuniKorn
 - Volcano Jobs → Volcano (explicit `schedulerName: volcano`)

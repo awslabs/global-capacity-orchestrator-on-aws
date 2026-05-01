@@ -30,7 +30,7 @@ GCO (Global Capacity Orchestrator on AWS) is a production-ready platform that le
 
 This document walks through the live demo so you can follow along or replicate it in your own account afterward.
 
-**Repository:** https://github.com/awslabs/global-capacity-orchestrator-on-aws
+**Repository:** <https://github.com/awslabs/global-capacity-orchestrator-on-aws>
 
 ---
 
@@ -353,6 +353,7 @@ gco inference deploy my-model \
 ```
 
 *Talking points:*
+
 - Karpenter automatically provisions the right instance type (inf2 for Inferentia, trn1/trn2 for Trainium) based on the node affinity in the manifest
 - The `--accelerator neuron` flag on `gco inference deploy` sets up the correct resource requests (`aws.amazon.com/neuron`), tolerations, and node selectors
 - A dedicated Neuron nodepool with taints prevents non-Neuron workloads from accidentally scheduling on these instances
@@ -440,11 +441,11 @@ Each region runs an independent EKS Auto Mode cluster with GPU nodepools, shared
 
 ## Links
 
-- **Repository:** https://github.com/awslabs/global-capacity-orchestrator-on-aws
-- **Architecture:** https://github.com/awslabs/global-capacity-orchestrator-on-aws/blob/main/docs/ARCHITECTURE.md
-- **CLI Reference:** https://github.com/awslabs/global-capacity-orchestrator-on-aws/blob/main/docs/CLI.md
-- **Quick Start:** https://github.com/awslabs/global-capacity-orchestrator-on-aws/blob/main/QUICKSTART.md
-- **Examples:** https://github.com/awslabs/global-capacity-orchestrator-on-aws/tree/main/examples
+- **Repository:** <https://github.com/awslabs/global-capacity-orchestrator-on-aws>
+- **Architecture:** <https://github.com/awslabs/global-capacity-orchestrator-on-aws/blob/main/docs/ARCHITECTURE.md>
+- **CLI Reference:** <https://github.com/awslabs/global-capacity-orchestrator-on-aws/blob/main/docs/CLI.md>
+- **Quick Start:** <https://github.com/awslabs/global-capacity-orchestrator-on-aws/blob/main/QUICKSTART.md>
+- **Examples:** <https://github.com/awslabs/global-capacity-orchestrator-on-aws/tree/main/examples>
 
 ---
 

@@ -107,6 +107,7 @@ A "manifest" is a Kubernetes YAML file describing your workload. GCO accepts man
 4. **Direct kubectl** - Requires cluster access, good for development
 
 Example manifest:
+
 ```yaml
 apiVersion: batch/v1
 kind: Job
@@ -174,6 +175,7 @@ gco inference deploy
 All inference endpoints share the same ALB as the main GCO services — one ALB per region, cost-efficient, and already registered with Global Accelerator.
 
 Key capabilities:
+
 - Deploy to one or all regions with a single command
 - Rolling updates, canary deployments (A/B testing), stop/start
 - Automatic model weight sync from S3 via init containers
@@ -212,6 +214,7 @@ volumes:
 ```
 
 **Characteristics:**
+
 - Elastic (grows/shrinks automatically)
 - Lower throughput than FSx
 - Pay only for what you use
@@ -233,6 +236,7 @@ volumes:
 ```
 
 **Characteristics:**
+
 - Very high throughput (hundreds of GB/s possible)
 - Fixed capacity (must pre-provision)
 - Higher cost than EFS
@@ -279,6 +283,7 @@ GCO uses multiple security layers:
 ```
 
 **Key points:**
+
 - All requests must be signed with AWS credentials
 - No anonymous access
 - Jobs run in isolated `gco-jobs` namespace
@@ -297,11 +302,13 @@ User → Global API Gateway → Global Accelerator → Regional ALB → EKS
 ```
 
 **Pros:**
+
 - Single global endpoint
 - Automatic failover between regions
 - Edge caching via CloudFront
 
 **Cons:**
+
 - Requires public ALB exposure
 - Traffic routes through Global Accelerator
 
@@ -314,15 +321,18 @@ User → Regional API Gateway → VPC Lambda → Internal ALB → EKS
 ```
 
 **Pros:**
+
 - No public ALB exposure
 - Direct regional access
 - Maximum security posture
 
 **Cons:**
+
 - Must specify target region
 - No automatic cross-region failover
 
 **Enable Regional APIs:**
+
 ```json
 // cdk.json
 {
@@ -333,6 +343,7 @@ User → Regional API Gateway → VPC Lambda → Internal ALB → EKS
 ```
 
 **Use Regional APIs:**
+
 ```bash
 # CLI flag
 gco --regional-api jobs list --region us-east-1
@@ -460,6 +471,7 @@ See [Inference Guide](INFERENCE.md) for the full guide including model weight ma
 ---
 
 **Next Steps:**
+
 - [Quick Start Guide](../QUICKSTART.md) - Get running in under 60 minutes
 - [Architecture Details](ARCHITECTURE.md) - Deep dive into the system
 - [CLI Reference](CLI.md) - Complete command documentation

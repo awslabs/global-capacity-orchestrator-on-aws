@@ -7,6 +7,7 @@ GCO deploys a ready-to-use Slurm cluster on Kubernetes using the [Slinky Slurm O
 The Slinky project bridges Slurm and Kubernetes, letting you run `sbatch`, `srun`, and `salloc` inside your EKS cluster.
 
 **When to use Slurm on EKS:**
+
 - Teams already familiar with Slurm workflows (sbatch, srun, salloc)
 - HPC workloads that benefit from Slurm's deterministic scheduling
 - Mixed environments where both Slurm and Kubernetes workloads share GPU capacity
@@ -29,6 +30,7 @@ Edit `cdk.json`:
 Then deploy: `gco stacks deploy-all -y`
 
 This installs three Helm charts:
+
 1. **cert-manager** (v1.20.1) — TLS certificates (already enabled by default)
 2. **slinky-slurm-operator** (v1.1.0) — Kubernetes operator for Slurm cluster CRDs
 3. **slinky-slurm** (v1.1.0) — a Slurm cluster (`gco-slurm`) in `gco-jobs`
