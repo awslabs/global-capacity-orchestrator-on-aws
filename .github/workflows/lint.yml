@@ -168,7 +168,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[lint]"
       - name: Run yamllint
-        run: yamllint .
+        # --strict promotes warnings to errors — with line-length already
+        # set to level: error in .yamllint.yml, this is belt-and-braces
+        # coverage for any other rule that's still at warning level.
+        run: yamllint --strict .
 
   lint-hadolint-dockerfile:
     name: "lint:hadolint:dockerfile"
