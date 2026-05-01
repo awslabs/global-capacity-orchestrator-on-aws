@@ -1029,13 +1029,16 @@ class GCOMonitoringStack(Stack):
         skips the section entirely.
         """
         # Collect (file_system_id, region) tuples for regions that have FSx on.
-        # fsx_file_system is either a CfnFileSystem or None; getattr keeps
-        # this robust against mocked stacks that don't set the attribute.
-        fsx_info: list[tuple[str, str]] = [
-            (regional_stack.fsx_file_system.ref, regional_stack.deployment_region)
-            for regional_stack in self.regional_stacks
-            if getattr(regional_stack, "fsx_file_system", None) is not None
-        ]
+        # fsx_file_system is either a CfnFileSystem or None; the local
+        # assignment + is-not-None check lets mypy narrow the type so
+        # ``.ref`` access typechecks cleanly (a list comprehension with
+        # the guard in the ``if`` clause does not narrow the value clause).
+        fsx_info: list[tuple[str, str]] = []
+        for regional_stack in self.regional_stacks:
+            fsx = getattr(regional_stack, "fsx_file_system", None)
+            if fsx is None:
+                continue
+            fsx_info.append((fsx.ref, regional_stack.deployment_region))
         if not fsx_info:
             return []
 
@@ -1273,14 +1276,16 @@ class GCOMonitoringStack(Stack):
         disabled so the dashboard skips the section entirely.
         """
         # (cluster_identifier, region) pairs for regions with Aurora on.
-        aurora_info: list[tuple[str, str]] = [
-            (
-                regional_stack.aurora_cluster.cluster_identifier,
-                regional_stack.deployment_region,
+        # Use a guarded loop (not a comprehension) so mypy can narrow the
+        # Optional[DatabaseCluster] to a real cluster before dereferencing.
+        aurora_info: list[tuple[str, str]] = []
+        for regional_stack in self.regional_stacks:
+            aurora = getattr(regional_stack, "aurora_cluster", None)
+            if aurora is None:
+                continue
+            aurora_info.append(
+                (aurora.cluster_identifier, regional_stack.deployment_region)
             )
-            for regional_stack in self.regional_stacks
-            if getattr(regional_stack, "aurora_cluster", None) is not None
-        ]
         if not aurora_info:
             return []
 
