@@ -118,12 +118,12 @@ asciinema play demo/live_demo.cast
 |---|---|---|
 | 1 | Cost visibility — summary, regional breakdown, daily trend | Always |
 | 2 | Capacity discovery — GPU availability, region recommendation, auto-region SQS | Always |
-| 3 | Volcano scheduler — gang scheduling example | `volcano.enabled = true` in cdk.JSON |
-| 4 | Kueue scheduler — quota-based job queueing | `kueue.enabled = true` in cdk.JSON |
-| 5 | YuniKorn scheduler — app-aware fair scheduling | `yunikorn.enabled = true` in cdk.JSON |
-| 6 | Slurm operator — HPC batch scheduling | `slurm.enabled = true` in cdk.JSON |
-| 7 | FSx for Lustre — high-performance scratch storage | `fsx_lustre.enabled = true` in cdk.JSON |
-| 8 | Valkey cache — serverless K/V caching | `valkey.enabled = true` in cdk.JSON |
+| 3 | Volcano scheduler — gang scheduling example | `volcano.enabled = true` in cdk.json |
+| 4 | Kueue scheduler — quota-based job queueing | `kueue.enabled = true` in cdk.json |
+| 5 | YuniKorn scheduler — app-aware fair scheduling | `yunikorn.enabled = true` in cdk.json |
+| 6 | Slurm operator — HPC batch scheduling | `slurm.enabled = true` in cdk.json |
+| 7 | FSx for Lustre — high-performance scratch storage | `fsx_lustre.enabled = true` in cdk.json |
+| 8 | Valkey cache — serverless K/V caching | `valkey.enabled = true` in cdk.json |
 | 9 | Inference endpoint — deploy, invoke, and teardown | Always (skip with `SKIP_INFERENCE=1`) |
 | 10 | EFS shared storage — persistent job outputs | Always |
 
@@ -157,11 +157,11 @@ asciinema play demo/live_demo.cast
 
 This script depends on the example manifests in `examples/` and the `gco` CLI. When updating GCO, check the following:
 
-1. **New schedulers or features added to cdk.JSON** — Add a detection block and demo section in `live_demo.sh`. Follow the pattern of existing scheduler sections.
+1. **New schedulers or features added to cdk.json** — Add a detection block and demo section in `live_demo.sh`. Follow the pattern of existing scheduler sections.
 2. **Example manifest names changed** — Update the corresponding `submit` commands in the script. The manifest filenames are referenced directly.
 3. **CLI command changes** — If `gco` subcommands change syntax, update the commands in the script. The script calls `gco costs`, `gco jobs`, and `gco files` directly.
 4. **New example jobs** — If a new example is added that showcases a feature worth demoing, add a section. Use the `section_header`, `narrate`, and `run_cmd` helper functions for consistent formatting.
-5. **cdk.JSON schema changes** — The script parses `cdk.json` with `jq`. If the config structure changes (e.g., `helm.volcano.enabled` moves), update the `jq` queries.
+5. **cdk.json schema changes** — The script parses `cdk.json` with `jq`. If the config structure changes (e.g., `helm.volcano.enabled` moves), update the `jq` queries.
 
 ### Testing Changes
 
@@ -184,6 +184,6 @@ GCO_DEMO_FAST=1 bash demo/live_demo.sh
 | `jq: command not found` | Install jq: `brew install jq` or `apt install jq` |
 | `gco: command not found` | Install GCO CLI: `pipx install -e .` from repo root |
 | Jobs stuck in Pending | Check node provisioning: `kubectl get nodes -w` — GPU nodes take 60-90s |
-| Script skips a scheduler you enabled | Re-run `gco stacks deploy-all -y` after changing cdk.JSON |
+| Script skips a scheduler you enabled | Re-run `gco stacks deploy-all -y` after changing cdk.json |
 | Colors not rendering | Ensure your terminal supports ANSI colors. Try `TERM=xterm-256color` |
-| FSx/Valkey section skipped | Verify `fsx_lustre.enabled` / `valkey.enabled` is `true` in cdk.JSON |
+| FSx/Valkey section skipped | Verify `fsx_lustre.enabled` / `valkey.enabled` is `true` in cdk.json |

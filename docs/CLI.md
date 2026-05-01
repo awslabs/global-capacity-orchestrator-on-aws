@@ -1960,7 +1960,7 @@ regions:
   - eu-west-1
 ```
 
-### cdk.JSON
+### cdk.json
 
 Project configuration in `cdk.json`:
 

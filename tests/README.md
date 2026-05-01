@@ -121,7 +121,7 @@ Tests are organized by the component they test:
 
 ### CDK Configuration Matrix
 
-The cdk.JSON configuration matrix — the set of overlays users can pick from (multi-region, FSx on/off, all feature toggles, resource threshold values, helm chart enable/disable, etc.) — lives in `tests/_cdk_config_matrix.CONFIGS` and is the single source of truth shared between two test surfaces:
+The cdk.json configuration matrix — the set of overlays users can pick from (multi-region, FSx on/off, all feature toggles, resource threshold values, helm chart enable/disable, etc.) — lives in `tests/_cdk_config_matrix.CONFIGS` and is the single source of truth shared between two test surfaces:
 
 1. **`scripts/test_cdk_synthesis.py`** runs `cdk synth --quiet` as a subprocess for each of the 24 configs. Catches node/CLI toolchain breakage, hardcoded regions, missing conditional guards, and broken feature-flag interactions. Run locally or in CI:
 
@@ -131,7 +131,7 @@ The cdk.JSON configuration matrix — the set of overlays users can pick from (m
 
 2. **`tests/test_nag_compliance.py`** runs the full CDK app in-process against the same 24 configs and asserts zero unsuppressed cdk-nag findings across five rule packs (AwsSolutions, HIPAA Security, NIST 800-53 R5, PCI DSS 3.2.1, Serverless). This is the gate that prevents a user from hitting a cdk-nag error at `cdk deploy` time on a config CI hasn't already validated. See [cdk-nag Compliance Testing](#cdk-nag-compliance-testing) below for details.
 
-Sharing the matrix is deliberate — divergence between the two lists is how we ended up with an `AwsSolutions-IAM5` error on a user's `gco-us-east-1` deploy that neither tool had exercised. Adding a new cdk.JSON knob means adding one entry to `tests/_cdk_config_matrix.py` and both tests pick it up.
+Sharing the matrix is deliberate — divergence between the two lists is how we ended up with an `AwsSolutions-IAM5` error on a user's `gco-us-east-1` deploy that neither tool had exercised. Adding a new cdk.json knob means adding one entry to `tests/_cdk_config_matrix.py` and both tests pick it up.
 
 ### cdk-nag Compliance Testing
 
@@ -245,7 +245,7 @@ actually deploy anything, hit AWS, or spawn long-running subprocesses.
 |------|-------------------|----------------|
 | `test_bump_version.py` | `scripts/bump_version.py` | SemVer parsing, bump paths (major/minor/patch), dry-run mode, argparse dispatch, keeping `VERSION`, `gco/_version.py`, and `cli/__init__.py` in sync |
 | `test_webhook_delivery_script.py` | `scripts/test_webhook_delivery.py` | `WebhookHandler` do_POST capture and 200 response, silenced `log_message`, `start_local_server` port binding + daemon thread + clean shutdown, `create_mock_job` fixture shape, `main()` argparse branches between local-server and external-URL modes |
-| `test_cdk_synthesis_script.py` | `scripts/test_cdk_synthesis.py` | `CONFIGS` matrix structural integrity (unique names, correct tuple shape, baseline first), `synth_with_config` overlay merging for dict vs scalar values, cdk.JSON restoration after success/error/exception, return-code classification (real error vs NOTICES-only), TimeoutExpired handling, `main()` aggregation/exit code |
+| `test_cdk_synthesis_script.py` | `scripts/test_cdk_synthesis.py` | `CONFIGS` matrix structural integrity (unique names, correct tuple shape, baseline first), `synth_with_config` overlay merging for dict vs scalar values, cdk.json restoration after success/error/exception, return-code classification (real error vs NOTICES-only), TimeoutExpired handling, `main()` aggregation/exit code |
 
 ### MCP Server Tests
 

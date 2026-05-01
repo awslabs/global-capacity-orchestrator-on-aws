@@ -14,7 +14,7 @@ The `gco` command-line interface for managing GCO infrastructure, jobs, inferenc
 |------|-------------|
 | `main.py` | CLI entry point and top-level command group registration |
 | `aws_client.py` | AWS SDK client wrapper with region discovery and credential handling |
-| `config.py` | CLI configuration loader (cdk.JSON, env vars, user config) |
+| `config.py` | CLI configuration loader (cdk.json, env vars, user config) |
 | `output.py` | Output formatting (table, JSON, YAML) |
 | `jobs.py` | Job submission, listing, logs, and lifecycle management |
 | `inference.py` | Inference endpoint deployment, scaling, canary, and invocation |

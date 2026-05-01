@@ -273,7 +273,7 @@ Everything under `.github/` — workflows, composite actions, issue/PR templates
 | Resource | Description |
 |----------|-------------|
 | `source://gco/index` | Browse all source files grouped by package |
-| `source://gco/config/{filename}` | Project config files (pyproject.toml, cdk.JSON, .GitLab-ci.yml, linter configs, etc.) |
+| `source://gco/config/{filename}` | Project config files (pyproject.toml, cdk.json, .gitlab-ci.yml, linter configs, etc.) |
 | `source://gco/file/{path}` | Any source file by relative path |
 
 Source code resources cover `gco/`, `cli/`, `lambda/`, `mcp/`, `scripts/`, `demo/`, and `dockerfiles/`. Build artifacts and caches are filtered out. Path traversal outside the project is blocked.
@@ -414,7 +414,7 @@ Once connected, you can interact naturally:
 - "Deploy a vLLM inference endpoint with 2 GPUs"
 - "What's my cost this month?"
 - "Scale my-llm endpoint to 3 replicas"
-- "Submit examples/simple-job.YAML to the region with the most capacity"
+- "Submit examples/simple-job.yaml to the region with the most capacity"
 
 ## Troubleshooting
 

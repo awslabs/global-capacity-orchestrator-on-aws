@@ -113,7 +113,7 @@ No workflow file is checked in for CodeQL itself; the scan runs on GitHub's host
 The README's badge row has two parts:
 
 1. **Four workflow-status badges** (`Unit Tests`, `Integration Tests`, `Security`, `Linting`) from GitHub's native `badge.svg` endpoint.
-2. **Eight stack/tech badges** (Python, CDK, EKS Auto Mode, Kubernetes, CDK-Nag, etc.) rendered by shields.io from hardcoded values, each linking to the authoritative source (pyproject.toml, cdk.JSON, upstream docs, etc.).
+2. **Eight stack/tech badges** (Python, CDK, EKS Auto Mode, Kubernetes, CDK-Nag, etc.) rendered by shields.io from hardcoded values, each linking to the authoritative source (pyproject.toml, cdk.json, upstream docs, etc.).
 
 There are no auto-generated test-count or coverage badges — those were removed before the first release because they depended on an orphan `badges` branch and a shields.io endpoint that didn't resolve reliably against a private repo. Room to add them back once the repo goes public; for now the workflow status itself carries the signal.
 
@@ -285,11 +285,10 @@ Configuration for the `lint:markdownlint:md` job lives in **`.markdownlint-cli2.
 - The **pre-commit hook** (`markdownlint-cli2` in `.pre-commit-config.yaml`).
 - The **vscode-markdownlint** editor extension, which reads the same file so contributors see the same warnings as CI while they type.
 
-The config does three things worth calling out:
+The config does two things worth calling out:
 
-1. **Rules** — starts from the markdownlint defaults and disables a few that fire a lot of aesthetic noise against this repo's style (`MD013` line-length, `MD033` inline HTML, `MD036` emphasis-as-heading, `MD040` missing code-fence language, `MD041` first-line heading, `MD060` table column style). Every override is commented inline so future maintainers can audit the reason.
+1. **Rules** — starts from the markdownlint defaults and disables a few that fire a lot of aesthetic noise against this repo's style (`MD013` line-length, `MD033` inline HTML, `MD036` emphasis-as-heading, `MD040` missing code-fence language, `MD041` first-line heading, `MD060` table column style). Every override is commented inline so future maintainers can audit the reason. `MD044` (proper-names) is intentionally left unconfigured: it does a case-insensitive substring match and mangles legitimate lowercase identifiers that share letters with product names (`cdk.json` becomes `cdk.JSON`, `kubernetes-sigs/karpenter` becomes `Kubernetes-sigs/...`, and so on).
 2. **Globs** — the `globs` list targets `**/*.md`; the `ignores` list excludes `cdk.out/`, `build/`, `node_modules/`, Lambda build-staging directories, every tool cache, and `.kiro/` (IDE-local workspace content). `gitignore: true` additionally pulls in everything the repo's `.gitignore` already excludes.
-3. **Proper names** — `MD044` is configured with a small allow-list of product names (GitHub, GitLab, Kubernetes, Dockerfile, JavaScript, TypeScript, YAML, JSON) that catches the two or three ways each has historically been mistyped.
 
 To add a new exclusion (e.g. a generated-docs folder), extend the `ignores` list. To loosen or tighten a rule, adjust the `config:` block — see the [markdownlint rule reference](https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md) for the full catalog.
 

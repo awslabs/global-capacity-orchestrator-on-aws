@@ -85,6 +85,15 @@ config:
   MD024:
     siblings_only: true
 
+  # MD044 (proper-names) — intentionally unconfigured. The rule does a
+  # case-insensitive substring match, which mangles legitimate lowercase
+  # identifiers that happen to share letters with product names:
+  # `cdk.json` would be rewritten to `cdk.JSON`, `kubernetes-sigs/karpenter`
+  # to `Kubernetes-sigs/karpenter`, `.gitlab-ci.yml` to `.GitLab-ci.yml`,
+  # `simple-job.yaml` to `simple-job.YAML`, and so on. In a technical repo
+  # where these tokens are filenames, URL paths, and module names, review
+  # catches mistyped product names far more reliably than the rule does.
+
   # MD029 (ol-prefix) — allow either `1.` repeated or sequential numbers.
   # Repeated `1.` is easier to maintain when editing long ordered lists.
   MD029:
@@ -116,19 +125,3 @@ config:
   # MD004 (ul-style) — require `-` for unordered list bullets.
   MD004:
     style: "dash"
-
-  # MD044 (proper-names) — enforce canonical capitalization for a small
-  # list of product names that are commonly mistyped. Keep this list
-  # tight; each entry is a real source of past inconsistency.
-  MD044:
-    names:
-      - GitHub
-      - GitLab
-      - Kubernetes
-      - Dockerfile
-      - JavaScript
-      - TypeScript
-      - YAML
-      - JSON
-    code_blocks: false
-    html_elements: false

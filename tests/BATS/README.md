@@ -1,6 +1,6 @@
 # BATS Shell Script Tests
 
-[BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System) tests for GCO's shell scripts. These are primarily functional tests that execute real bash logic (parameter expansion, sed transforms, jq queries against cdk.JSON, JSON validation) rather than just checking for string presence.
+[BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System) tests for GCO's shell scripts. These are primarily functional tests that execute real bash logic (parameter expansion, sed transforms, jq queries against cdk.json, JSON validation) rather than just checking for string presence.
 
 ## Table of Contents
 
