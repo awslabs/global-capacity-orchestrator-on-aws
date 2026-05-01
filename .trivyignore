@@ -1,0 +1,27 @@
+# =============================================================================
+# .trivyignore — Temporary Trivy suppressions
+# =============================================================================
+#
+# Rules:
+#   1. Every entry MUST have an expiration date (exp:YYYY-MM-DD).
+#   2. Every entry MUST link to an upstream tracking issue/advisory.
+#   3. Review this file on every security workflow failure — if an entry
+#      has expired, delete it (don't extend blindly).
+#   4. Keep the file short. A growing ignorefile is a smell.
+#
+# Format:
+#   CVE-XXXX-XXXXX exp:YYYY-MM-DD
+# =============================================================================
+
+# CVE-2026-4046 — glibc iconv() DoS in AL2023 base image (lambda/helm-installer).
+# Trivy's vuln DB lists glibc-2.34-231.amzn2023.0.4 as the fix, but as of
+# 2026-05-01 the fixed RPM is NOT yet available in the AL2023 dnf repos —
+# `dnf upgrade glibc` inside the base image (public.ecr.aws/lambda/python:3.14)
+# reports "Nothing to do". We don't add `dnf upgrade` to the Dockerfile
+# because it would make builds non-reproducible. The only remaining option is
+# to wait for AWS to publish a rebuilt Lambda Python base image that includes
+# the patched glibc, then rebuild and drop this entry.
+#
+# Tracking: https://avd.aquasec.com/nvd/cve-2026-4046
+# Upstream base image: public.ecr.aws/lambda/python:3.14
+CVE-2026-4046 exp:2026-05-22

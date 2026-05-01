@@ -120,11 +120,13 @@ jobs:
         run: |
           set -euo pipefail
           # Table to the job log + JSON to the artifact.
+          # --ignorefile points at .trivyignore (dated CVE suppressions).
           trivy fs \
             --exit-code 0 \
             --severity HIGH,CRITICAL \
             --scanners vuln \
             --skip-version-check \
+            --ignorefile .trivyignore \
             --format json \
             --output trivy-fs-report.json \
             .
@@ -133,6 +135,7 @@ jobs:
             --severity HIGH,CRITICAL \
             --scanners vuln \
             --skip-version-check \
+            --ignorefile .trivyignore \
             .
       - name: Upload trivy report
         if: always()
@@ -189,12 +192,14 @@ jobs:
           # in the job log, once in JSON so the artifact upload captures
           # machine-readable output. --scanners=vuln narrows the scan to
           # CVEs (gitleaks + trufflehog cover secrets in their own jobs).
+          # --ignorefile points at .trivyignore (dated CVE suppressions).
           trivy image \
             --exit-code 0 \
             --severity HIGH,CRITICAL \
             --ignore-unfixed \
             --scanners vuln \
             --skip-version-check \
+            --ignorefile .trivyignore \
             --format json \
             --output "trivy-${IMAGE}-report.json" \
             "${IMAGE}:scan"
@@ -204,6 +209,7 @@ jobs:
             --ignore-unfixed \
             --scanners vuln \
             --skip-version-check \
+            --ignorefile .trivyignore \
             "${IMAGE}:scan"
       - name: Upload trivy report
         if: always()
