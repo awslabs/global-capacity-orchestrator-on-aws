@@ -46,7 +46,7 @@ This document describes the REST API for the GCO Manifest Processor service.
 
 The API is available at the API Gateway endpoint configured during deployment:
 
-```
+```http
 https://<api-gateway-endpoint>/api/v1
 ```
 
@@ -211,7 +211,7 @@ The job queue provides centralized job submission with region targeting via Dyna
 
 ### Global Jobs List
 
-```
+```http
 GET /api/v1/global/jobs
 ```
 
@@ -259,7 +259,7 @@ gco jobs list -a --namespace gco-jobs --status running
 
 ### Global Health Status
 
-```
+```http
 GET /api/v1/global/health
 ```
 
@@ -295,7 +295,7 @@ gco jobs health --all-regions
 
 ### Global Bulk Delete
 
-```
+```http
 DELETE /api/v1/global/jobs
 ```
 
@@ -336,7 +336,7 @@ gco jobs bulk-delete --all-regions --status failed --older-than-days 30 --execut
 
 ### List Jobs
 
-```
+```http
 GET /api/v1/jobs
 ```
 
@@ -411,7 +411,7 @@ gco jobs list -r us-east-1 --limit 10
 
 ### Get Job Logs
 
-```
+```http
 GET /api/v1/jobs/{namespace}/{name}/logs
 ```
 
@@ -461,7 +461,7 @@ gco jobs logs multi-container-job -r us-east-1 --container sidecar
 
 ### Get Job Events
 
-```
+```http
 GET /api/v1/jobs/{namespace}/{name}/events
 ```
 
@@ -508,7 +508,7 @@ gco jobs events training-job -n ml-jobs -r us-west-2
 
 ### Get Job Pods
 
-```
+```http
 GET /api/v1/jobs/{namespace}/{name}/pods
 ```
 
@@ -569,7 +569,7 @@ gco jobs pods training-job -n ml-jobs -r us-west-2
 
 ### Get Job Metrics
 
-```
+```http
 GET /api/v1/jobs/{namespace}/{name}/metrics
 ```
 
@@ -615,7 +615,7 @@ gco jobs metrics training-job -n ml-jobs -r us-west-2
 
 ### Bulk Delete Jobs
 
-```
+```http
 DELETE /api/v1/jobs
 ```
 
@@ -675,7 +675,7 @@ gco jobs bulk-delete --all-regions --status failed --older-than-days 30 --execut
 
 ### Retry Job
 
-```
+```http
 POST /api/v1/jobs/{namespace}/{name}/retry
 ```
 
@@ -717,7 +717,7 @@ The job queue provides centralized job submission with region targeting. Jobs ar
 
 ### Submit to Queue
 
-```
+```http
 POST /api/v1/queue/jobs
 ```
 
@@ -780,7 +780,7 @@ gco queue submit job.yaml -r us-east-1 -l team=ml -l project=training
 
 ### List Queued Jobs
 
-```
+```http
 GET /api/v1/queue/jobs
 ```
 
@@ -830,7 +830,7 @@ gco queue list -s running
 
 ### Get Queued Job
 
-```
+```http
 GET /api/v1/queue/jobs/{job_id}
 ```
 
@@ -873,7 +873,7 @@ gco queue get abc123-def456 --region us-east-1
 
 ### Cancel Queued Job
 
-```
+```http
 DELETE /api/v1/queue/jobs/{job_id}
 ```
 
@@ -903,7 +903,7 @@ gco queue cancel abc123-def456 --reason "No longer needed"
 
 ### Queue Statistics
 
-```
+```http
 GET /api/v1/queue/stats
 ```
 
@@ -950,7 +950,7 @@ Templates allow you to define reusable job configurations with parameter substit
 
 ### List Templates
 
-```
+```http
 GET /api/v1/templates
 ```
 
@@ -962,7 +962,7 @@ gco templates list
 
 ### Create Template
 
-```
+```http
 POST /api/v1/templates
 ```
 
@@ -1010,7 +1010,7 @@ gco templates create job.yaml -n my-template -p image=pytorch:latest -p gpus=4
 
 ### Create Job from Template
 
-```
+```http
 POST /api/v1/jobs/from-template/{name}
 ```
 
@@ -1138,7 +1138,7 @@ def verify_signature(payload: bytes, signature: str, secret: str) -> bool:
 
 ### List Webhooks
 
-```
+```http
 GET /api/v1/webhooks
 ```
 
@@ -1151,7 +1151,7 @@ gco webhooks list --namespace gco-jobs
 
 ### Register Webhook
 
-```
+```http
 POST /api/v1/webhooks
 ```
 
@@ -1202,7 +1202,7 @@ gco webhooks create -u https://example.com/webhook -e job.completed --secret my-
 
 ### Delete Webhook
 
-```
+```http
 DELETE /api/v1/webhooks/{id}
 ```
 

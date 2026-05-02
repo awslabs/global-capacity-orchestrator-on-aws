@@ -164,7 +164,7 @@ Regenerate this diagram and every per-stack view on demand with `python diagrams
 
 > The regional stack can be deployed to any AWS region. Add or remove regions by editing the `deployment_regions.regional` array in `cdk.json`.
 
-```
+```text
 ┌───────────────────────────────────────────────────┐
 │              User Request                         │
 │        (AWS SigV4 Authentication)                 │
@@ -216,7 +216,7 @@ Five layers protect every request:
 4. **Header Validation** — Backend services verify the secret token
 5. **IRSA** — Pods use IAM roles for AWS access (no static credentials)
 
-```
+```text
 Request flow: User → API Gateway (SigV4) → Lambda (adds secret) → Global Accelerator
   → ALB (GA IPs only) → Services (validate secret)
 ```
@@ -312,7 +312,7 @@ docker run -it --rm -v ~/.aws:/root/.aws:ro -v $(pwd):/workspace -w /workspace g
 
 ## Project Structure
 
-```
+```text
 .
 ├── app.py                               # CDK app entry point
 ├── cdk.json                             # CDK configuration (regions, features, thresholds)

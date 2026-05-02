@@ -30,7 +30,7 @@ The KEDA operator has an IRSA role with permissions to read SQS queue metrics fo
 
 GCO's built-in SQS queue processor (`manifests/post-helm-sqs-consumer.yaml`) is a KEDA ScaledJob:
 
-```
+```text
 User runs: gco jobs submit-sqs manifest.yaml --region us-east-1
   → Manifest sent to regional SQS queue
   → KEDA detects message, spins up consumer pod

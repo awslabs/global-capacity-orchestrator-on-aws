@@ -34,7 +34,7 @@ labels: ["bug"]
 
 <!-- What actually happened? Include error messages and stack traces. -->
 
-```
+```text
 <paste logs / error output here>
 ```
 

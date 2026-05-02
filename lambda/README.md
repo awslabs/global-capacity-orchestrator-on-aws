@@ -32,7 +32,7 @@ The GCO CLI handles this automatically during `gco stacks deploy`.
 
 ## Architecture
 
-```
+```text
 API Gateway → api-gateway-proxy → Global Accelerator → ALB → EKS
                                                          ↑
                                               alb-header-validator

@@ -661,7 +661,7 @@ spec:
 Manifests are applied in sorted filename order. The naming convention encodes both
 the deployment phase and the resource group:
 
-```
+```text
 NN-group-name.yaml      # Main pass (applied before Helm)
 post-helm-name.yaml     # Post-Helm pass (applied after Helm installs CRDs)
 ```
@@ -1577,7 +1577,7 @@ gco stacks deploy-all -y
 
 Regional API Gateways deploy a VPC Lambda in each region that can reach the internal ALB directly:
 
-```
+```text
 User → Regional API Gateway (IAM Auth) → VPC Lambda → Internal ALB → EKS pods
 ```
 

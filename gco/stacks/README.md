@@ -16,7 +16,7 @@ GCO deploys four stack layers in order: Global → API Gateway → Regional (per
 
 ## Stack Dependency Order
 
-```
+```text
 1. GCOGlobalStack          → Global Accelerator, DynamoDB tables, S3 model bucket
 2. GCOApiGatewayGlobalStack → API Gateway, auth secret, Lambda proxy
 3. GCORegionalStack (×N)   → VPC, EKS, ALB, EFS/FSx, Lambdas, container images

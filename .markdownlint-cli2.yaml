@@ -72,13 +72,6 @@ config:
   # clutter the ToC.
   MD036: false
 
-  # MD040 (fenced-code-language) — disabled for now. Enforcing a language
-  # tag on every fenced code block is a good aspiration, but several
-  # existing fences are plain copy output (tree views, kubectl output,
-  # terminal transcripts) where no language applies. Revisit once those
-  # are tagged with `text` explicitly.
-  MD040: false
-
   # MD024 (no-duplicate-heading) — allowed when headings are in different
   # sections (siblings_only). Common pattern: each workflow's section has
   # its own "## Notes" or "### Inputs" subsection.

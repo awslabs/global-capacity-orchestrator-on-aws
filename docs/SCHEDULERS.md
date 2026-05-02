@@ -19,7 +19,7 @@ GCO ships with six scheduling and orchestration tools, each designed for differe
 
 These tools operate at different layers and can be combined:
 
-```
+```text
                     ┌─────────────────────────────────┐
                     │         Job Submission          │
                     │  kubectl / gco CLI / REST API   │
@@ -137,7 +137,7 @@ This is the most important thing to get right. GPU quotas are defined independen
 
 **Recommended approach:** Partition GPU capacity across the systems you actually use:
 
-```
+```text
 Example: 8 physical GPUs
 ├── Slurm GPU workers: 0 (CPU-only by default, no GPU conflict)
 ├── Volcano Queue cap: 4 GPUs (for gang-scheduled training)

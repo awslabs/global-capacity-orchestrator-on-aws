@@ -179,7 +179,7 @@ Each region contains:
 
 ### Manifest Submission
 
-```
+```text
 User → API Gateway (IAM Auth) → Lambda Proxy → Global Accelerator
   → Regional ALB → Kubernetes Ingress → Manifest Processor Pod
   → Kubernetes API → Workload Scheduled → Node Provisioned
@@ -187,7 +187,7 @@ User → API Gateway (IAM Auth) → Lambda Proxy → Global Accelerator
 
 ### Authentication Flow
 
-```
+```text
 User Request (SigV4 signed) → API Gateway (IAM Auth)
   → Validates SigV4 signature and IAM permissions
   → Lambda Proxy retrieves secret from Secrets Manager
@@ -199,7 +199,7 @@ User Request (SigV4 signed) → API Gateway (IAM Auth)
 
 ### Node Provisioning (EKS Auto Mode)
 
-```
+```text
 Pod Pending → Karpenter detects unschedulable pod
   → Evaluates nodepool requirements
   → Provisions EC2 instance matching requirements
@@ -380,7 +380,7 @@ Amazon EFS provides shared, persistent storage for all pods in the cluster. This
 
 ### Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                    EFS File System                      │
 │                  (Encrypted at rest)                    │
@@ -455,19 +455,19 @@ This section provides a theoretical upper bound for GCO's throughput when deploy
 
 **Conservative estimate (g5.xlarge, 1 GPU each):**
 
-```
+```text
 34 regions × 100,000 nodes × 1 GPU = 3,400,000 concurrent GPU jobs
 ```
 
 **High-density estimate (g5.48xlarge, 8 GPUs each):**
 
-```
+```text
 34 regions × 100,000 nodes × 8 GPUs = 27,200,000 concurrent GPUs
 ```
 
 ### Submission Throughput (assuming 1,000 manifests/sec)
 
-```
+```text
 34 regions × 1,000 manifests/sec = 34,000 job submissions/second
 ```
 

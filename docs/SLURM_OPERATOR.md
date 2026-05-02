@@ -49,7 +49,7 @@ The `gco-jobs` namespace is created automatically by GCO during stack deployment
 
 **Note on HA:** The default deployment runs a single controller replica. If the controller pod restarts, Kubernetes regenerates it quickly (typically faster than Slurm's native HA failover). The Slinky operator monitors the controller and restarts it automatically. For production workloads, monitor the controller pod and enable Slurm accounting to persist job state across restarts.
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │                    EKS Cluster                      │
 │                                                     │

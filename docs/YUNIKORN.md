@@ -29,7 +29,7 @@ The `gco-jobs` namespace is created automatically by GCO during stack deployment
 
 ## How It Works
 
-```
+```text
 ┌──────────────────────────────────────────────────────┐
 │                    EKS Cluster                       │
 │                                                      │

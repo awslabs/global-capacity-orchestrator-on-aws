@@ -26,7 +26,7 @@ For contributor-facing docs (how to run tests locally, release process, dependen
 
 ## Layout
 
-```
+```text
 .github/
 ├── actions/
 │   └── build-lambda-package/       # Composite action: stage Lambda build dirs
@@ -218,7 +218,7 @@ To turn the check on without introducing long-lived access keys, configure a Git
 
 1. **Create the OIDC identity provider in the target AWS account** (one-time, skip if already present):
 
-   ```
+   ```text
    URL:      https://token.actions.githubusercontent.com
    Audience: sts.amazonaws.com
    Thumbprint: (auto-fetched by AWS; no manual step)
@@ -287,7 +287,7 @@ Configuration for the `lint:markdownlint:md` job lives in **`.markdownlint-cli2.
 
 The config does two things worth calling out:
 
-1. **Rules** — starts from the markdownlint defaults and disables a few that fire a lot of aesthetic noise against this repo's style (`MD013` line-length, `MD033` inline HTML, `MD036` emphasis-as-heading, `MD040` missing code-fence language, `MD041` first-line heading, `MD060` table column style). Every override is commented inline so future maintainers can audit the reason. `MD044` (proper-names) is intentionally left unconfigured: it does a case-insensitive substring match and mangles legitimate lowercase identifiers that share letters with product names (`cdk.json` becomes `cdk.JSON`, `kubernetes-sigs/karpenter` becomes `Kubernetes-sigs/...`, and so on).
+1. **Rules** — starts from the markdownlint defaults and disables a few that fire a lot of aesthetic noise against this repo's style (`MD013` line-length, `MD033` inline HTML, `MD036` emphasis-as-heading, `MD041` first-line heading, `MD060` table column style). Every override is commented inline so future maintainers can audit the reason. `MD044` (proper-names) is intentionally left unconfigured: it does a case-insensitive substring match and mangles legitimate lowercase identifiers that share letters with product names (`cdk.json` becomes `cdk.JSON`, `kubernetes-sigs/karpenter` becomes `Kubernetes-sigs/...`, and so on).
 2. **Globs** — the `globs` list targets `**/*.md`; the `ignores` list excludes `cdk.out/`, `build/`, `node_modules/`, Lambda build-staging directories, every tool cache, and `.kiro/` (IDE-local workspace content). `gitignore: true` additionally pulls in everything the repo's `.gitignore` already excludes.
 
 To add a new exclusion (e.g. a generated-docs folder), extend the `ignores` list. To loosen or tighten a rule, adjust the `config:` block — see the [markdownlint rule reference](https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md) for the full catalog.

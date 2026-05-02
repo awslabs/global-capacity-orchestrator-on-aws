@@ -398,7 +398,7 @@ gco inference deploy my-model \
 
 ## Architecture Overview
 
-```
+```text
 User ──► API Gateway (IAM/SigV4 Auth)
               │
               ▼

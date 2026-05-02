@@ -29,7 +29,7 @@ The `enablePlainPod: true` setting is on by default, which lets Kueue manage sta
 
 ### Resource Model
 
-```
+```text
 ClusterQueue (cluster-wide quotas)
   └── ResourceFlavor (maps to node types)
   └── LocalQueue (namespace-scoped, points to ClusterQueue)

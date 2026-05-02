@@ -13,7 +13,7 @@ GPU capacity checking, region recommendation, and AI-powered advisory. This pack
 
 Three layers, each building on the previous:
 
-```
+```text
 CapacityChecker (single-region AWS queries)
     ↓
 MultiRegionCapacityChecker (cross-region aggregation + weighted scoring)

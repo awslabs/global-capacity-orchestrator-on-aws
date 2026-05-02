@@ -346,7 +346,7 @@ gco inference list
 
 ## Architecture
 
-```
+```text
                     gco inference deploy
                              |
                              v

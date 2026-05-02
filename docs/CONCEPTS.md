@@ -54,7 +54,7 @@ Running GPU workloads at scale on Kubernetes is hard:
 
 GCO deploys identical infrastructure to multiple AWS regions:
 
-```
+```text
                     ┌─────────────────────┐
                     │   Global Endpoint   │
                     │  (API Gateway +     │
@@ -152,7 +152,7 @@ Inference serving uses a reconciliation pattern similar to Kubernetes controller
 5. If anything drifts (pod deleted, resource missing), the monitor self-heals by recreating it
 6. Global Accelerator routes user requests to the nearest healthy region
 
-```
+```text
 gco inference deploy
         │
         ▼
@@ -256,7 +256,7 @@ volumes:
 
 GCO uses multiple security layers:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │ Layer 1: IAM Authentication                             │
 │ - API Gateway validates AWS credentials (SigV4)         │
@@ -297,7 +297,7 @@ GCO supports two API access modes:
 
 The default mode routes all requests through a global API Gateway and Global Accelerator:
 
-```
+```text
 User → Global API Gateway → Global Accelerator → Regional ALB → EKS
 ```
 
@@ -316,7 +316,7 @@ User → Global API Gateway → Global Accelerator → Regional ALB → EKS
 
 When public access is disabled, regional API Gateways provide direct access via VPC Lambdas:
 
-```
+```text
 User → Regional API Gateway → VPC Lambda → Internal ALB → EKS
 ```
 
@@ -357,7 +357,7 @@ gco jobs list --region us-east-1
 
 Here's what happens when you submit a job:
 
-```
+```text
 1. You run: gco jobs submit my-job.yaml
 
 2. CLI signs request with your AWS credentials (SigV4)

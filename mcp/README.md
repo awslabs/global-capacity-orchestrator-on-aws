@@ -364,7 +364,7 @@ From there, you can branch into job submission, inference deployments, or cost t
 
 The MCP server is organized as a modular package under `mcp/`:
 
-```
+```text
 mcp/
 ├── run_mcp.py         — Thin entrypoint (python mcp/run_mcp.py)
 ├── server.py          — FastMCP instance and instructions
@@ -401,7 +401,7 @@ Each tool shells out to the `gco` CLI. This approach:
 - Avoids duplicating complex AWS client setup
 - Uses `--output json` for structured responses where supported
 
-```
+```text
 LLM ←→ MCP Protocol (stdio) ←→ run_mcp.py ←→ gco CLI ←→ AWS APIs
 ```
 

@@ -13,7 +13,7 @@ Files are applied in **sorted filename order**, so the numeric prefix controls s
 
 ## Naming Convention
 
-```
+```text
 NN-group-name.yaml          # main pass (applied before Helm)
 post-helm-name.yaml         # post-Helm pass (applied after Helm installs CRDs)
 ```

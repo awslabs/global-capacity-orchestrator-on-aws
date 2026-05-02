@@ -240,7 +240,7 @@ git push origin feature/your-feature-name
 
 ### Directory Structure
 
-```
+```text
 gco/
 ├── stacks/                  # CDK stack definitions
 ├── services/                # Kubernetes services (Python/FastAPI)

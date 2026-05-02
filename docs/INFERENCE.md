@@ -32,7 +32,7 @@ Key capabilities:
 
 Inference serving uses a reconciliation pattern similar to Kubernetes controllers:
 
-```
+```text
 User → gco inference deploy
          │
          ▼
@@ -121,7 +121,7 @@ gco models list
 
 Output:
 
-```
+```text
   Models (2 found)
   ----------------------------------------------------------------------
   NAME                      FILES  SIZE (GB) S3 URI
@@ -553,7 +553,7 @@ For the retrieval component of RAG, GCO doesn't include a built-in vector databa
 
 A typical RAG flow with GCO:
 
-```
+```text
 User query
     → Valkey cache check (semantic cache hit?)
     → If miss: embed query (Bedrock Titan)
@@ -587,7 +587,7 @@ gco inference deploy my-llm \
 
 Once deployed, inference endpoints are accessible through Global Accelerator at:
 
-```
+```text
 https://<GA_ENDPOINT>/inference/<endpoint-name>/
 ```
 
@@ -601,7 +601,7 @@ Each region independently reconciles and reports its status:
 gco inference status my-llm
 ```
 
-```
+```text
   Endpoint: my-llm
   ------------------------------------------------------------
   State:     running
