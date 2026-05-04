@@ -5,6 +5,18 @@
 #
 # Invoked by .github/workflows/deps-scan.yml (monthly schedule).
 #
+# Checks for drift across:
+#
+#   - Python packages pinned in pyproject.toml
+#   - Docker images referenced from workflows, K8s manifests, examples,
+#     and Helm chart values
+#   - Helm chart versions from charts.yaml
+#   - EKS add-on versions from gco/stacks/constants.py (AWS creds)
+#   - Aurora PostgreSQL engine versions (AWS creds)
+#   - EMR Serverless release labels (AWS creds)
+#   - Dockerfile.dev ARG pins (Node LTS major, CDK CLI, kubectl, AWS CLI v2,
+#     Docker CLI) — public endpoints, no AWS creds needed
+#
 # Ports the `.dependency-scan-script` YAML anchor from the retired
 # GitLab pipeline into a standalone shell script. Two behavior changes:
 #
@@ -283,6 +295,196 @@ AURORA_COUNT="$(wc -l < "$AURORA_RESULTS" 2>/dev/null | tr -d ' ')"
 [ -z "$AURORA_COUNT" ] && AURORA_COUNT=0
 
 # ---------------------------------------------------------------------------
+# EMR Serverless release labels (best-effort — requires AWS credentials)
+#
+# Checks whether the EMR Serverless release label pinned in
+# gco/stacks/constants.py has a newer release available. Uses the same
+# credential gate as the EKS add-on / Aurora checks above.
+#
+# AWS CLI note: the `list-release-labels` subcommand lives on the classic
+# `aws emr` service, not on `aws emr-serverless`. Classic EMR and EMR
+# Serverless share the same release-label namespace (e.g. emr-7.13.0),
+# so calling the classic service returns the labels usable by Serverless
+# applications. The IAM action is ``elasticmapreduce:ListReleaseLabels``
+# (which is what the OIDC policy grants) and is shared between the two
+# services — the CLI routing is just a surface-level difference.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Checking EMR Serverless release labels ==="
+
+EMR_RESULTS="$(mktemp)"
+EMR_SKIP_REASON=""
+
+if ! aws sts get-caller-identity >/dev/null 2>&1; then
+  EMR_SKIP_REASON="No AWS credentials available (scan needs elasticmapreduce:ListReleaseLabels). Configure OIDC to enable."
+  echo "  $EMR_SKIP_REASON"
+else
+  extract_emr_versions "gco/stacks/constants.py" | while read -r current_label; do
+    [ -z "$current_label" ] && continue
+    # current_label looks like "emr-7.13.0". Filter labels to ones that
+    # start with "emr-<major>." and take the latest by semver-ish sort.
+    # Skip preview/nightly tags (``-preview``, ``-beta``, ``-rc*``). The
+    # latest release label is what we compare against.
+    major="$(echo "$current_label" | sed -E 's/^emr-([0-9]+)\..*/\1/')"
+    latest="$(aws emr list-release-labels \
+      --region us-east-1 \
+      --query 'ReleaseLabels[]' --output text 2>/dev/null \
+      | tr '\t' '\n' \
+      | grep -E "^emr-${major}\.[0-9]+\.[0-9]+$" \
+      | sort -V | tail -1)" || true
+
+    # Also check whether a newer major release line exists.
+    latest_any="$(aws emr list-release-labels \
+      --region us-east-1 \
+      --query 'ReleaseLabels[]' --output text 2>/dev/null \
+      | tr '\t' '\n' \
+      | grep -E "^emr-[0-9]+\.[0-9]+\.[0-9]+$" \
+      | sort -V | tail -1)" || true
+
+    if [ -n "$latest" ] && [ "$current_label" != "$latest" ]; then
+      echo "  - emr-serverless: ${current_label} -> ${latest}"
+      echo "emr-serverless|${current_label}|${latest}" >> "$EMR_RESULTS"
+    elif [ -n "$latest_any" ] && [ "$current_label" != "$latest_any" ] \
+         && [ "$(compare_semver "${current_label#emr-}" "${latest_any#emr-}")" = "newer" ]; then
+      # Same minor — no new release in our pinned major — but a new
+      # major exists.
+      echo "  - emr-serverless: ${current_label} -> ${latest_any} (new major available)"
+      echo "emr-serverless|${current_label}|${latest_any}" >> "$EMR_RESULTS"
+    fi
+  done
+fi
+
+EMR_COUNT="$(wc -l < "$EMR_RESULTS" 2>/dev/null | tr -d ' ')"
+[ -z "$EMR_COUNT" ] && EMR_COUNT=0
+
+# ---------------------------------------------------------------------------
+# Dockerfile.dev ARG pins
+#
+# Checks the tooling versions pinned in ``Dockerfile.dev`` (Node.js LTS
+# major, AWS CDK CLI, kubectl, AWS CLI v2, Docker CLI). These ARGs sit
+# outside the main dependency surfaces above — Dependabot watches the
+# ``FROM python:…`` base image but not the ARG pins — so drift here has
+# historically gone undetected until someone rebuilt the image.
+#
+# Each pin has its own upstream:
+#
+#   NODE_MAJOR     github://nodejs/Release → schedule.json (LTS majors)
+#   CDK_VERSION    registry.npmjs.org/aws-cdk/latest
+#   KUBECTL_VERSION https://dl.k8s.io/release/stable-<minor>.txt
+#                  (minor from cdk.json::kubernetes_version)
+#   AWSCLI_VERSION github://aws/aws-cli/tags (v2.x.y semver, no GitHub Releases)
+#   DOCKER_VERSION github://moby/moby/releases/latest (``docker-v<ver>``)
+#
+# All endpoints are public — no AWS credentials needed.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Checking Dockerfile.dev ARG pins ==="
+
+DOCKERFILE_RESULTS="$(mktemp)"
+DOCKERFILE_PIN_FILE="Dockerfile.dev"
+
+check_dockerfile_pin() {
+  local name="$1" current="$2" latest=""
+  case "$name" in
+    NODE_MAJOR)
+      # Pick the highest major with an active LTS window:
+      #   lts <= today AND (end missing or end > today).
+      latest="$(curl -fsSL --max-time 15 \
+        "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json" 2>/dev/null \
+        | python3 -c '
+import sys, json, datetime
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+today = datetime.date.today().isoformat()
+candidates = []
+for k, v in data.items():
+    if not k.startswith("v") or "lts" not in v:
+        continue
+    if v["lts"] > today:
+        continue
+    if v.get("end", "9999-12-31") <= today:
+        continue
+    try:
+        candidates.append(int(k[1:]))
+    except ValueError:
+        continue
+if candidates:
+    print(max(candidates))
+' 2>/dev/null)" || true
+      ;;
+    CDK_VERSION)
+      latest="$(curl -fsSL --max-time 15 \
+        "https://registry.npmjs.org/aws-cdk/latest" 2>/dev/null \
+        | jq -r '.version // empty' 2>/dev/null)" || true
+      ;;
+    KUBECTL_VERSION)
+      # Match the minor line already committed to cdk.json so the pin
+      # and the EKS cluster stay within the ±1 minor skew policy.
+      local k8s_minor
+      k8s_minor="$(extract_k8s_version "cdk.json")"
+      latest="$(curl -fsSL --max-time 15 \
+        "https://dl.k8s.io/release/stable-${k8s_minor}.txt" 2>/dev/null | tr -d '[:space:]')" || true
+      ;;
+    AWSCLI_VERSION)
+      # aws/aws-cli doesn't publish GitHub Releases for v2; tags are the
+      # canonical source. First page (per_page=20) is newest-first;
+      # filter to 2.x.y semver and take the top match.
+      latest="$(curl -fsSL --max-time 15 \
+        "https://api.github.com/repos/aws/aws-cli/tags?per_page=20" 2>/dev/null \
+        | jq -r '[.[].name | select(test("^2\\.[0-9]+\\.[0-9]+$"))][0] // empty' 2>/dev/null)" || true
+      ;;
+    DOCKER_VERSION)
+      # moby/moby tags releases as ``docker-v<semver>``; strip the
+      # prefix so compare_semver can handle the value.
+      latest="$(curl -fsSL --max-time 15 \
+        "https://api.github.com/repos/moby/moby/releases/latest" 2>/dev/null \
+        | jq -r '.tag_name // empty' 2>/dev/null \
+        | sed -E 's/^(docker-)?v//')" || true
+      ;;
+    *)
+      return
+      ;;
+  esac
+
+  [ -z "$latest" ] && return
+
+  # NODE_MAJOR is a bare integer (e.g. ``24``) not a semver. Compare as
+  # integers; everything else goes through compare_semver.
+  local relation
+  if [ "$name" = "NODE_MAJOR" ]; then
+    if ! [[ "$current" =~ ^[0-9]+$ ]] || ! [[ "$latest" =~ ^[0-9]+$ ]]; then
+      return
+    fi
+    if [ "$latest" -gt "$current" ]; then
+      relation="newer"
+    else
+      relation="same_or_older"
+    fi
+  else
+    relation="$(compare_semver "$current" "$latest")"
+  fi
+
+  if [ "$relation" = "newer" ]; then
+    echo "  - ${name}: ${current} -> ${latest}"
+    echo "${name}|${current}|${latest}" >> "$DOCKERFILE_RESULTS"
+  fi
+}
+
+if [ -f "$DOCKERFILE_PIN_FILE" ]; then
+  extract_dockerfile_pins "$DOCKERFILE_PIN_FILE" | while IFS='|' read -r pin_name pin_value; do
+    [ -z "$pin_name" ] && continue
+    check_dockerfile_pin "$pin_name" "$pin_value"
+  done
+else
+  echo "  $DOCKERFILE_PIN_FILE not found, skipping."
+fi
+
+DOCKERFILE_COUNT="$(wc -l < "$DOCKERFILE_RESULTS" 2>/dev/null | tr -d ' ')"
+[ -z "$DOCKERFILE_COUNT" ] && DOCKERFILE_COUNT=0
+
+# ---------------------------------------------------------------------------
 # Summary + Markdown report
 # ---------------------------------------------------------------------------
 echo ""
@@ -300,10 +502,17 @@ if [ -n "$AURORA_SKIP_REASON" ]; then
 else
   echo "Aurora PostgreSQL:        $AURORA_COUNT"
 fi
+if [ -n "$EMR_SKIP_REASON" ]; then
+  echo "EMR Serverless release:   (skipped)"
+else
+  echo "EMR Serverless release:   $EMR_COUNT"
+fi
+echo "Dockerfile.dev pins:      $DOCKERFILE_COUNT"
 
 if [ "$PYTHON_COUNT" -eq 0 ] && [ "$DOCKER_COUNT" -eq 0 ] \
    && [ "$HELM_COUNT" -eq 0 ] && [ "$ADDON_COUNT" -eq 0 ] \
-   && [ "$AURORA_COUNT" -eq 0 ]; then
+   && [ "$AURORA_COUNT" -eq 0 ] && [ "$EMR_COUNT" -eq 0 ] \
+   && [ "$DOCKERFILE_COUNT" -eq 0 ]; then
   echo ""
   SKIP_NOTES=""
   if [ -n "$ADDON_SKIP_REASON" ]; then
@@ -313,12 +522,16 @@ if [ "$PYTHON_COUNT" -eq 0 ] && [ "$DOCKER_COUNT" -eq 0 ] \
     [ -n "$SKIP_NOTES" ] && SKIP_NOTES="$SKIP_NOTES; "
     SKIP_NOTES="${SKIP_NOTES}Aurora engine skipped: $AURORA_SKIP_REASON"
   fi
+  if [ -n "$EMR_SKIP_REASON" ]; then
+    [ -n "$SKIP_NOTES" ] && SKIP_NOTES="$SKIP_NOTES; "
+    SKIP_NOTES="${SKIP_NOTES}EMR Serverless skipped: $EMR_SKIP_REASON"
+  fi
   if [ -n "$SKIP_NOTES" ]; then
     echo "All scanned surfaces are up to date ($SKIP_NOTES)"
   else
     echo "All dependencies are up to date."
   fi
-  rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$AURORA_RESULTS"
+  rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS"
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
     echo "has_drift=false" >> "$GITHUB_OUTPUT"
   fi
@@ -396,6 +609,37 @@ fi
     echo ""
   fi
 
+  if [ "$EMR_COUNT" -gt 0 ]; then
+    echo "## EMR Serverless"
+    echo ""
+    echo "| Release | Current | Latest |"
+    echo "|---------|---------|--------|"
+    while IFS='|' read -r release cur lat; do
+      echo "| $release | $cur | $lat |"
+    done < "$EMR_RESULTS"
+    echo ""
+  fi
+
+  if [ -n "$EMR_SKIP_REASON" ]; then
+    echo "## EMR Serverless (skipped)"
+    echo ""
+    echo "> $EMR_SKIP_REASON"
+    echo ""
+  fi
+
+  if [ "$DOCKERFILE_COUNT" -gt 0 ]; then
+    echo "## Dockerfile.dev Pins"
+    echo ""
+    echo "Tooling versions pinned as build-time ARGs in \`Dockerfile.dev\`."
+    echo ""
+    echo "| Pin | Current | Latest |"
+    echo "|-----|---------|--------|"
+    while IFS='|' read -r pin cur lat; do
+      echo "| \`$pin\` | $cur | $lat |"
+    done < "$DOCKERFILE_RESULTS"
+    echo ""
+  fi
+
   echo "## Action Required"
   echo ""
   echo "1. Review changelogs for breaking changes"
@@ -408,7 +652,7 @@ fi
   echo "_Automatically created by the \`deps-scan\` workflow._"
 } > "$REPORT_FILE"
 
-rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$AURORA_RESULTS"
+rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "has_drift=true"            >> "$GITHUB_OUTPUT"

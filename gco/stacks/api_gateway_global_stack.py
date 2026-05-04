@@ -31,15 +31,18 @@ direct access to the Global Accelerator or regional ALBs.
 """
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from aws_cdk import (
     CfnOutput,
     Duration,
+    Fn,
     RemovalPolicy,
     Stack,
 )
 from aws_cdk import aws_apigateway as apigateway
+from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
@@ -48,6 +51,51 @@ from aws_cdk import aws_wafv2 as wafv2
 from constructs import Construct
 
 from gco.stacks.constants import LAMBDA_PYTHON_RUNTIME
+
+
+@dataclass(frozen=True)
+class AnalyticsApiConfig:
+    """Configuration handed from ``GCOAnalyticsStack`` to ``GCOApiGatewayGlobalStack``.
+
+    When ``GCOApiGatewayGlobalStack`` is constructed (or mutated via
+    :meth:`GCOApiGatewayGlobalStack.set_analytics_config`) with a non-``None``
+    instance of this dataclass, the stack wires a Cognito-authorized
+    ``/studio/*`` route tree onto the existing REST API. When the value is
+    ``None``, the stack is behaviorally identical to its pre-analytics shape
+    — no ``/studio/*`` resources, no Cognito authorizer, no additional
+    ``CfnOutput`` entries.
+
+    ``frozen=True`` makes the dataclass hashable and immutable so a single
+    config object can be safely shared across constructs without the risk
+    of accidental mutation after the synthesized template references its
+    fields.
+
+    Attributes:
+        user_pool_arn: Full ARN of the Cognito user pool that authenticates
+            Studio logins. Shape:
+            ``arn:aws:cognito-idp:<region>:<account>:userpool/<pool-id>``.
+        user_pool_client_id: Client id of the Studio user-pool client
+            (SRP auth). Used by the CLI's ``gco analytics studio login``
+            flow and surfaced to API Gateway outputs for discoverability.
+        presigned_url_lambda: The ``analytics-presigned-url`` Lambda
+            function created by ``GCOAnalyticsStack._create_presigned_url_lambda``.
+            Consumed by the ``/studio/login`` ``LambdaIntegration``.
+        studio_domain_name: SageMaker Studio domain name. Carried through
+            as context for the Lambda integration; the Lambda itself also
+            reads this value from its ``STUDIO_DOMAIN_NAME`` environment
+            variable set by the analytics stack.
+        callback_url: Concrete OAuth redirect target
+            (``https://<api>/prod/studio/callback``) used when the
+            Cognito hosted UI is enabled. The ``/studio/callback`` route
+            is wired as a stub here so the URL is reachable immediately
+            after deploy.
+    """
+
+    user_pool_arn: str
+    user_pool_client_id: str
+    presigned_url_lambda: lambda_.IFunction
+    studio_domain_name: str
+    callback_url: str
 
 
 class GCOApiGatewayGlobalStack(Stack):
@@ -70,12 +118,21 @@ class GCOApiGatewayGlobalStack(Stack):
         construct_id: str,
         global_accelerator_dns: str,
         regional_endpoints: dict[str, str] | None = None,
+        analytics_config: AnalyticsApiConfig | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         self.ga_dns = global_accelerator_dns
         self.regional_endpoints = regional_endpoints or {}
+        # When analytics is disabled (the default) this stays ``None`` and
+        # the stack synthesizes exactly as it did pre-analytics. When
+        # non-``None``, ``_wire_studio_routes`` is invoked at the end of
+        # the constructor, after the IAM-authorized ``/api/v1/*`` and
+        # ``/inference/*`` methods are already attached — so Cognito and
+        # IAM authorization coexist at the method level rather than at
+        # the API level.
+        self.analytics_config: AnalyticsApiConfig | None = analytics_config
 
         # Create secret token for ALB validation
         self.secret = self._create_secret()
@@ -94,6 +151,13 @@ class GCOApiGatewayGlobalStack(Stack):
 
         # Export API endpoint
         self._create_outputs()
+
+        # Wire /studio/* routes when analytics is explicitly enabled at
+        # construction time. Most deployments take the mutator path
+        # (:meth:`set_analytics_config`) because ``GCOAnalyticsStack`` is
+        # built after this stack in ``app.py``.
+        if self.analytics_config is not None:
+            self._wire_studio_routes()
 
         # Apply cdk-nag suppressions
         self._apply_nag_suppressions()
@@ -572,6 +636,224 @@ class GCOApiGatewayGlobalStack(Stack):
             value=self.secret.secret_arn,
             description="Secret ARN for ALB validation",
             export_name="gco-auth-secret-arn",
+        )
+
+    def set_analytics_config(self, config: AnalyticsApiConfig) -> None:
+        """Attach a post-construction ``AnalyticsApiConfig`` and wire ``/studio/*`` routes.
+
+        ``GCOAnalyticsStack`` is created *after* ``GCOApiGatewayGlobalStack``
+        in ``app.py`` (the regional stacks already declare a dependency on
+        the API gateway stack, so re-ordering the two global stacks would
+        ripple through the entire stack graph). This mutator lets
+        ``app.py`` defer attaching the analytics integration until after
+        both stacks exist, without changing the constructor contract or
+        the existing cross-stack dependency wiring.
+
+        MUST be called **at most once**, and only before stack synthesis
+        finishes. Calling it twice raises ``RuntimeError`` so the caller
+        cannot accidentally double-wire the Cognito authorizer (which
+        would produce two authorizers with overlapping identity sources
+        on the same REST API).
+
+        Args:
+            config: The ``AnalyticsApiConfig`` built from the
+                ``GCOAnalyticsStack`` attributes. Must be non-``None`` —
+                pass ``None`` at construction time instead if analytics
+                is disabled.
+
+        Raises:
+            RuntimeError: if the stack already has an attached
+                ``analytics_config`` (from either constructor kwarg or
+                a prior ``set_analytics_config`` call).
+        """
+        if self.analytics_config is not None:
+            raise RuntimeError(
+                "GCOApiGatewayGlobalStack.set_analytics_config may only be called "
+                "once. The stack already has an analytics_config attached."
+            )
+        self.analytics_config = config
+        self._wire_studio_routes()
+
+    def _wire_studio_routes(self) -> None:
+        """Attach the Cognito-authorized ``/studio/*`` route tree.
+
+        Called from ``__init__`` when an ``AnalyticsApiConfig`` is passed
+        to the constructor, or from :meth:`set_analytics_config` when the
+        config is attached post-construction. Safe to skip entirely when
+        analytics is disabled — the caller is responsible for gating on
+        ``self.analytics_config is not None``.
+
+        Wiring order matters: this runs *after* ``_create_api_gateway``
+        has already attached the IAM-authorized ``/api/v1/*`` and
+        ``/inference/*`` methods. The Cognito authorizer coexists with
+        those methods at the method level (not at the REST API level),
+        so the existing IAM-authorized methods are untouched — see the
+        coexistence assertion in
+        ``tests/test_api_gateway_analytics_config.py``.
+
+        Resources added:
+
+        * ``CognitoUserPoolsAuthorizer`` named ``StudioCognitoAuthorizer``
+          referencing ``UserPool.from_user_pool_arn(...)``.
+        * ``RequestValidator`` with ``validate_request_parameters=True``
+          attached to the ``/studio/login`` method via
+          ``request_validator_options``.
+        * ``/studio`` + ``/studio/login`` + ``/studio/callback``
+          resources.
+        * ``GET /studio/login`` — Cognito-authorized,
+          ``LambdaIntegration(presigned_url_lambda, proxy=True,
+          timeout=Duration.seconds(29))``.
+        * ``GET /studio/callback`` — unauthenticated stub MOCK
+          integration returning a 200 with an empty body; serves as the
+          OAuth redirect landing page when Cognito hosted UI is enabled.
+        * ``CfnOutput`` ``CognitoAuthorizerId`` with the authorizer's
+          ``authorizer_id``.
+        * ``CfnOutput`` ``StudioLoginUrl`` — concrete
+          ``https://<api-id>.execute-api.<region>.amazonaws.com/prod/studio/login``
+          constructed at deploy time via ``Fn.sub`` because the REST API
+          id is a deploy-time token.
+        """
+        assert (
+            self.analytics_config is not None
+        ), "_wire_studio_routes called without an AnalyticsApiConfig attached."
+        analytics_config = self.analytics_config
+
+        # Build the authorizer against the Cognito user pool that owns
+        # Studio identities. ``from_user_pool_arn`` is an import — no
+        # new Cognito resources are created in this stack.
+        user_pool = cognito.UserPool.from_user_pool_arn(
+            self,
+            "StudioUserPoolRef",
+            analytics_config.user_pool_arn,
+        )
+        authorizer = apigateway.CognitoUserPoolsAuthorizer(
+            self,
+            "StudioCognitoAuthorizer",
+            cognito_user_pools=[user_pool],
+            authorizer_name="gco-studio-cognito-authorizer",
+        )
+        # The authorizer attaches itself to the RestApi automatically
+        # the first time it is passed into ``add_method``. No explicit
+        # attach call is needed (and the CDK API does not expose a
+        # public one for ``CognitoUserPoolsAuthorizer``).
+
+        # Request validator — validates query/path parameters are
+        # present before the Lambda is invoked (the Cognito ID token
+        # itself is validated by the authorizer, not this validator).
+        studio_request_validator = apigateway.RequestValidator(
+            self,
+            "StudioRequestValidator",
+            rest_api=self.api,
+            request_validator_name="gco-studio-request-validator",
+            validate_request_parameters=True,
+        )
+
+        # /studio → /studio/login + /studio/callback
+        studio_resource = self.api.root.add_resource("studio")
+        login_resource = studio_resource.add_resource("login")
+        callback_resource = studio_resource.add_resource("callback")
+
+        # /studio/login — Cognito-authorized, proxies to the
+        # presigned-URL Lambda. 29-second integration timeout matches
+        # the Lambda timeout so the Lambda is the one that times out
+        # on slow SageMaker API calls rather than API Gateway.
+        login_integration = apigateway.LambdaIntegration(
+            analytics_config.presigned_url_lambda,
+            proxy=True,
+            timeout=Duration.seconds(29),
+        )
+        login_resource.add_method(
+            "GET",
+            login_integration,
+            authorization_type=apigateway.AuthorizationType.COGNITO,
+            authorizer=authorizer,
+            request_validator=studio_request_validator,
+            method_responses=[
+                apigateway.MethodResponse(status_code="200"),
+                apigateway.MethodResponse(status_code="400"),
+                apigateway.MethodResponse(status_code="401"),
+                apigateway.MethodResponse(status_code="404"),
+                apigateway.MethodResponse(status_code="500"),
+            ],
+        )
+
+        # /studio/callback — stub 200 OK landing page for the Cognito
+        # hosted UI OAuth redirect flow. Unauthenticated MOCK
+        # integration so the page is reachable without a signed
+        # request. The body is intentionally empty — the hosted UI
+        # consumes the query-string code parameter, not the response
+        # body.
+        callback_integration = apigateway.MockIntegration(
+            integration_responses=[
+                apigateway.IntegrationResponse(
+                    status_code="200",
+                    response_templates={"application/json": ""},
+                ),
+            ],
+            request_templates={"application/json": '{"statusCode": 200}'},
+        )
+        callback_method = callback_resource.add_method(
+            "GET",
+            callback_integration,
+            authorization_type=apigateway.AuthorizationType.NONE,
+            method_responses=[
+                apigateway.MethodResponse(status_code="200"),
+            ],
+        )
+
+        # /studio/callback is intentionally unauthenticated — it's the
+        # Cognito hosted-UI OAuth redirect landing page where the
+        # authorization ``code`` query-string parameter is consumed by
+        # the client-side JavaScript. Adding IAM or Cognito authorization
+        # here would break the OAuth flow because the browser redirect
+        # from Cognito does not carry SigV4 or an id-token header.
+        from cdk_nag import NagSuppressions as _CallbackNagSuppressions
+
+        _CallbackNagSuppressions.add_resource_suppressions(
+            callback_method,
+            [
+                {
+                    "id": "AwsSolutions-APIG4",
+                    "reason": (
+                        "/studio/callback is the Cognito hosted-UI OAuth "
+                        "redirect landing page. The browser redirect from "
+                        "Cognito carries the authorization code as a "
+                        "query-string parameter; it does NOT carry SigV4 "
+                        "or an id-token header. Adding IAM or Cognito "
+                        "authorization here would break the OAuth flow. "
+                        "The route is a MOCK integration that returns an "
+                        "empty 200 body; it does not expose any backend "
+                        "resources."
+                    ),
+                },
+            ],
+        )
+
+        # CfnOutputs — the CLI reads these for auto-discovery.
+        CfnOutput(
+            self,
+            "CognitoAuthorizerId",
+            value=authorizer.authorizer_id,
+            description="API Gateway authorizer id for the Studio Cognito authorizer",
+            export_name="gco-studio-cognito-authorizer-id",
+        )
+        # ``self.api.url`` already resolves to the deploy-time URL, but
+        # it points at the stage root. Use ``Fn.sub`` to append the
+        # concrete ``studio/login`` suffix so operators get a copy-
+        # pastable login URL in the stack outputs.
+        studio_login_url = Fn.sub(
+            "https://${ApiId}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${Stage}/studio/login",
+            {
+                "ApiId": self.api.rest_api_id,
+                "Stage": self.api.deployment_stage.stage_name,
+            },
+        )
+        CfnOutput(
+            self,
+            "StudioLoginUrl",
+            value=studio_login_url,
+            description="Concrete URL for the /studio/login route (Cognito-authenticated)",
+            export_name="gco-studio-login-url",
         )
 
     def _create_waf(self) -> None:

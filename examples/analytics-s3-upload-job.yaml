@@ -1,0 +1,146 @@
+# Analytics S3 Upload Example Job
+# Cluster-side half of the analytics workflow: publishes a small dataset
+# snapshot plus its schema manifest to Cluster_Shared_Bucket under the
+# analytics-data/ prefix so a SageMaker Studio notebook can read it via
+# the notebook's SageMaker execution role (which is granted RW on the
+# shared bucket when the analytics environment is enabled).
+#
+# Same ConfigMap as examples/cluster-shared-bucket-upload-job.yaml —
+# gco-cluster-shared-bucket, exposing sharedBucketName / sharedBucketArn /
+# sharedBucketRegion via envFrom. The difference is the prerequisites:
+# the Studio reader counterpart only exists when the analytics stack is
+# deployed and a Studio user has been provisioned.
+#
+# Prerequisites:
+#   1. gco analytics enable
+#      Sets analytics_environment.enabled = true in cdk.json.
+#   2. gco stacks deploy gco-analytics
+#      Provisions SageMaker Studio domain, Cognito user pool, KMS key,
+#      Studio_Only_Bucket, and EFS home folders. Also grants the
+#      SageMaker execution role RW on the shared bucket.
+#   3. gco analytics users add <username>
+#      Creates a Cognito user and associated Studio user profile with a
+#      per-user EFS access point under /home/<username>.
+#
+# Studio reader snippet (paste into a notebook cell after this job runs):
+#   import boto3, os, pandas
+#   df = pandas.read_csv(
+#       boto3.client('s3').get_object(
+#           Bucket=os.environ['sharedBucketName'],
+#           Key='analytics-data/dataset.csv',
+#       )['Body']
+#   )
+#
+# Submit with:
+#   gco jobs submit-direct examples/analytics-s3-upload-job.yaml -r us-east-1
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: analytics-s3-upload
+  namespace: gco-jobs
+  labels:
+    app: analytics-s3-upload
+    project: gco
+spec:
+  template:
+    spec:
+      serviceAccountName: gco-service-account
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: uploader
+        image: python:3.14.4-slim
+        command:
+        - python
+        - -c
+        - |
+          import csv, io, json, os, subprocess, sys
+          from datetime import datetime, timezone
+
+          subprocess.check_call([sys.executable, "-m", "pip", "install",
+                                 "--target", "/tmp/pylib", "boto3", "-q"])
+          sys.path.insert(0, "/tmp/pylib")
+          import boto3
+
+          bucket = os.environ["sharedBucketName"]
+          bucket_region = os.environ["sharedBucketRegion"]
+          s3 = boto3.client("s3", region_name=bucket_region)
+
+          # Small dataset: user engagement sample rows
+          rows = [
+              {"user_id": "u-001", "region": "us-east-1", "clicks": 42, "score": 0.91},
+              {"user_id": "u-002", "region": "us-west-2", "clicks": 17, "score": 0.54},
+              {"user_id": "u-003", "region": "eu-west-1", "clicks": 89, "score": 0.97},
+              {"user_id": "u-004", "region": "ap-south-1", "clicks": 3, "score": 0.22},
+              {"user_id": "u-005", "region": "us-east-2", "clicks": 55, "score": 0.78},
+          ]
+
+          # Serialize to CSV in memory
+          csv_buf = io.StringIO()
+          writer = csv.DictWriter(csv_buf, fieldnames=list(rows[0].keys()))
+          writer.writeheader()
+          writer.writerows(rows)
+
+          csv_key = "analytics-data/dataset.csv"
+          s3.put_object(
+              Bucket=bucket,
+              Key=csv_key,
+              Body=csv_buf.getvalue().encode("utf-8"),
+              ContentType="text/csv",
+          )
+          print(f"Uploaded {len(rows)} rows to s3://{bucket}/{csv_key}")
+
+          # Companion manifest describing the schema so notebook readers
+          # don't have to guess column types.
+          manifest = {
+              "dataset": "user_engagement",
+              "snapshot_at": datetime.now(timezone.utc).isoformat(),
+              "row_count": len(rows),
+              "columns": [
+                  {"name": "user_id", "type": "string"},
+                  {"name": "region", "type": "string"},
+                  {"name": "clicks", "type": "int"},
+                  {"name": "score", "type": "float"},
+              ],
+          }
+          manifest_key = "analytics-data/dataset.manifest.json"
+          s3.put_object(
+              Bucket=bucket,
+              Key=manifest_key,
+              Body=json.dumps(manifest, indent=2).encode("utf-8"),
+              ContentType="application/json",
+          )
+          print(f"Uploaded schema manifest to s3://{bucket}/{manifest_key}")
+
+          # Print the copy-pasteable notebook snippet.
+          print("\nStudio notebook snippet:")
+          print("  import boto3, os, pandas")
+          print("  df = pandas.read_csv(")
+          print("      boto3.client('s3').get_object(")
+          print("          Bucket=os.environ['sharedBucketName'],")
+          print("          Key='analytics-data/dataset.csv',")
+          print("      )['Body']")
+          print("  )")
+        # Inject sharedBucketName / sharedBucketArn / sharedBucketRegion
+        # directly as env vars from the ConfigMap.
+        envFrom:
+        - configMapRef:
+            name: gco-cluster-shared-bucket
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+              - ALL
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      restartPolicy: Never
+  backoffLimit: 2

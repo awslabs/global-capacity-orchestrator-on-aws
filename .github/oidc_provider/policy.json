@@ -6,6 +6,7 @@
       "Effect": "Allow",
       "Action": [
         "eks:DescribeAddonVersions",
+        "elasticmapreduce:ListReleaseLabels",
         "rds:DescribeDBEngineVersions",
         "sts:GetCallerIdentity"
       ],

@@ -370,6 +370,56 @@ jobs:
           docker run --rm -v "$PWD":/workspace -w /workspace gco-dev gco --help
           docker run --rm -v "$PWD":/workspace -w /workspace gco-dev gco capacity --help
           docker run --rm -v "$PWD":/workspace -w /workspace gco-dev gco stacks --help
+      - name: Verify pinned toolchain versions
+        # The Dockerfile pins Node, kubectl, AWS CLI v2, CDK, and the Docker
+        # CLI to specific releases. Confirm each tool reports a non-empty
+        # version — catches pin drift, broken downloads, and PATH issues.
+        run: |
+          docker run --rm gco-dev bash -c '
+            set -euo pipefail
+            node --version
+            cdk --version
+            kubectl version --client=true
+            aws --version
+            docker --version
+          '
+      - name: Verify Docker-in-Docker via host socket pass-through
+        # `gco stacks deploy-all` drives `cdk deploy`, which shells out to
+        # Docker to bundle Lambda assets. The dev container ships only the
+        # Docker CLI (no daemon); it talks to the host daemon through the
+        # bind-mounted socket documented in Dockerfile.dev's header. This
+        # step proves the pass-through works end-to-end by building a
+        # minimal throwaway image inside the container.
+        run: |
+          set -euo pipefail
+          # Sanity: the host daemon we will pass through is reachable.
+          docker info >/dev/null
+
+          # Prepare a trivial build context on the runner filesystem so
+          # the container can see it via the workspace bind mount.
+          mkdir -p /tmp/dind-probe
+          cat > /tmp/dind-probe/Dockerfile <<'DOCKERFILE'
+          FROM alpine:3.21
+          RUN echo "dind-probe" > /ok
+          CMD ["cat", "/ok"]
+          DOCKERFILE
+
+          # Build from inside the dev container over the socket. --group-add
+          # ensures the container process can talk to the socket regardless
+          # of whether the runner's `docker` group GID matches root.
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /tmp/dind-probe:/build \
+            -w /build \
+            gco-dev docker build -t dind-probe:ci .
+
+          # Prove the image the inner build produced is visible to the
+          # host daemon (the whole point of the pass-through).
+          docker image inspect dind-probe:ci >/dev/null
+          docker run --rm dind-probe:ci | grep -q '^dind-probe$'
+
+          # Clean up the probe image so this job leaves the runner tidy.
+          docker image rm dind-probe:ci alpine:3.21 >/dev/null 2>&1 || true
 
   # --------------------------------------------------------------------------
   # Kind cluster E2E — verifies the Kubernetes manifests apply cleanly to a

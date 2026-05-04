@@ -17,13 +17,14 @@ Configuration is read from ``cdk.json`` context values:
 """
 
 import aws_cdk as cdk
-
 from stack import GCOGitHubOIDCStack
 
 app = cdk.App()
 
 # Read configuration from cdk.json context — users edit cdk.json, not this file.
-github_repo = app.node.try_get_context("github_repo") or "awslabs/global-capacity-orchestrator-on-aws"
+github_repo = (
+    app.node.try_get_context("github_repo") or "awslabs/global-capacity-orchestrator-on-aws"
+)
 github_branch = app.node.try_get_context("github_branch") or "*"
 
 GCOGitHubOIDCStack(

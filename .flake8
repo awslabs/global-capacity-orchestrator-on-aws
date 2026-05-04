@@ -23,3 +23,10 @@ exclude =
 per-file-ignores =
     tests/*:S101,E402
     lambda/*:E402
+    # diagrams/generate.py intentionally performs a ``sys.path.insert(0, …)``
+    # before importing ``gco.*`` so the script can be invoked standalone
+    # (``python diagrams/generate.py``) without a prior ``pip install -e .``.
+    # E402 "module level import not at top of file" is expected for that
+    # pattern — any new diagrams/* script that adds a similar bootstrap
+    # shim will pick up this exemption automatically.
+    diagrams/*:E402

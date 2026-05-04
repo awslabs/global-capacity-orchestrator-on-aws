@@ -304,6 +304,24 @@ CONFIGS.extend(
                 }
             },
         ),
+        (
+            "analytics-enabled",
+            {
+                "analytics_environment": {
+                    "enabled": True,
+                    "hyperpod": {"enabled": False},
+                }
+            },
+        ),
+        (
+            "analytics-enabled-hyperpod",
+            {
+                "analytics_environment": {
+                    "enabled": True,
+                    "hyperpod": {"enabled": True},
+                }
+            },
+        ),
     ]
 )
 
@@ -325,6 +343,14 @@ CONFIGS.extend(
 #   4. all-features-enabled — FSx + Valkey + public endpoint combined
 #   5. three-regions       — 3 regional stacks, max cross-region surface
 #
+# Plus two analytics-environment fixtures that exercise the
+# optional ``GCOAnalyticsStack`` IAM surface — SageMaker Studio execution
+# role, Cognito user pool, EMR Serverless application, and the presigned-
+# URL Lambda role. These two configs are the only ones where
+# ``config.get_analytics_enabled()`` returns ``True``, so the test
+# harness ``_build_all_stacks`` has to instantiate the analytics stack
+# for them.
+#
 # On a 2-vCPU CI runner with 2 xdist workers this runs in ~5 minutes
 # instead of ~30 minutes for the full matrix.
 
@@ -335,6 +361,8 @@ _NAG_CONFIG_NAMES = {
     "all-features-enabled",
     "three-regions",
     "aurora-pgvector-enabled",
+    "analytics-enabled",
+    "analytics-enabled-hyperpod",
 }
 
 NAG_CONFIGS: list[tuple[str, dict[str, Any]]] = [

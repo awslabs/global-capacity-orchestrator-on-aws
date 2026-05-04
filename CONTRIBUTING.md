@@ -91,6 +91,31 @@ docker run --rm \
   gco-dev pytest tests/ -v
 ```
 
+**Running `gco stacks deploy-all` from the container.** `cdk deploy`
+invokes Docker to bundle Lambda assets. The dev container ships only the
+Docker CLI (no daemon), so mount the host Docker socket to give it a
+transport to your host daemon:
+
+```bash
+docker run --rm -it \
+  -v ~/.aws:/root/.aws:ro \
+  -v $(pwd):/workspace \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -w /workspace \
+  gco-dev gco stacks deploy-all -y
+```
+
+This pattern works on Linux, Docker Desktop for macOS and Windows, and
+Colima for macOS. On Colima the host socket lives at
+`~/.colima/default/docker.sock` (older Colima) or `~/.colima/docker.sock`
+(newer Colima) — adjust the left side of the `-v` flag accordingly or
+symlink the Colima socket to `/var/run/docker.sock`. See
+<https://github.com/abiosoft/colima> for the current default. This is
+host-socket pass-through, not true Docker-in-Docker — do not add
+`--privileged`. The trade-off is that anyone inside the container has
+root-equivalent access to the host Docker daemon through the mounted
+socket, so only use this on trusted hosts.
+
 **Tip**: Create a shell alias for convenience:
 
 ```bash
@@ -377,7 +402,7 @@ mypy gco/stacks/ app.py
 bandit -r gco/ cli/ -c pyproject.toml --severity-level medium
 
 # Run tests with coverage (matches unit:pytest:core)
-pytest tests/ --cov=gco --cov=cli --cov-report=html --cov-fail-under=85 \
+pytest tests/ --cov=gco --cov=cli --cov-report=html --cov-fail-under=90 \
     --ignore=tests/test_nag_compliance.py
 
 # Run cdk-nag compliance matrix (matches unit:cdk:nag-compliance)

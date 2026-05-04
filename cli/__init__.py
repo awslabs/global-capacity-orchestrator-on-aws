@@ -24,6 +24,12 @@ try:
 except ImportError:
     __version__ = "0.7.2"
 
+from .analytics_user_mgmt import (
+    discover_api_endpoint,
+    discover_cognito_client_id,
+    discover_cognito_pool_id,
+    srp_authenticate,
+)
 from .aws_client import GCOAWSClient, get_aws_client
 from .capacity import CapacityChecker, CapacityEstimate, get_capacity_checker
 from .config import GCOConfig, get_config
@@ -48,6 +54,9 @@ __all__ = [
     "StackInfo",
     "StackManager",
     "__version__",
+    "discover_api_endpoint",
+    "discover_cognito_client_id",
+    "discover_cognito_pool_id",
     "get_aws_client",
     "get_capacity_checker",
     "get_config",
@@ -56,5 +65,6 @@ __all__ = [
     "get_job_manager",
     "get_output_formatter",
     "get_stack_manager",
+    "srp_authenticate",
     "update_kubeconfig",
 ]

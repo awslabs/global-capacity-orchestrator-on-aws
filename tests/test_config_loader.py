@@ -878,3 +878,211 @@ class TestAuroraPgvectorConfig:
         aurora_config = config.get_aurora_pgvector_config()
 
         assert aurora_config["enabled"] is False
+
+
+class TestAnalyticsEnvironmentConfig:
+    """Tests for optional analytics_environment configuration."""
+
+    def test_get_analytics_config_defaults(self):
+        """Missing analytics_environment block → defaults apply."""
+        app = MockApp({})
+        config = ConfigLoader(app)
+        analytics_config = config.get_analytics_config()
+
+        assert analytics_config["enabled"] is False
+        assert analytics_config["hyperpod"] == {"enabled": False}
+        assert analytics_config["cognito"] == {
+            "domain_prefix": None,
+            "removal_policy": "destroy",
+        }
+        assert analytics_config["efs"] == {"removal_policy": "destroy"}
+        assert analytics_config["studio"] == {"user_profile_name_prefix": None}
+
+    def test_get_analytics_enabled_defaults_to_false(self):
+        """Missing analytics_environment block → get_analytics_enabled() is False."""
+        app = MockApp({})
+        config = ConfigLoader(app)
+
+        assert config.get_analytics_enabled() is False
+
+    def test_get_analytics_config_partial_cognito_override_merges_defaults(self, valid_context):
+        """Setting cognito.domain_prefix preserves the default cognito.removal_policy."""
+        valid_context["analytics_environment"] = {
+            "cognito": {"domain_prefix": "my-studio"},
+        }
+        app = MockApp(valid_context)
+        config = ConfigLoader(app)
+        analytics_config = config.get_analytics_config()
+
+        assert analytics_config["cognito"]["domain_prefix"] == "my-studio"
+        # Default removal_policy must still be present after the partial override.
+        assert analytics_config["cognito"]["removal_policy"] == "destroy"
+        # Sibling sub-blocks must not have been dropped either.
+        assert analytics_config["efs"] == {"removal_policy": "destroy"}
+        assert analytics_config["hyperpod"] == {"enabled": False}
+        assert analytics_config["enabled"] is False
+
+    def test_get_analytics_config_partial_efs_override_merges_defaults(self, valid_context):
+        """Setting efs.removal_policy=retain preserves cognito defaults."""
+        valid_context["analytics_environment"] = {
+            "enabled": True,
+            "efs": {"removal_policy": "retain"},
+        }
+        app = MockApp(valid_context)
+        config = ConfigLoader(app)
+        analytics_config = config.get_analytics_config()
+
+        assert analytics_config["enabled"] is True
+        assert analytics_config["efs"]["removal_policy"] == "retain"
+        # Cognito sub-block defaults untouched.
+        assert analytics_config["cognito"] == {
+            "domain_prefix": None,
+            "removal_policy": "destroy",
+        }
+
+    def test_get_analytics_config_full_override_passthrough(self, valid_context):
+        """Full override → every nested field is taken from the user block."""
+        valid_context["analytics_environment"] = {
+            "enabled": True,
+            "hyperpod": {"enabled": True},
+            "cognito": {"domain_prefix": "team-studio", "removal_policy": "retain"},
+            "efs": {"removal_policy": "retain"},
+            "studio": {"user_profile_name_prefix": "dev-"},
+        }
+        app = MockApp(valid_context)
+        config = ConfigLoader(app)
+        analytics_config = config.get_analytics_config()
+
+        assert analytics_config["enabled"] is True
+        assert analytics_config["hyperpod"] == {"enabled": True}
+        assert analytics_config["cognito"] == {
+            "domain_prefix": "team-studio",
+            "removal_policy": "retain",
+        }
+        assert analytics_config["efs"] == {"removal_policy": "retain"}
+        assert analytics_config["studio"] == {"user_profile_name_prefix": "dev-"}
+
+    def test_get_analytics_enabled_true_when_enabled_true(self, valid_context):
+        """get_analytics_enabled() returns True when enabled=true."""
+        valid_context["analytics_environment"] = {"enabled": True}
+        app = MockApp(valid_context)
+        config = ConfigLoader(app)
+
+        assert config.get_analytics_enabled() is True
+
+    def test_get_analytics_enabled_false_when_enabled_false(self, valid_context):
+        """get_analytics_enabled() returns False when enabled=false."""
+        valid_context["analytics_environment"] = {"enabled": False}
+        app = MockApp(valid_context)
+        config = ConfigLoader(app)
+
+        assert config.get_analytics_enabled() is False
+
+    def test_invalid_enabled_type_raises(self, valid_context):
+        """Non-bool analytics_environment.enabled → raises ConfigValidationError."""
+        valid_context["analytics_environment"] = {"enabled": "yes"}
+        app = MockApp(valid_context)
+        with pytest.raises(
+            ConfigValidationError, match="analytics_environment.enabled must be a bool"
+        ):
+            ConfigLoader(app)
+
+    def test_invalid_hyperpod_enabled_type_raises(self, valid_context):
+        """Non-bool analytics_environment.hyperpod.enabled → raises ConfigValidationError."""
+        valid_context["analytics_environment"] = {"hyperpod": {"enabled": 1}}
+        app = MockApp(valid_context)
+        with pytest.raises(
+            ConfigValidationError,
+            match="analytics_environment.hyperpod.enabled must be a bool",
+        ):
+            ConfigLoader(app)
+
+    def test_invalid_cognito_removal_policy_raises(self, valid_context):
+        """cognito.removal_policy not in {destroy, retain} → raises ConfigValidationError."""
+        valid_context["analytics_environment"] = {
+            "cognito": {"removal_policy": "delete"},
+        }
+        app = MockApp(valid_context)
+        with pytest.raises(
+            ConfigValidationError,
+            match="analytics_environment.cognito.removal_policy must be one of",
+        ):
+            ConfigLoader(app)
+
+    def test_invalid_efs_removal_policy_raises(self, valid_context):
+        """efs.removal_policy not in {destroy, retain} → raises ConfigValidationError."""
+        valid_context["analytics_environment"] = {
+            "efs": {"removal_policy": "keep"},
+        }
+        app = MockApp(valid_context)
+        with pytest.raises(
+            ConfigValidationError,
+            match="analytics_environment.efs.removal_policy must be one of",
+        ):
+            ConfigLoader(app)
+
+    def test_non_dict_analytics_environment_context_uses_defaults(self):
+        """Non-dict analytics_environment context value → falls back to defaults."""
+        app = MockApp({"analytics_environment": "invalid"})
+        config = ConfigLoader(app)
+        analytics_config = config.get_analytics_config()
+
+        assert analytics_config["enabled"] is False
+        assert config.get_analytics_enabled() is False
+        assert analytics_config["cognito"] == {
+            "domain_prefix": None,
+            "removal_policy": "destroy",
+        }
+        assert analytics_config["efs"] == {"removal_policy": "destroy"}
+
+
+class TestAnalyticsConstants:
+    """Tests for analytics constants exported from gco.stacks.constants."""
+
+    def test_emr_serverless_release_label_prefix(self):
+        """EMR_SERVERLESS_RELEASE_LABEL exists and starts with 'emr-'."""
+        from gco.stacks.constants import EMR_SERVERLESS_RELEASE_LABEL
+
+        assert isinstance(EMR_SERVERLESS_RELEASE_LABEL, str)
+        assert EMR_SERVERLESS_RELEASE_LABEL.startswith("emr-"), (
+            f"EMR_SERVERLESS_RELEASE_LABEL must start with 'emr-' so it is a "
+            f"valid emrserverless.CfnApplication release_label, got "
+            f"{EMR_SERVERLESS_RELEASE_LABEL!r}"
+        )
+
+    def test_sagemaker_role_name_prefix(self):
+        """SAGEMAKER_ROLE_NAME_PREFIX is the literal 'AmazonSageMaker'."""
+        from gco.stacks.constants import SAGEMAKER_ROLE_NAME_PREFIX
+
+        assert SAGEMAKER_ROLE_NAME_PREFIX == "AmazonSageMaker"
+
+    def test_cognito_domain_prefix_default(self):
+        """COGNITO_DOMAIN_PREFIX_DEFAULT is the literal 'gco-studio'."""
+        from gco.stacks.constants import COGNITO_DOMAIN_PREFIX_DEFAULT
+
+        assert COGNITO_DOMAIN_PREFIX_DEFAULT == "gco-studio"
+
+    def test_studio_presigned_url_expiry_seconds_positive_int(self):
+        """STUDIO_PRESIGNED_URL_EXPIRY_SECONDS is a positive int."""
+        from gco.stacks.constants import STUDIO_PRESIGNED_URL_EXPIRY_SECONDS
+
+        assert isinstance(STUDIO_PRESIGNED_URL_EXPIRY_SECONDS, int)
+        # Booleans are ints in Python — guard against someone typing `True`.
+        assert not isinstance(STUDIO_PRESIGNED_URL_EXPIRY_SECONDS, bool)
+        assert STUDIO_PRESIGNED_URL_EXPIRY_SECONDS > 0
+
+    def test_cluster_shared_bucket_name_prefix(self):
+        """CLUSTER_SHARED_BUCKET_NAME_PREFIX is the literal 'gco-cluster-shared'."""
+        from gco.stacks.constants import CLUSTER_SHARED_BUCKET_NAME_PREFIX
+
+        assert CLUSTER_SHARED_BUCKET_NAME_PREFIX == "gco-cluster-shared"
+
+    def test_cluster_shared_ssm_parameter_prefix(self):
+        """CLUSTER_SHARED_SSM_PARAMETER_PREFIX is the documented '/gco/cluster-shared-bucket' path."""
+        from gco.stacks.constants import CLUSTER_SHARED_SSM_PARAMETER_PREFIX
+
+        assert CLUSTER_SHARED_SSM_PARAMETER_PREFIX == "/gco/cluster-shared-bucket"
+        assert CLUSTER_SHARED_SSM_PARAMETER_PREFIX.startswith("/"), (
+            "CLUSTER_SHARED_SSM_PARAMETER_PREFIX must be an absolute SSM path "
+            "(starts with '/') so it composes into valid parameter ARNs"
+        )

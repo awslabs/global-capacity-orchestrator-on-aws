@@ -17,6 +17,7 @@ Complete command-line interface documentation for GCO (Global Capacity Orchestra
   - [models](#models-commands)
   - [files](#files-commands)
   - [nodepools](#nodepools-commands)
+  - [analytics](#analytics-commands)
 - [Configuration](#configuration)
 - [Environment Variables](#environment-variables)
 - [Examples](#examples)
@@ -1940,6 +1941,266 @@ gco nodepools create-odcr \
   --capacity-reservation-id cr-0123456789abcdef0 \
   --instance-type g5.xlarge \
   --output nodepool.yaml
+```
+
+---
+
+### Analytics Commands
+
+Manage the optional GCO analytics environment (SageMaker Studio + EMR
+Serverless + Cognito). The feature is **off by default**; enable it only
+when you want interactive notebook analytics. See the
+[Analytics Guide](ANALYTICS.md) for end-to-end workflows.
+
+All `gco analytics *` commands auto-discover the Cognito user-pool ID
+and API Gateway endpoint from the `gco-analytics` and `gco-api-gateway`
+CloudFormation outputs, so no manual ID wiring is needed.
+
+#### `gco analytics enable`
+
+Flip `analytics_environment.enabled` to `true` in `cdk.json`. Prints
+the follow-up `gco stacks deploy gco-analytics` command — does not
+deploy automatically.
+
+```bash
+gco analytics enable [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--hyperpod` | | Also set `analytics_environment.hyperpod.enabled=true` (adds HyperPod training-job permissions to the SageMaker execution role). |
+| `--yes` | `-y` | Skip the confirmation prompt. |
+
+**Example:**
+
+```bash
+gco analytics enable
+gco analytics enable --hyperpod
+gco analytics enable --hyperpod -y
+
+# Follow-up to actually deploy the stack:
+gco stacks deploy gco-analytics
+```
+
+#### `gco analytics disable`
+
+Flip `analytics_environment.enabled` to `false` in `cdk.json`. Leaves
+the `hyperpod`, `cognito`, and `efs` sub-blocks untouched so a later
+`enable` preserves your preferences. Run `gco stacks destroy
+gco-analytics` afterward to tear down the deployed resources.
+
+```bash
+gco analytics disable [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--yes` | `-y` | Skip the confirmation prompt. |
+
+**Example:**
+
+```bash
+gco analytics disable
+gco analytics disable -y
+gco stacks destroy gco-analytics
+```
+
+#### `gco analytics status`
+
+Show the current `analytics_environment.*` toggle state from `cdk.json`
+plus the deployment state of `gco-analytics`.
+
+```bash
+gco analytics status
+```
+
+**Example:**
+
+```bash
+gco analytics status
+```
+
+#### `gco analytics users add`
+
+Create a Cognito user in the analytics user pool. Calls
+`cognito-idp:AdminCreateUser` and prints the temporary password to
+stdout exactly once.
+
+```bash
+gco analytics users add [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--username` | Cognito username to create (required). |
+| `--email` | Email address for the new user. |
+| `--no-email` | Suppress the Cognito welcome email (`MessageAction=SUPPRESS`). |
+
+**Example:**
+
+```bash
+gco analytics users add --username alice --email alice@example.com
+gco analytics users add --username bob --email bob@example.com --no-email
+```
+
+#### `gco analytics users list`
+
+List Cognito users in the analytics user pool. Default output is a
+formatted table via the existing `OutputFormatter`.
+
+```bash
+gco analytics users list [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--as-json` | Emit JSON instead of a table. |
+
+**Example:**
+
+```bash
+gco analytics users list
+gco analytics users list --as-json
+```
+
+#### `gco analytics users remove`
+
+Delete a Cognito user from the analytics user pool. Does not delete
+the user's Studio user profile or EFS home folder — use
+`aws sagemaker delete-user-profile` for that.
+
+```bash
+gco analytics users remove [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--username` | Cognito username to remove (required). |
+| `--yes` | Skip the confirmation prompt. |
+
+**Example:**
+
+```bash
+gco analytics users remove --username alice
+gco analytics users remove --username alice --yes
+```
+
+#### `gco analytics studio login`
+
+Sign in to SageMaker Studio via Cognito SRP and print a presigned
+Studio URL on its own line on stdout (pipe-friendly). The password,
+`IdToken`, and URL are never written to disk.
+
+```bash
+gco analytics studio login [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--username` | Cognito username (required). |
+| `--password` | Password. Defaults to prompt (`click.prompt(..., hide_input=True)`). Also read from `$GCO_STUDIO_PASSWORD` if set. |
+| `--api-url` | Override the API Gateway base URL (otherwise auto-discovered from CloudFormation). |
+| `--open` | Launch the default browser on the presigned URL after printing it. |
+
+**Example:**
+
+```bash
+# Interactive (prompts for password)
+gco analytics studio login --username alice
+
+# Non-interactive
+export GCO_STUDIO_PASSWORD='...'
+gco analytics studio login --username alice
+
+# Open browser automatically
+gco analytics studio login --username alice --open
+
+# Custom API endpoint
+gco analytics studio login \
+  --username alice \
+  --api-url https://abc123.execute-api.us-east-2.amazonaws.com
+```
+
+#### `gco analytics doctor`
+
+Run pre-flight checks before `gco stacks deploy gco-analytics`. Each
+check prints `✓`/`✗` plus a short remediation line. Exits `1` on any
+failing check.
+
+Checks performed:
+
+- `cdk.json` is present and parses as JSON
+- `gco-global`, `gco-api-gateway`, and every regional stack are
+  `CREATE_COMPLETE`
+- The three `/gco/cluster-shared-bucket/*` SSM parameters are
+  present in the global region
+- No orphaned retained analytics resources are left from a previous
+  `retain`-policy destroy
+
+```bash
+gco analytics doctor
+```
+
+**Example:**
+
+```bash
+gco analytics doctor
+```
+
+#### `gco analytics iterate`
+
+Thin wrapper over `scripts/test_analytics_lifecycle.py` that drives
+the analytics deploy → test → destroy → verify-clean iteration loop.
+Exits with the underlying script's return code. Never touches
+`gco-global`, `gco-api-gateway`, `gco-<region>`, or `gco-monitoring` —
+the loop is scoped strictly to `gco-analytics`.
+
+```bash
+gco analytics iterate PHASE [OPTIONS]
+```
+
+**Arguments:**
+
+- `PHASE` - One of `status`, `deploy`, `test`, `destroy`,
+  `verify-clean`, or `all`.
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--region` | `-r` | AWS region (default: `deployment_regions.api_gateway` from `cdk.json`). |
+| `--dry-run` | | Print the planned action without executing it. |
+| `--json` | | Emit machine-readable JSON instead of human-readable text. |
+
+**Example:**
+
+```bash
+# Check current state without changing anything
+gco analytics iterate status --dry-run --json
+
+# Individual phases
+gco analytics iterate deploy
+gco analytics iterate test
+gco analytics iterate destroy
+gco analytics iterate verify-clean
+
+# Full cycle
+gco analytics iterate all
+
+# Target a specific region
+gco analytics iterate deploy -r us-east-2
 ```
 
 ---

@@ -62,3 +62,67 @@ AURORA_POSTGRES_VERSION = "VER_17_9"
 
 AURORA_POSTGRES_VERSION_DISPLAY = "17.9"
 """Human-readable version string for documentation and logging."""
+# ---------------------------------------------------------------------------
+# Analytics Environment Constants
+# ---------------------------------------------------------------------------
+# Pinned values consumed by the optional analytics environment (SageMaker
+# Studio, EMR Serverless, Cognito hosted UI, and the always-on
+# Cluster_Shared_Bucket in ``GCOGlobalStack``). Keeping them here lets the
+# analytics stack, the regional stack, the global stack, and the tests import
+# from a single source of truth.
+
+EMR_SERVERLESS_RELEASE_LABEL = "emr-7.13.0"
+"""EMR Serverless Spark release label used for ``emrserverless.CfnApplication``.
+
+Pinned to a stable Spark release so analytics workloads get a reproducible
+runtime across deployments. Update alongside the EKS add-ons above when a
+newer EMR release is validated against the studio notebooks.
+"""
+
+SAGEMAKER_ROLE_NAME_PREFIX = "AmazonSageMaker"
+"""Required prefix for the SageMaker Studio execution role name.
+
+Amazon SageMaker requires execution roles used by Studio domains to have a
+name that starts with ``AmazonSageMaker`` so that AWS-managed policies and
+service-linked trust relationships resolve correctly. Any role name generated
+for ``SageMaker_Execution_Role`` must begin with this prefix.
+"""
+
+COGNITO_DOMAIN_PREFIX_DEFAULT = "gco-studio"
+"""Default prefix for the Cognito hosted-UI domain.
+
+The full domain prefix is assembled at synth time by appending the account
+id (e.g. ``gco-studio-123456789012``) so it stays globally unique within
+``cognito.UserPoolDomain``. Operators may override the prefix through the
+``analytics_environment.cognito.domain_prefix`` field in ``cdk.json``.
+"""
+
+STUDIO_PRESIGNED_URL_EXPIRY_SECONDS = 300
+"""Default expiry (in seconds) for SageMaker Studio presigned domain URLs.
+
+Five minutes matches the shortest window accepted by
+``CreatePresignedDomainUrl`` while still giving a user enough time to click
+the link after the ``/studio/login`` Lambda returns it. The presigned-URL
+Lambda reads this through the ``URL_EXPIRES_SECONDS`` environment variable
+and callers may override it per-request.
+"""
+
+CLUSTER_SHARED_BUCKET_NAME_PREFIX = "gco-cluster-shared"
+"""Name prefix for the always-on ``Cluster_Shared_Bucket`` in ``GCOGlobalStack``.
+
+The full bucket name is ``gco-cluster-shared-<account>-<global-region>``.
+The prefix is what IAM policies and cdk-nag allow-list assertions
+scope against, so it must stay stable across refactors even when the region
+or account suffix changes.
+"""
+
+CLUSTER_SHARED_SSM_PARAMETER_PREFIX = "/gco/cluster-shared-bucket"
+"""SSM parameter namespace for the cluster-shared bucket metadata.
+
+``GCOGlobalStack`` writes ``<prefix>/name``, ``<prefix>/arn``, and
+``<prefix>/region`` under this path; ``GCORegionalStack`` (always) and
+``GCOAnalyticsStack`` (when enabled) read them back via
+``cr.AwsCustomResource`` against the global region. Treat the full paths as
+the contract — this prefix is the single place to change if the namespace
+ever moves.
+"""

@@ -31,18 +31,25 @@ examples/
 # =============================================================================
 # CDK NAG Suppressions - Intentional string concatenation for readability
 # =============================================================================
-# The nag_suppressions.py file uses multi-line strings in lists for readability.
-# This is intentional Python syntax, not a bug.
-gco/stacks/nag_suppressions.py
-gco/stacks/monitoring_stack.py
+# Historical context: earlier scans flagged the long multi-line strings used
+# as cdk-nag suppression `reason=` text in these modules. A 2024 rescan
+# (`semgrep --config=auto`) found 0 findings on both files, so the blanket
+# ignores have been removed.
+#
+# If a future semgrep rule flags the multi-line strings again, prefer an
+# inline `# nosemgrep: <rule-id>` on the offending line over re-adding the
+# file-level ignore. Narrowing attempted and clean; the blanket was
+# historical, not current.
 
 # =============================================================================
 # Test Files - False positives for test fixtures
 # =============================================================================
-# test_auth_middleware.py defines FastAPI route handlers inside a fixture function.
-# These are used by the test client and are not "unused" - semgrep doesn't understand
-# that FastAPI decorators register the functions as route handlers.
-tests/test_auth_middleware.py
+# `tests/test_auth_middleware.py` defines FastAPI route handlers inside a
+# pytest fixture. Semgrep's `useless-inner-function` rule flags those as
+# unused because it cannot see that FastAPI's `@app.get(...)` decorator
+# registers them. Each handler now carries an inline
+# `# nosemgrep: useless-inner-function` comment, so the file-level ignore
+# has been removed. Narrowing attempted and clean.
 
 # =============================================================================
 # Build artifacts and generated code

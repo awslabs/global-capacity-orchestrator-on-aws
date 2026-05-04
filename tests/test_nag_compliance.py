@@ -118,16 +118,22 @@ def _build_app_with_logger(
 
 def _build_all_stacks(app: cdk.App) -> None:
     """Instantiate every stack ``app.py`` builds: global, API gateway,
-    one regional stack per configured region, and monitoring. Matches
-    ``app.py::main`` one-for-one so the cdk-nag findings captured
-    here are the same ones a ``cdk deploy --all`` would surface.
+    one regional stack per configured region, monitoring, and — when
+    ``analytics_environment.enabled=true`` — the optional
+    ``GCOAnalyticsStack``. Matches ``app.py::main`` one-for-one so the
+    cdk-nag findings captured here are the same ones a
+    ``cdk deploy --all`` would surface.
 
     The heavy per-stack mocks (Docker asset + helm installer) are
     applied with ``patch.object`` inside the caller's ``with`` block;
     this function just wires the stacks together.
     """
     from gco.config.config_loader import ConfigLoader
-    from gco.stacks.api_gateway_global_stack import GCOApiGatewayGlobalStack
+    from gco.stacks.analytics_stack import GCOAnalyticsStack
+    from gco.stacks.api_gateway_global_stack import (
+        AnalyticsApiConfig,
+        GCOApiGatewayGlobalStack,
+    )
     from gco.stacks.global_stack import GCOGlobalStack
     from gco.stacks.monitoring_stack import GCOMonitoringStack
     from gco.stacks.regional_stack import GCORegionalStack
@@ -182,6 +188,37 @@ def _build_all_stacks(app: cdk.App) -> None:
     )
     for regional_stack in regional_stacks:
         monitoring_stack.add_dependency(regional_stack)
+
+    # Mirror ``app.py``'s conditional analytics-stack instantiation so
+    # the ``analytics-enabled`` / ``analytics-enabled-hyperpod`` fixtures
+    # in ``NAG_CONFIGS`` actually exercise the SageMaker / Cognito / EMR
+    # Serverless cdk-nag surface. When the toggle is off, this branch is
+    # skipped and the matrix behaves exactly as before.
+    if config.get_analytics_enabled():
+        analytics_stack = GCOAnalyticsStack(
+            app,
+            f"{project_name}-analytics",
+            config=config,
+            env=cdk.Environment(region=api_gateway_region),
+            description=(
+                "Optional ML and analytics environment "
+                "(SageMaker Studio, EMR Serverless, Cognito)"
+            ),
+        )
+        analytics_stack.add_dependency(global_stack)
+
+        analytics_api_config = AnalyticsApiConfig(
+            user_pool_arn=analytics_stack.cognito_pool.user_pool_arn,
+            user_pool_client_id=analytics_stack.cognito_client.user_pool_client_id,
+            presigned_url_lambda=analytics_stack.presigned_url_lambda,
+            studio_domain_name=analytics_stack.studio_domain.domain_name or "",
+            callback_url=(
+                f"https://{api_gateway_stack.api.rest_api_id}."
+                f"execute-api.{api_gateway_region}.amazonaws.com/prod/studio/callback"
+            ),
+        )
+        api_gateway_stack.set_analytics_config(analytics_api_config)
+        api_gateway_stack.add_dependency(analytics_stack)
 
 
 def _mock_helm_installer(stack: Any) -> None:

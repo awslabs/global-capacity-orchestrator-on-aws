@@ -808,6 +808,12 @@ class StackManager:
         if stack_name == "gco-monitoring":
             region = cdk_regions.get("monitoring") or self.config.monitoring_region
             return region
+        if stack_name == "gco-analytics":
+            # The analytics stack shares the API gateway region so the
+            # presigned-URL Lambda can hook into the existing /studio/*
+            # routes on the same API Gateway.
+            region = cdk_regions.get("api_gateway") or self.config.api_gateway_region
+            return region
 
         # Regional stacks: gco-{region}
         prefix = "gco-"
@@ -1480,6 +1486,7 @@ def get_stack_deployment_order(stacks: list[str]) -> list[str]:
     global_priority = {
         "gco-global": 1,
         "gco-api-gateway": 2,
+        "gco-analytics": 2.5,
         "gco-monitoring": 3,
     }
 
@@ -1689,3 +1696,39 @@ def get_aurora_config(region: str | None = None) -> dict[str, Any]:
 def update_aurora_config(settings: dict[str, Any], region: str | None = None) -> None:
     """Update Aurora pgvector configuration in cdk.json."""
     _update_feature_config("aurora_pgvector", settings, _AURORA_DEFAULTS, region)
+
+
+# =============================================================================
+# Analytics environment configuration
+# =============================================================================
+
+_ANALYTICS_DEFAULTS: dict[str, Any] = {
+    "enabled": False,
+    "hyperpod": {"enabled": False},
+    "cognito": {"domain_prefix": None, "removal_policy": "destroy"},
+    "efs": {"removal_policy": "destroy"},
+    "studio": {"user_profile_name_prefix": None},
+}
+
+
+def get_analytics_config() -> dict[str, Any]:
+    """Get the analytics environment configuration from cdk.json.
+
+    The analytics stack is single-region by construction (lives in the
+    api-gateway region), so this helper does not accept a region argument.
+    Returned dict is the defaults merged with any operator overrides from
+    the ``context.analytics_environment`` block.
+    """
+    return _get_feature_config("analytics_environment", _ANALYTICS_DEFAULTS)
+
+
+def update_analytics_config(settings: dict[str, Any]) -> None:
+    """Update the analytics environment configuration in cdk.json.
+
+    Mirrors ``update_valkey_config`` / ``update_aurora_config``. Nested
+    keys under ``analytics_environment`` (``hyperpod``, ``cognito``,
+    ``efs``, ``studio``) are merged one level deep rather than replaced
+    wholesale — ``enable --hyperpod`` must not clobber
+    ``cognito.removal_policy``.
+    """
+    _update_feature_config("analytics_environment", settings, _ANALYTICS_DEFAULTS)

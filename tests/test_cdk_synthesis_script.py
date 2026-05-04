@@ -1,42 +1,54 @@
-"""
-Tests for scripts/test_cdk_synthesis.py.
+"""Tests for ``scripts/test_cdk_synthesis.py``.
 
-The script runs ``cdk synth`` across a matrix of cdk.json overlays to catch
-regressions in hardcoded regions, missing conditional guards, and broken
-feature-flag interactions. These unit tests cover the script's own helpers
-and the main() aggregation without actually invoking CDK (which requires
-Node.js and a ~30s synth per config).
+The script shells out to ``cdk synth`` for every config in
+``tests._cdk_config_matrix.CONFIGS``. It writes a modified ``cdk.json``
+before each run and restores the original in a ``finally`` block — so
+the invariants worth locking down are:
 
-Scope:
-    - ``CONFIGS``                       structural integrity: every entry is a
-                                        (name, dict) 2-tuple; names are unique;
-                                        the "default-regions" baseline is always
-                                        first so it catches broken base config
-                                        before any overlay is tried.
-    - ``synth_with_config`` — with ``subprocess.run`` mocked:
-        * overlay merge semantics for both dict and scalar ``overrides`` values
-        * the original cdk.json content is always restored after the call,
-          even when CDK times out or raises
-        * non-zero return code containing "Error" produces a FAIL
-        * non-zero return code whose error text is only inside the NOTICES
-          section is still treated as a PASS (CDK notices are noisy but not
-          failures)
-        * ``subprocess.TimeoutExpired`` is caught and reported as FAIL
-    - ``main`` — tallies passes/failures across every CONFIGS entry, returns
-      non-zero when anything failed, zero otherwise.
+1. ``synth_with_config`` writes a merged config, invokes ``cdk synth``,
+   and **always** restores the original ``cdk.json`` even when synth
+   fails, times out, or raises.
+2. Shallow-merge semantics for dict-valued context keys. An override
+   that only touches one sub-key of ``eks_cluster`` must not clobber
+   the others.
+3. Success / failure / timeout branches all return the expected bool.
+4. ``main`` aggregates per-config results, returns 0 on clean runs,
+   and 1 with the list of failing config names otherwise.
+
+These tests never run a real ``cdk synth`` — the ``subprocess.run`` call
+is patched to a fake. That keeps the unit suite fast (the real matrix
+is already covered by ``unit:cdk:config-matrix`` in CI, which runs the
+script end-to-end).
 """
 
+from __future__ import annotations
+
+import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-# Import the module under test.
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import test_cdk_synthesis as harness  # noqa: E402 - sys.path set above
+# ---------------------------------------------------------------------------
+# Module-under-test import
+# ---------------------------------------------------------------------------
+#
+# The script needs a real ``cdk.json`` readable at import time. It captures
+# the baseline as ``ORIGINAL_CONFIG`` / ``BASE_CONFIG`` during module
+# execution. We load from the real repo ``cdk.json`` once so the module
+# imports cleanly, then patch ``BASE_CONFIG`` + ``CDK_JSON`` to a tmp
+# fixture in every test that touches synth.
+
+_SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "test_cdk_synthesis.py"
+_SPEC = importlib.util.spec_from_file_location("cdk_synth_script", _SCRIPT_PATH)
+assert _SPEC is not None and _SPEC.loader is not None
+cdk_synth = importlib.util.module_from_spec(_SPEC)
+sys.modules.setdefault("cdk_synth_script", cdk_synth)
+_SPEC.loader.exec_module(cdk_synth)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -44,252 +56,305 @@ import test_cdk_synthesis as harness  # noqa: E402 - sys.path set above
 
 
 @pytest.fixture
-def isolated_cdk_json(tmp_path, monkeypatch):
+def tmp_cdk_json(tmp_path, monkeypatch):
+    """Redirect the script's ``CDK_JSON`` to a throwaway file.
+
+    Yields ``(path, baseline_dict)``. Tests that call
+    ``synth_with_config`` should use this fixture so the real repo
+    ``cdk.json`` is never mutated.
     """
-    Swap the module's ``CDK_JSON``, ``ORIGINAL_CONFIG``, and ``BASE_CONFIG``
-    to point at a throwaway file in tmp_path. All subsequent calls to
-    ``synth_with_config`` write to the tmp file only, so the real repo
-    cdk.json stays untouched even if a test goes sideways.
-    """
-    base = {
+    baseline = {
         "context": {
-            "valkey": {"enabled": False, "max_data_storage_gb": 5},
-            "fsx_lustre": {"enabled": False},
-            "eks_cluster": {"endpoint_access": "PRIVATE"},
+            "project_name": "gco",
+            "eks_cluster": {
+                "endpoint_access": "PRIVATE",
+                "worker_node_type": "m5.large",
+            },
+            "analytics_environment": {"enabled": False},
             "deployment_regions": {
-                "global": "us-east-2",
-                "api_gateway": "us-east-2",
-                "monitoring": "us-east-2",
                 "regional": ["us-east-1"],
             },
         }
     }
-    tmp_cdk = tmp_path / "cdk.json"
-    tmp_cdk.write_text(json.dumps(base, indent=2))
+    cdk_file = tmp_path / "cdk.json"
+    cdk_file.write_text(json.dumps(baseline, indent=2))
 
-    monkeypatch.setattr(harness, "CDK_JSON", tmp_cdk)
-    monkeypatch.setattr(harness, "ORIGINAL_CONFIG", tmp_cdk.read_text())
-    monkeypatch.setattr(harness, "BASE_CONFIG", json.loads(tmp_cdk.read_text()))
+    monkeypatch.setattr(cdk_synth, "CDK_JSON", cdk_file)
+    monkeypatch.setattr(cdk_synth, "ORIGINAL_CONFIG", cdk_file.read_text())
+    monkeypatch.setattr(cdk_synth, "BASE_CONFIG", json.loads(cdk_file.read_text()))
 
-    yield tmp_cdk
-
-
-# ---------------------------------------------------------------------------
-# CONFIGS structural integrity
-# ---------------------------------------------------------------------------
+    yield cdk_file, baseline
 
 
-class TestConfigsMatrix:
-    """The matrix itself is the contract — guard its shape."""
-
-    def test_matrix_is_not_empty(self):
-        assert len(harness.CONFIGS) > 0
-
-    def test_every_entry_is_name_plus_overrides_tuple(self):
-        for idx, entry in enumerate(harness.CONFIGS):
-            assert isinstance(entry, tuple), f"CONFIGS[{idx}] is not a tuple: {entry!r}"
-            assert len(entry) == 2, f"CONFIGS[{idx}] is not a 2-tuple: {entry!r}"
-            name, overrides = entry
-            assert isinstance(name, str) and name, f"CONFIGS[{idx}] has empty name"
-            assert isinstance(
-                overrides, dict
-            ), f"CONFIGS[{idx}] overrides must be dict, got {type(overrides).__name__}"
-
-    def test_config_names_are_unique(self):
-        names = [name for name, _ in harness.CONFIGS]
-        duplicates = {name for name in names if names.count(name) > 1}
-        assert not duplicates, f"duplicate config names would overwrite each other: {duplicates}"
-
-    def test_baseline_config_runs_first(self):
-        """
-        The default-regions baseline must be first so a broken base cdk.json
-        surfaces before any overlay hides the real problem.
-        """
-        assert harness.CONFIGS[0][0] == "default-regions"
-        assert harness.CONFIGS[0][1] == {}
-
-    def test_multi_region_cases_cover_at_least_two_regions(self):
-        for name, overrides in harness.CONFIGS:
-            if "multi" in name or "three" in name:
-                regional = overrides.get("deployment_regions", {}).get("regional")
-                assert (
-                    regional is not None and len(regional) >= 2
-                ), f"multi-region case {name!r} should have ≥2 regional entries"
+def _fake_result(returncode: int, stderr: str = "") -> subprocess.CompletedProcess:
+    """Build a subprocess.CompletedProcess the script knows how to read."""
+    return subprocess.CompletedProcess(
+        args=["cdk", "synth"], returncode=returncode, stdout="", stderr=stderr
+    )
 
 
 # ---------------------------------------------------------------------------
-# synth_with_config — overlay behaviour
+# synth_with_config — happy path
 # ---------------------------------------------------------------------------
 
 
-class TestSynthOverlayMerge:
-    """``overrides`` should deep-merge into cdk.json's ``context`` block."""
+def test_synth_with_config_returns_true_on_success(tmp_cdk_json):
+    """``cdk synth`` returning 0 with no error output is a pass."""
+    with patch.object(cdk_synth.subprocess, "run", return_value=_fake_result(0)):
+        ok = cdk_synth.synth_with_config("clean-config", {})
+    assert ok is True
 
-    def test_dict_overrides_update_rather_than_replace(self, isolated_cdk_json):
-        """
-        A dict value for an existing dict key should update it in place so
-        untouched sub-keys survive. Using valkey here because the baseline
-        already has both ``enabled`` and ``max_data_storage_gb``.
-        """
-        captured = {}
 
-        def fake_run(*args, **kwargs):
-            # Capture cdk.json contents at the moment cdk synth would run.
-            captured["config"] = json.loads(isolated_cdk_json.read_text())
-            return MagicMock(returncode=0, stderr="", stdout="")
-
-        with patch.object(harness.subprocess, "run", side_effect=fake_run):
-            assert harness.synth_with_config("valkey-flip", {"valkey": {"enabled": True}})
-
-        ctx = captured["config"]["context"]
-        # Previously-untouched sub-key survives the update.
-        assert ctx["valkey"]["max_data_storage_gb"] == 5
-        # The overlay took effect.
-        assert ctx["valkey"]["enabled"] is True
-
-    def test_scalar_overrides_replace_outright(self, isolated_cdk_json):
-        """
-        Non-dict values replace the existing value whole. If someone passes
-        ``{"valkey": False}`` it wipes the nested dict (the harness reads
-        context keys directly, so a bool there would break callers).
-        """
-        captured = {}
-
-        def fake_run(*args, **kwargs):
-            captured["config"] = json.loads(isolated_cdk_json.read_text())
-            return MagicMock(returncode=0, stderr="", stdout="")
-
-        with patch.object(harness.subprocess, "run", side_effect=fake_run):
-            harness.synth_with_config("scalar-replace", {"some_new_flag": True})
-
-        assert captured["config"]["context"]["some_new_flag"] is True
-
-    def test_cdk_json_is_always_restored(self, isolated_cdk_json):
-        """
-        Whether synth passes or fails, the original cdk.json text must be
-        put back — otherwise subsequent CI steps see the overlay leaking.
-        """
-        with patch.object(
-            harness.subprocess,
-            "run",
-            return_value=MagicMock(returncode=0, stderr="", stdout=""),
-        ):
-            harness.synth_with_config("restore-after-success", {"valkey": {"enabled": True}})
-        # Working copy on disk matches ORIGINAL_CONFIG verbatim.
-        assert isolated_cdk_json.read_text() == harness.ORIGINAL_CONFIG
-
-    def test_cdk_json_is_restored_after_exception(self, isolated_cdk_json):
-        """Generic exception from cdk synth still hits the finally-restore path."""
-        with patch.object(harness.subprocess, "run", side_effect=RuntimeError("boom")):
-            result = harness.synth_with_config("restore-after-error", {"valkey": {"enabled": True}})
-        assert result is False
-        assert isolated_cdk_json.read_text() == harness.ORIGINAL_CONFIG
+def test_synth_with_config_passes_with_notices(tmp_cdk_json):
+    """A run that emits only upstream NOTICES (and no ``Error``) still passes."""
+    stderr = "NOTICES\n99999\tDeprecation warning\n"
+    with patch.object(cdk_synth.subprocess, "run", return_value=_fake_result(0, stderr)):
+        ok = cdk_synth.synth_with_config("notice-only", {})
+    assert ok is True
 
 
 # ---------------------------------------------------------------------------
-# synth_with_config — return-code classification
+# synth_with_config — failure modes
 # ---------------------------------------------------------------------------
 
 
-class TestSynthReturnCodeClassification:
-    def test_returncode_zero_is_pass(self, isolated_cdk_json):
-        with patch.object(
-            harness.subprocess,
-            "run",
-            return_value=MagicMock(returncode=0, stderr="", stdout=""),
-        ):
-            assert harness.synth_with_config("ok", {}) is True
+def test_synth_with_config_returns_false_on_nonzero_exit_with_error_text(tmp_cdk_json):
+    """Non-zero exit + the literal ``Error`` token is a failure."""
+    stderr = "Error: stack gco-xyz failed to synthesize\n"
+    with patch.object(cdk_synth.subprocess, "run", return_value=_fake_result(1, stderr)):
+        ok = cdk_synth.synth_with_config("broken-config", {})
+    assert ok is False
 
-    def test_returncode_zero_with_notices_is_still_pass(self, isolated_cdk_json):
-        """
-        CDK emits NOTICES even on success — they aren't failures. Verify we
-        don't mis-classify a rc=0 case with trailing advisory text.
-        """
-        notices_stderr = "NOTICES\n\n19836 Foo\n\tFoobar notice text"
-        with patch.object(
-            harness.subprocess,
-            "run",
-            return_value=MagicMock(returncode=0, stderr=notices_stderr, stdout=""),
-        ):
-            assert harness.synth_with_config("notices-ok", {}) is True
 
-    def test_error_before_notices_section_is_fail(self, isolated_cdk_json):
-        """
-        An ``Error: ...`` line before the NOTICES block means a real failure.
-        """
-        stderr = (
-            "Error: Cannot find context value 'deployment_regions.regional[0]'\n"
-            "NOTICES\n\n19836 Foo\n\tFoobar"
+def test_synth_with_config_tolerates_nonzero_with_only_notices(tmp_cdk_json):
+    """A non-zero exit with only NOTICES (no ``Error`` text) is classified as a pass.
+
+    This matches the heuristic in the script — ``cdk`` occasionally
+    exits non-zero when it only wants to surface a deprecation notice.
+    We don't want to fail CI over that.
+    """
+    stderr = "NOTICES\n\n11111\tjust a notice\n"
+    with patch.object(cdk_synth.subprocess, "run", return_value=_fake_result(2, stderr)):
+        ok = cdk_synth.synth_with_config("notice-but-nonzero", {})
+    assert ok is True
+
+
+def test_synth_with_config_returns_false_on_timeout(tmp_cdk_json):
+    """A subprocess timeout is reported as a failure."""
+    with patch.object(
+        cdk_synth.subprocess,
+        "run",
+        side_effect=subprocess.TimeoutExpired(cmd="cdk", timeout=120),
+    ):
+        ok = cdk_synth.synth_with_config("slow-config", {})
+    assert ok is False
+
+
+def test_synth_with_config_returns_false_on_unexpected_exception(tmp_cdk_json):
+    """An unexpected exception from ``subprocess.run`` is caught and logged."""
+    with patch.object(cdk_synth.subprocess, "run", side_effect=RuntimeError("boom")):
+        ok = cdk_synth.synth_with_config("broken-config", {})
+    assert ok is False
+
+
+# ---------------------------------------------------------------------------
+# synth_with_config — cdk.json restoration (the critical invariant)
+# ---------------------------------------------------------------------------
+
+
+def test_synth_with_config_restores_cdk_json_after_success(tmp_cdk_json):
+    cdk_file, _baseline = tmp_cdk_json
+    original = cdk_file.read_text()
+    with patch.object(cdk_synth.subprocess, "run", return_value=_fake_result(0)):
+        cdk_synth.synth_with_config("some-config", {"new_key": "new_val"})
+    # After the call completes, the committed cdk.json is back to the baseline.
+    assert cdk_file.read_text() == original
+
+
+def test_synth_with_config_restores_cdk_json_after_failure(tmp_cdk_json):
+    cdk_file, _baseline = tmp_cdk_json
+    original = cdk_file.read_text()
+    with patch.object(cdk_synth.subprocess, "run", return_value=_fake_result(1, "Error: x")):
+        cdk_synth.synth_with_config("bad-config", {"new_key": "new_val"})
+    assert cdk_file.read_text() == original
+
+
+def test_synth_with_config_restores_cdk_json_after_timeout(tmp_cdk_json):
+    cdk_file, _baseline = tmp_cdk_json
+    original = cdk_file.read_text()
+    with patch.object(
+        cdk_synth.subprocess,
+        "run",
+        side_effect=subprocess.TimeoutExpired(cmd="cdk", timeout=120),
+    ):
+        cdk_synth.synth_with_config("slow", {})
+    assert cdk_file.read_text() == original
+
+
+def test_synth_with_config_restores_cdk_json_after_unexpected_exception(tmp_cdk_json):
+    cdk_file, _baseline = tmp_cdk_json
+    original = cdk_file.read_text()
+    with patch.object(cdk_synth.subprocess, "run", side_effect=RuntimeError("boom")):
+        cdk_synth.synth_with_config("explode", {})
+    assert cdk_file.read_text() == original
+
+
+# ---------------------------------------------------------------------------
+# synth_with_config — override merge semantics
+# ---------------------------------------------------------------------------
+
+
+def test_synth_with_config_applies_flat_overrides(tmp_cdk_json):
+    """Flat (non-dict) overrides replace the context key directly."""
+    cdk_file, _ = tmp_cdk_json
+    captured: dict[str, object] = {}
+
+    def _capture_and_read(*_args, **_kw):
+        # Read the file the script wrote so we can assert the merge result.
+        captured["written"] = json.loads(cdk_file.read_text())
+        return _fake_result(0)
+
+    with patch.object(cdk_synth.subprocess, "run", side_effect=_capture_and_read):
+        cdk_synth.synth_with_config("flat", {"project_name": "other"})
+
+    assert captured["written"]["context"]["project_name"] == "other"
+
+
+def test_synth_with_config_shallow_merges_dict_overrides(tmp_cdk_json):
+    """Dict overrides merge at the top level, preserving untouched sub-keys."""
+    cdk_file, baseline = tmp_cdk_json
+    captured: dict[str, object] = {}
+
+    def _capture_and_read(*_args, **_kw):
+        captured["written"] = json.loads(cdk_file.read_text())
+        return _fake_result(0)
+
+    with patch.object(cdk_synth.subprocess, "run", side_effect=_capture_and_read):
+        cdk_synth.synth_with_config(
+            "partial-cluster",
+            {"eks_cluster": {"endpoint_access": "PUBLIC_AND_PRIVATE"}},
         )
-        with patch.object(
-            harness.subprocess,
-            "run",
-            return_value=MagicMock(returncode=1, stderr=stderr, stdout=""),
-        ):
-            assert harness.synth_with_config("real-error", {}) is False
 
-    def test_error_only_inside_notices_is_classified_as_pass(self, isolated_cdk_json):
-        """
-        Some advisories live under NOTICES and include the word "error". The
-        script splits on ``NOTICES`` and only fails when the error text lives
-        in the pre-NOTICES section.
-        """
-        # ``Error`` appears only in the NOTICES advisory body; nothing before
-        # the NOTICES delimiter should be flagged as a real error.
-        stderr = "NOTICES\n\n12345 Deprecation: an error may occur in a future release."
-        with patch.object(
-            harness.subprocess,
-            "run",
-            return_value=MagicMock(returncode=1, stderr=stderr, stdout=""),
-        ):
-            assert harness.synth_with_config("notices-only-error", {}) is True
+    written = captured["written"]["context"]
+    # Override applied
+    assert written["eks_cluster"]["endpoint_access"] == "PUBLIC_AND_PRIVATE"
+    # Sibling key untouched
+    assert (
+        written["eks_cluster"]["worker_node_type"]
+        == baseline["context"]["eks_cluster"]["worker_node_type"]
+    )
 
-    def test_timeout_is_fail(self, isolated_cdk_json):
-        with patch.object(
-            harness.subprocess,
-            "run",
-            side_effect=subprocess.TimeoutExpired(cmd="cdk", timeout=120),
-        ):
-            assert harness.synth_with_config("timeout", {}) is False
+
+def test_synth_with_config_replaces_scalar_with_dict(tmp_cdk_json):
+    """If a key was a scalar in the baseline, an incoming dict replaces it."""
+    cdk_file, _ = tmp_cdk_json
+    captured: dict[str, object] = {}
+
+    def _capture_and_read(*_args, **_kw):
+        captured["written"] = json.loads(cdk_file.read_text())
+        return _fake_result(0)
+
+    with patch.object(cdk_synth.subprocess, "run", side_effect=_capture_and_read):
+        cdk_synth.synth_with_config("promote", {"project_name": {"nested": True}})
+
+    assert captured["written"]["context"]["project_name"] == {"nested": True}
+
+
+def test_synth_with_config_invokes_cdk_synth_with_quiet_and_app(tmp_cdk_json):
+    """The subprocess must get ``cdk synth --quiet --no-staging --app <python> app.py``.
+
+    Drifting those flags would either produce spurious pass results
+    (``--quiet`` is how we suppress NOTICES that would be mistaken for
+    errors) or slow CI down by ~10× (``--no-staging`` skips asset
+    uploads).
+    """
+    captured: dict[str, object] = {}
+
+    def _capture(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return _fake_result(0)
+
+    with patch.object(cdk_synth.subprocess, "run", side_effect=_capture):
+        cdk_synth.synth_with_config("c", {})
+
+    argv = captured["args"][0]
+    assert argv[0] == "cdk"
+    assert argv[1] == "synth"
+    assert "--quiet" in argv
+    assert "--no-staging" in argv
+    assert "--app" in argv
+    # App value is the current python executable + "app.py"
+    app_idx = argv.index("--app") + 1
+    assert "app.py" in argv[app_idx]
 
 
 # ---------------------------------------------------------------------------
-# main() aggregation
+# main
 # ---------------------------------------------------------------------------
 
 
-class TestMainAggregation:
-    """``main()`` tallies per-config pass/fail and sets exit code accordingly."""
+def test_main_exits_zero_when_all_configs_pass(tmp_cdk_json, capsys):
+    with (
+        patch.object(cdk_synth, "CONFIGS", [("a", {}), ("b", {})]),
+        patch.object(cdk_synth, "synth_with_config", return_value=True),
+    ):
+        rc = cdk_synth.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "2 passed, 0 failed" in out
+    assert "All configurations synthesized successfully." in out
 
-    def test_returns_zero_when_all_configs_pass(self):
-        with (
-            patch.object(harness, "CONFIGS", [("only", {})]),
-            patch.object(harness, "synth_with_config", return_value=True),
-        ):
-            assert harness.main() == 0
 
-    def test_returns_one_when_any_config_fails(self):
-        with (
-            patch.object(
-                harness,
-                "CONFIGS",
-                [("pass-one", {}), ("fail-one", {}), ("pass-two", {})],
-            ),
-            patch.object(harness, "synth_with_config", side_effect=[True, False, True]),
-        ):
-            assert harness.main() == 1
+def test_main_exits_one_when_any_config_fails(tmp_cdk_json, capsys):
+    with (
+        patch.object(cdk_synth, "CONFIGS", [("a", {}), ("b", {}), ("c", {})]),
+        patch.object(cdk_synth, "synth_with_config", side_effect=[True, False, True]),
+    ):
+        rc = cdk_synth.main()
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "1 failed" in out
+    assert "Failed configs: b" in out
 
-    def test_runs_every_config_in_order(self):
-        called_names = []
 
-        def fake_synth(name, _overrides):
-            called_names.append(name)
-            return True
+def test_main_reports_multiple_failures(tmp_cdk_json, capsys):
+    with (
+        patch.object(cdk_synth, "CONFIGS", [("a", {}), ("b", {}), ("c", {})]),
+        patch.object(cdk_synth, "synth_with_config", side_effect=[False, True, False]),
+    ):
+        rc = cdk_synth.main()
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "2 failed" in out
+    assert "a" in out and "c" in out
 
-        with (
-            patch.object(harness, "CONFIGS", [("a", {}), ("b", {}), ("c", {})]),
-            patch.object(harness, "synth_with_config", side_effect=fake_synth),
-        ):
-            harness.main()
 
-        assert called_names == ["a", "b", "c"]
+def test_main_exits_zero_on_empty_config_list(tmp_cdk_json, capsys):
+    """An empty CONFIGS list is a no-op pass — there's nothing to fail."""
+    with patch.object(cdk_synth, "CONFIGS", []):
+        rc = cdk_synth.main()
+    assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# Hygiene
+# ---------------------------------------------------------------------------
+
+
+def test_script_exports_expected_symbols():
+    """Public entry points the CI workflow relies on."""
+    assert callable(cdk_synth.main)
+    assert callable(cdk_synth.synth_with_config)
+
+
+def test_script_shares_configs_list_with_cdk_config_matrix():
+    """The CONFIGS list is the one imported from ``tests._cdk_config_matrix``.
+
+    If this drifts, ``test_cdk_synthesis.py`` and
+    ``tests/test_nag_compliance.py`` stop exercising the same matrix —
+    the exact failure mode the shared module was created to prevent.
+    """
+    from tests._cdk_config_matrix import CONFIGS as shared
+
+    assert cdk_synth.CONFIGS is shared or list(cdk_synth.CONFIGS) == list(shared)

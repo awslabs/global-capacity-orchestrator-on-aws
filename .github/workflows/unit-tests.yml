@@ -71,7 +71,7 @@ jobs:
             --cov=gco --cov=cli \
             --cov-report=xml --cov-report=html --cov-report=json \
             --cov-report=term-missing \
-            --cov-fail-under=85 \
+            --cov-fail-under=90 \
             --junitxml=report.xml -x
       - name: Upload coverage artifacts
         if: always()
@@ -93,7 +93,7 @@ jobs:
           # schema so the README badge can link to a static JSON file on
           # GitHub Pages without calling a third-party service.
           #
-          # Color threshold matches the --cov-fail-under value (85%) from
+          # Color threshold matches the --cov-fail-under value (90%) from
           # the pytest step above: anything below that would have already
           # failed CI, so the badge only has two meaningful states.
           #
@@ -107,7 +107,7 @@ jobs:
           import json
           with open("coverage.json") as f:
               pct = json.load(f)["totals"]["percent_covered"]
-          color = "brightgreen" if pct >= 85 else "red"
+          color = "brightgreen" if pct >= 90 else "red"
           badge = {
               "schemaVersion": 1,
               "label": "coverage",

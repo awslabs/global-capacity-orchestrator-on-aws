@@ -313,14 +313,14 @@ class TestPolicyJsonFile:
             assert stmt["Effect"] == "Allow"
 
     def test_policy_json_actions_are_read_only(self):
-        """Default policy should only contain read-only actions (Describe/Get)."""
+        """Default policy should only contain read-only actions (Describe/Get/List)."""
         policy_path = Path(__file__).parent.parent / ".github" / "oidc_provider" / "policy.json"
         policy = json.loads(policy_path.read_text())
         for stmt in policy["Statement"]:
             for action in stmt["Action"]:
                 parts = action.split(":")
                 verb = parts[1] if len(parts) == 2 else parts[0]
-                assert verb.startswith(("Describe", "Get")), (
+                assert verb.startswith(("Describe", "Get", "List")), (
                     f"Action '{action}' is not read-only. "
-                    "Default CI policy should only contain Describe/Get actions."
+                    "Default CI policy should only contain Describe/Get/List actions."
                 )

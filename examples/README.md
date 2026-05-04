@@ -6,7 +6,10 @@ This directory contains example Kubernetes manifests you can use with GCO (Globa
 
 - [Quick Reference](#quick-reference)
 - [Examples](#examples)
+  - [Analytics Database Export Job](#analytics-database-export-job)
+  - [Analytics S3 Upload Job](#analytics-s3-upload-job)
   - [Aurora pgvector Job](#aurora-pgvector-job)
+  - [Cluster Shared Bucket Upload Job](#cluster-shared-bucket-upload-job)
   - [DAG Pipeline](#dag-pipeline)
   - [EFA Distributed Training](#efa-distributed-training)
   - [EFS Output Job](#efs-output-job)
@@ -39,7 +42,10 @@ This directory contains example Kubernetes manifests you can use with GCO (Globa
 
 | Example | File | Category | GPU | Opt-in |
 |---------|------|----------|-----|--------|
+| [Analytics Database Export](#analytics-database-export-job) | `analytics-database-export-job.yaml` | Analytics | — | Aurora, Analytics |
+| [Analytics S3 Upload](#analytics-s3-upload-job) | `analytics-s3-upload-job.yaml` | Analytics | — | Analytics |
 | [Aurora pgvector](#aurora-pgvector-job) | `aurora-pgvector-job.yaml` | Database | — | Aurora |
+| [Cluster Shared Bucket Upload](#cluster-shared-bucket-upload-job) | `cluster-shared-bucket-upload-job.yaml` | Storage | — | — |
 | [DAG Preprocess](#dag-pipeline) | `dag-step-preprocess.yaml` | Pipeline | — | — |
 | [DAG Train](#dag-pipeline) | `dag-step-train.yaml` | Pipeline | — | — |
 | [EFA Training](#efa-distributed-training) | `efa-distributed-training.yaml` | Jobs | ✅ | — |
@@ -74,6 +80,49 @@ This directory contains example Kubernetes manifests you can use with GCO (Globa
 
 ## Examples
 
+### Analytics Database Export Job
+
+**File:** `analytics-database-export-job.yaml`
+
+Exports rows from the regional Aurora Serverless v2 PostgreSQL cluster (pgvector) to the always-on `Cluster_Shared_Bucket` as CSV, so a SageMaker Studio notebook can analyse the export without direct database credentials. An init container checks for the `gco-aurora-pgvector` ConfigMap and exits 0 when Aurora is not deployed, making the job a safe no-op on clusters without Aurora.
+
+**Prerequisites:**
+
+- `aurora_pgvector.enabled = true` in `cdk.json`, then `gco stacks deploy gco-<region>`
+- Optional (for the notebook reader): `gco analytics enable` and `gco stacks deploy gco-analytics`
+
+**Usage:**
+
+```bash
+gco jobs submit-direct examples/analytics-database-export-job.yaml -r us-east-1
+```
+
+**When to use:** Moving database snapshots to S3 for notebook-side analysis, decoupling notebooks from direct database connections, building RAG/pgvector export pipelines.
+
+---
+
+### Analytics S3 Upload Job
+
+**File:** `analytics-s3-upload-job.yaml`
+
+Publishes a small dataset snapshot (CSV plus a JSON schema manifest) to the always-on `Cluster_Shared_Bucket` under the `analytics-data/` prefix. A SageMaker Studio notebook running under the analytics execution role can then read it with a short `boto3 + pandas` snippet — printed at the end of the job.
+
+**Prerequisites:**
+
+- `gco analytics enable` — sets `analytics_environment.enabled = true` in `cdk.json`
+- `gco stacks deploy gco-analytics` — provisions the Studio domain, Cognito user pool, and the execution role that can read the shared bucket
+- `gco analytics users add <username>` — creates a Cognito user and Studio user profile
+
+**Usage:**
+
+```bash
+gco jobs submit-direct examples/analytics-s3-upload-job.yaml -r us-east-1
+```
+
+**When to use:** Handing off cluster-side artifacts to Studio notebooks, publishing dataset snapshots for exploratory analysis, wiring up the analytics end-to-end demo.
+
+---
+
 ### Aurora pgvector Job
 
 **File:** `aurora-pgvector-job.yaml`
@@ -91,6 +140,26 @@ gco jobs submit-direct examples/aurora-pgvector-job.yaml -r us-east-1
 **Demonstrates:** pgvector extension setup, HNSW index creation, vector similarity search, embedding storage and retrieval.
 
 **When to use:** RAG applications, semantic search, vector similarity workloads, storing and querying embeddings.
+
+---
+
+### Cluster Shared Bucket Upload Job
+
+**File:** `cluster-shared-bucket-upload-job.yaml`
+
+Writes a small JSON artifact to the always-on `Cluster_Shared_Bucket` using `envFrom` against the `gco-cluster-shared-bucket` ConfigMap. The bucket's name, ARN, and region are exposed directly as env vars (`sharedBucketName`, `sharedBucketArn`, `sharedBucketRegion`) — no hardcoded bucket names. Works regardless of whether the analytics environment is enabled: the shared bucket is always on.
+
+**Cross-region caveat:** the shared bucket lives in the global region (default `us-east-2`) where `GCOGlobalStack` is deployed, not the regional cluster's own region. The boto3 client in the example is pointed at `sharedBucketRegion` so requests go to the bucket's home region. Expect small cross-region egress charges on large uploads.
+
+**Prerequisites:** none — `Cluster_Shared_Bucket` is always provisioned with `gco stacks deploy gco-global`.
+
+**Usage:**
+
+```bash
+gco jobs submit-direct examples/cluster-shared-bucket-upload-job.yaml -r us-east-1
+```
+
+**When to use:** Any cluster job that needs a project-wide artifact store — ETL outputs, batch training checkpoints, cron dumps, hand-off to downstream analytics.
 
 ---
 

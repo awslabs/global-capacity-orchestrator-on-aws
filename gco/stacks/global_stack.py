@@ -32,11 +32,17 @@ from aws_cdk import aws_backup as backup
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_events as events
 from aws_cdk import aws_globalaccelerator as ga
+from aws_cdk import aws_iam as iam
+from aws_cdk import aws_kms as kms
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
 from gco.config.config_loader import ConfigLoader
+from gco.stacks.constants import (
+    CLUSTER_SHARED_BUCKET_NAME_PREFIX,
+    CLUSTER_SHARED_SSM_PARAMETER_PREFIX,
+)
 
 
 class GCOGlobalStack(Stack):
@@ -73,6 +79,13 @@ class GCOGlobalStack(Stack):
 
         # Create S3 bucket for model weights
         self._create_model_bucket()
+
+        # Create always-on Cluster_Shared_Bucket + KMS key + SSM parameters.
+        # These run unconditionally (no feature toggle) — they are consumed by
+        # every Regional_Stack and, when analytics is enabled, by GCOAnalyticsStack.
+        self._create_cluster_shared_kms_key()
+        self._create_cluster_shared_bucket()
+        self._publish_cluster_shared_bucket_ssm_params()
 
         # Create AWS Backup plan for DynamoDB tables
         self._create_backup_plan()
@@ -463,7 +476,6 @@ class GCOGlobalStack(Stack):
         It's exported via CfnOutput and SSM for CLI discovery.
         """
         project_name = self.config.get_project_name()
-        from aws_cdk import aws_kms as kms
 
         # KMS key for model bucket encryption
         self.model_bucket_key = kms.Key(
@@ -672,4 +684,315 @@ class GCOGlobalStack(Stack):
             value=self.backup_vault.backup_vault_arn,
             description="AWS Backup vault ARN for DynamoDB backups",
             export_name=f"{project_name}-backup-vault-arn",
+        )
+
+    def _create_cluster_shared_kms_key(self) -> None:
+        """Create the always-on customer-managed KMS key for ``Cluster_Shared_Bucket``.
+
+        The key:
+        - Enables automatic annual rotation.
+        - Uses a 7-day pending window on destroy — the AWS minimum, matching the
+          destroy-by-default iteration-loop posture of the analytics-environment
+          feature while still providing a safety net against accidental deletion.
+        - Uses ``RemovalPolicy.DESTROY`` so a ``cdk destroy gco-global`` cleans up
+          the key without operator intervention (iteration-loop posture).
+        - Grants encrypt/decrypt to the ``s3.amazonaws.com`` and
+          ``logs.<region>.amazonaws.com`` service principals via the key policy
+          so S3 server-side encryption and CloudWatch access-log delivery can use
+          the key without role-side grants.
+
+        The key is exposed as ``self.cluster_shared_kms_key`` for tests and for
+        ``_create_cluster_shared_bucket`` to reference. Role-side usage grants
+        (``kms:Decrypt`` / ``kms:GenerateDataKey``) are attached by downstream
+        consumers: ``GCORegionalStack`` on the job-pod role (always-on)
+        and ``GCOAnalyticsStack`` on the SageMaker execution role (conditional on
+        the analytics toggle).
+        """
+        self.cluster_shared_kms_key = kms.Key(
+            self,
+            "ClusterSharedKmsKey",
+            description=(
+                "Customer-managed KMS key for the always-on Cluster_Shared_Bucket "
+                "in GCOGlobalStack. Consumed by every regional EKS cluster and by "
+                "GCOAnalyticsStack when analytics is enabled."
+            ),
+            enable_key_rotation=True,
+            pending_window=Duration.days(7),
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
+        # Key-policy grants for service principals that need to encrypt/decrypt
+        # on behalf of the bucket (S3 server-side encryption) and the access-logs
+        # bucket (CloudWatch Logs delivery). The actions match the standard
+        # service-principal pattern used by cdk's default key policies.
+        kms_actions = [
+            "kms:Encrypt",
+            "kms:Decrypt",
+            "kms:ReEncrypt*",
+            "kms:GenerateDataKey*",
+            "kms:DescribeKey",
+        ]
+
+        self.cluster_shared_kms_key.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="AllowS3ServiceEncryptDecrypt",
+                effect=iam.Effect.ALLOW,
+                principals=[iam.ServicePrincipal("s3.amazonaws.com")],
+                actions=kms_actions,
+                resources=["*"],
+            )
+        )
+
+        self.cluster_shared_kms_key.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="AllowCloudWatchLogsEncryptDecrypt",
+                effect=iam.Effect.ALLOW,
+                principals=[iam.ServicePrincipal(f"logs.{self.region}.amazonaws.com")],
+                actions=kms_actions,
+                resources=["*"],
+            )
+        )
+
+    def _create_cluster_shared_bucket(self) -> None:
+        """Create the always-on ``Cluster_Shared_Bucket`` and its access-logs bucket.
+
+        Two buckets are created:
+
+        1. ``cluster_shared_access_logs_bucket`` — dedicated S3 access-logs bucket
+           used as ``server_access_logs_bucket`` for the primary bucket. Separate
+           from ``model_bucket_access_logs`` so cluster-shared-bucket access logs
+           are not commingled with model-bucket logs.
+        2. ``cluster_shared_bucket`` — the primary bucket named
+           ``gco-cluster-shared-<account>-<global-region>`` (the prefix
+           ``CLUSTER_SHARED_BUCKET_NAME_PREFIX`` is the stable ARN prefix used by
+           IAM policies and nag assertions). KMS-encrypted with
+           ``cluster_shared_kms_key``, block-public-access on, SSL enforced,
+           versioned, destroy-on-teardown.
+
+        An explicit ``Deny`` statement for ``aws:SecureTransport=false`` is added
+        to the bucket policy independent of ``enforce_ssl=True`` so the deny is
+        verifiable in the synthesized template (belt-and-suspenders).
+
+        Grants on ``Cluster_Shared_Bucket`` are intentionally not added here —
+        they live on downstream role policies (``GCORegionalStack`` on the
+        job-pod role, ``GCOAnalyticsStack`` on the SageMaker execution role)
+        rather than in this bucket's policy. The bucket policy contains zero
+        ``Principal: "*"`` Allow statements.
+        """
+        # Retention for the access-logs bucket honors the same `s3_access_logs`
+        # context field as the model-bucket access-logs bucket (default 90 days).
+        s3_access_logs_ctx = self.node.try_get_context("s3_access_logs") or {}
+        access_logs_retention_days = int(s3_access_logs_ctx.get("retention_days", 90))
+
+        # Dedicated access-logs bucket for Cluster_Shared_Bucket. Encrypted with
+        # the cluster-shared KMS key (the key policy grants the logs service
+        # principal encrypt/decrypt). Kept separate from model_bucket_access_logs
+        # so operators can reason about each bucket's logs independently. Matches
+        # the LifecycleRule used on `model_bucket_access_logs` so retention is
+        # consistent across the two log sinks.
+        self.cluster_shared_access_logs_bucket = s3.Bucket(
+            self,
+            "ClusterSharedAccessLogsBucket",
+            encryption=s3.BucketEncryption.KMS,
+            encryption_key=self.cluster_shared_kms_key,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            enforce_ssl=True,
+            versioned=True,
+            removal_policy=RemovalPolicy.DESTROY,
+            auto_delete_objects=True,
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    id="ExpireAccessLogs",
+                    enabled=True,
+                    expiration=Duration.days(access_logs_retention_days),
+                )
+            ],
+        )
+
+        # Primary Cluster_Shared_Bucket. Name uses the constant prefix so
+        # the IAM allow-list assertion (arn:aws:s3:::gco-cluster-shared-*)
+        # stays stable across refactors. `bucket_key_enabled=True` mirrors the
+        # model_bucket pattern to reduce per-object KMS request costs.
+        self.cluster_shared_bucket = s3.Bucket(
+            self,
+            "ClusterSharedBucket",
+            bucket_name=f"{CLUSTER_SHARED_BUCKET_NAME_PREFIX}-{self.account}-{self.region}",
+            encryption=s3.BucketEncryption.KMS,
+            encryption_key=self.cluster_shared_kms_key,
+            bucket_key_enabled=True,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            enforce_ssl=True,
+            versioned=True,
+            removal_policy=RemovalPolicy.DESTROY,
+            auto_delete_objects=True,
+            server_access_logs_bucket=self.cluster_shared_access_logs_bucket,
+            server_access_logs_prefix="cluster-shared/",
+        )
+
+        # Explicit Deny for insecure transport. `enforce_ssl=True` already adds
+        # an equivalent statement, but duplicating it here makes the deny
+        # verifiable in the synthesized template under a known SID and satisfies
+        # a belt-and-suspenders posture.
+        self.cluster_shared_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="DenyInsecureTransport",
+                effect=iam.Effect.DENY,
+                principals=[iam.AnyPrincipal()],
+                actions=["s3:*"],
+                resources=[
+                    self.cluster_shared_bucket.bucket_arn,
+                    f"{self.cluster_shared_bucket.bucket_arn}/*",
+                ],
+                conditions={"Bool": {"aws:SecureTransport": "false"}},
+            )
+        )
+
+        # CDK-nag suppressions — scoped per-resource at the construct site to
+        # mirror the ``_create_model_bucket`` pattern (keeps the suppression
+        # co-located with the construct it applies to, so the reason survives
+        # refactors). Every suppression carries an explicit reason
+        # string; no blanket ``Resource::*`` bypasses.
+        from cdk_nag import NagSuppressions
+
+        shared_replication_reason = (
+            "Cluster_Shared_Bucket is a regional scratch sink; cluster jobs "
+            "publish to it from a single region, and there is no durability "
+            "requirement that warrants cross-region replication. Access logs "
+            "do not require replication for the same reason."
+        )
+
+        NagSuppressions.add_resource_suppressions(
+            self.cluster_shared_bucket,
+            [
+                {
+                    "id": "HIPAA.Security-S3BucketReplicationEnabled",
+                    "reason": shared_replication_reason,
+                },
+                {
+                    "id": "NIST.800.53.R5-S3BucketReplicationEnabled",
+                    "reason": shared_replication_reason,
+                },
+                {
+                    "id": "PCI.DSS.321-S3BucketReplicationEnabled",
+                    "reason": shared_replication_reason,
+                },
+            ],
+        )
+
+        access_logs_is_self_target_reason = (
+            "This is the server access logs destination bucket for " "Cluster_Shared_Bucket."
+        )
+        NagSuppressions.add_resource_suppressions(
+            self.cluster_shared_access_logs_bucket,
+            [
+                {
+                    "id": "AwsSolutions-S1",
+                    "reason": access_logs_is_self_target_reason,
+                },
+                {
+                    "id": "HIPAA.Security-S3BucketLoggingEnabled",
+                    "reason": access_logs_is_self_target_reason,
+                },
+                {
+                    "id": "NIST.800.53.R5-S3BucketLoggingEnabled",
+                    "reason": access_logs_is_self_target_reason,
+                },
+                {
+                    "id": "PCI.DSS.321-S3BucketLoggingEnabled",
+                    "reason": access_logs_is_self_target_reason,
+                },
+                {
+                    "id": "HIPAA.Security-S3BucketReplicationEnabled",
+                    "reason": shared_replication_reason,
+                },
+                {
+                    "id": "NIST.800.53.R5-S3BucketReplicationEnabled",
+                    "reason": shared_replication_reason,
+                },
+                {
+                    "id": "PCI.DSS.321-S3BucketReplicationEnabled",
+                    "reason": shared_replication_reason,
+                },
+            ],
+        )
+
+    def _publish_cluster_shared_bucket_ssm_params(self) -> None:
+        """Publish the three ``/gco/cluster-shared-bucket/*`` SSM parameters.
+
+        Writes:
+
+        - ``/gco/cluster-shared-bucket/name`` — bucket name
+        - ``/gco/cluster-shared-bucket/arn`` — bucket ARN
+        - ``/gco/cluster-shared-bucket/region`` — bucket home region (global region)
+
+        These parameters are the cross-region contract consumed by
+        ``GCORegionalStack._resolve_cluster_shared_bucket_from_ssm`` (always) and by
+        ``GCOAnalyticsStack._grant_sagemaker_role_on_cluster_shared_bucket``
+        (conditional on the analytics toggle). The prefix
+        ``CLUSTER_SHARED_SSM_PARAMETER_PREFIX`` is the single source of truth so
+        the namespace can be renamed in exactly one place if needed.
+
+        Also emits four ``CfnOutput`` values for discoverability: the three SSM
+        values plus the KMS key ARN. Export names follow the existing
+        ``{project_name}-cluster-shared-{suffix}`` pattern used by the rest of
+        this stack's outputs so operators can cross-reference them from peer
+        stacks via ``Fn.import_value`` if needed (the primary cross-region
+        contract remains SSM).
+        """
+        project_name = self.config.get_project_name()
+
+        ssm.StringParameter(
+            self,
+            "ClusterSharedBucketNameParam",
+            parameter_name=f"{CLUSTER_SHARED_SSM_PARAMETER_PREFIX}/name",
+            string_value=self.cluster_shared_bucket.bucket_name,
+            description="Name of the always-on Cluster_Shared_Bucket (owned by GCOGlobalStack).",
+        )
+
+        ssm.StringParameter(
+            self,
+            "ClusterSharedBucketArnParam",
+            parameter_name=f"{CLUSTER_SHARED_SSM_PARAMETER_PREFIX}/arn",
+            string_value=self.cluster_shared_bucket.bucket_arn,
+            description="ARN of the always-on Cluster_Shared_Bucket (owned by GCOGlobalStack).",
+        )
+
+        ssm.StringParameter(
+            self,
+            "ClusterSharedBucketRegionParam",
+            parameter_name=f"{CLUSTER_SHARED_SSM_PARAMETER_PREFIX}/region",
+            string_value=self.region,
+            description="Home region of the always-on Cluster_Shared_Bucket (the global region).",
+        )
+
+        CfnOutput(
+            self,
+            "ClusterSharedBucketName",
+            value=self.cluster_shared_bucket.bucket_name,
+            description="Name of the always-on Cluster_Shared_Bucket.",
+            export_name=f"{project_name}-cluster-shared-bucket-name",
+        )
+
+        CfnOutput(
+            self,
+            "ClusterSharedBucketArn",
+            value=self.cluster_shared_bucket.bucket_arn,
+            description="ARN of the always-on Cluster_Shared_Bucket.",
+            export_name=f"{project_name}-cluster-shared-bucket-arn",
+        )
+
+        CfnOutput(
+            self,
+            "ClusterSharedBucketRegion",
+            value=self.region,
+            description="Home region of the always-on Cluster_Shared_Bucket.",
+            export_name=f"{project_name}-cluster-shared-bucket-region",
+        )
+
+        CfnOutput(
+            self,
+            "ClusterSharedKmsKeyArn",
+            value=self.cluster_shared_kms_key.key_arn,
+            description="ARN of the always-on KMS key encrypting Cluster_Shared_Bucket.",
+            export_name=f"{project_name}-cluster-shared-kms-key-arn",
         )

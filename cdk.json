@@ -112,6 +112,22 @@
       "backup_retention_days": 7,
       "deletion_protection": false
     },
+    "analytics_environment": {
+      "enabled": false,
+      "hyperpod": {
+        "enabled": false
+      },
+      "cognito": {
+        "domain_prefix": null,
+        "removal_policy": "destroy"
+      },
+      "efs": {
+        "removal_policy": "destroy"
+      },
+      "studio": {
+        "user_profile_name_prefix": null
+      }
+    },
     "helm": {
       "keda": { "enabled": true },
       "nvidia_gpu_operator": { "enabled": true },

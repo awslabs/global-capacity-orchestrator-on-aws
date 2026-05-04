@@ -12,6 +12,10 @@
 #   - Helm chart versions from charts.yaml
 #   - EKS add-on versions from gco/stacks/regional_stack.py (requires AWS creds
 #     via OIDC; falls back gracefully when no creds are configured)
+#   - Aurora PostgreSQL engine versions (AWS creds via OIDC)
+#   - EMR Serverless release labels (AWS creds via OIDC)
+#   - Dockerfile.dev ARG pins (NODE_MAJOR, CDK_VERSION, KUBECTL_VERSION,
+#     AWSCLI_VERSION, DOCKER_VERSION) — public endpoints, no AWS creds needed
 #
 # If any are outdated, opens a GitHub issue with the details. Uses the
 # built-in GITHUB_TOKEN with `issues: write` — no long-lived PAT needed.
