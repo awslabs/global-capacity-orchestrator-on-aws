@@ -456,6 +456,7 @@ class GCOAnalyticsStack(Stack):
                     "sagemaker:DeleteSpace",
                     "sagemaker:UpdateSpace",
                     "sagemaker:ListTags",
+                    "sagemaker:AddTags",
                 ],
                 resources=[
                     f"arn:aws:sagemaker:{self.region}:{self.account}:domain/*",
