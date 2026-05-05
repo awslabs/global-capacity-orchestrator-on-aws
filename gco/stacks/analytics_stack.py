@@ -340,9 +340,9 @@ class GCOAnalyticsStack(Stack):
         )
 
         # SageMaker calls DescribeMountTargets during user-profile
-        # provisioning to validate the EFS mount configuration. Without
-        # this resource policy the profile enters Failed state with a
-        # PermissionError even though the IAM role has the action on *.
+        # provisioning to validate the EFS mount configuration. These are
+        # control-plane API calls (not data-plane via mount target), so
+        # they must NOT have the AccessedViaMountTarget condition.
         self.studio_efs.add_to_resource_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -351,9 +351,6 @@ class GCOAnalyticsStack(Stack):
                     "elasticfilesystem:DescribeMountTargets",
                     "elasticfilesystem:DescribeFileSystems",
                 ],
-                conditions={
-                    "Bool": {"elasticfilesystem:AccessedViaMountTarget": "true"},
-                },
             )
         )
 
