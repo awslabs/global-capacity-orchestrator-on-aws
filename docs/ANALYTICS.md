@@ -16,6 +16,13 @@ bucket's reference.
 
 ## Table of Contents
 
+> **Region placeholders.** The examples throughout this guide use
+> `us-east-1` for regional clusters and `us-east-2` for the global /
+> API-gateway region. Substitute your own regions wherever they appear
+> — check `deployment_regions.regional` and
+> `deployment_regions.api_gateway` in your `cdk.json` for the values
+> that match your deployment.
+
 - [Cost](#cost)
 - [Default image](#default-image)
 - [(a) What the analytics environment provisions](#a-what-the-analytics-environment-provisions)
@@ -401,7 +408,8 @@ and kernel switches**. You install it once, and every subsequent
 session has `gco` on the `PATH`.
 
 Point the CLI at your deployment. Add these to `~/.bashrc` so they
-survive terminal restarts:
+survive terminal restarts (replace the region values with your own —
+see the note at the top of this guide):
 
 ```bash
 cat >> ~/.bashrc <<'BASHRC_EOF'
@@ -460,7 +468,8 @@ Restart Amazon Q from inside Studio to pick up the new server.
 
 With the CLI installed and env vars exported per section (e), every
 `gco` command works from a JupyterLab terminal or from a notebook
-cell via `!` shell-out.
+cell via `!` shell-out. Replace `-r us-east-1` with your regional
+cluster region in the examples below.
 
 Submit a job directly to a cluster:
 
