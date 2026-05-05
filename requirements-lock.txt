@@ -18,7 +18,7 @@ anyio==4.13.0
     #   sse-starlette
     #   starlette
     #   watchfiles
-attrs==26.1.0
+attrs==25.4.0
     # via
     #   cattrs
     #   cyclopts
@@ -58,7 +58,7 @@ black==26.3.1
     # via
     #   gco-cli
     #   gco-cli (pyproject.toml)
-boto3==1.43.3
+boto3==1.43.1
     # via
     #   gco-cli
     #   gco-cli (pyproject.toml)
@@ -74,7 +74,7 @@ cachetools==7.0.6
     # via py-key-value-aio
 caio==0.9.25
     # via aiofile
-cattrs==26.1.0
+cattrs==25.3.0
     # via jsii
 cdk-nag==2.37.55
     # via
@@ -489,7 +489,7 @@ starlette==1.0.0
     #   sse-starlette
 stevedore==5.7.0
     # via bandit
-typeguard==4.5.1
+typeguard==2.13.3
     # via
     #   aws-cdk-asset-awscli-v1
     #   aws-cdk-asset-node-proxy-agent-v6
