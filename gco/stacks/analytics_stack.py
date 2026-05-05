@@ -771,6 +771,7 @@ class GCOAnalyticsStack(Stack):
         # scoping (the domain ID and EFS ID are passed via env vars, not ARNs).
         from cdk_nag import NagSuppressions
 
+        assert cleanup_fn.role is not None  # always set for non-imported functions
         NagSuppressions.add_resource_suppressions(
             cleanup_fn.role,
             [
@@ -808,7 +809,10 @@ class GCOAnalyticsStack(Stack):
                         "CDK Provider framework uses Resource::* for its "
                         "internal Lambda invocation policy."
                     ),
-                    "appliesTo": ["Resource::*"],
+                    "appliesTo": [
+                        "Resource::*",
+                        {"regex": "/^Resource::<CleanupFunction.*\\.Arn>:\\*$/"},
+                    ],
                 },
                 {
                     "id": "AwsSolutions-IAM4",

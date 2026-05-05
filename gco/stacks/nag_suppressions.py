@@ -986,19 +986,10 @@ def add_cognito_suppressions(stack: Stack) -> None:
 def add_analytics_vpc_suppressions(stack: Stack) -> None:
     """Add suppressions for the analytics VPC and its endpoints.
 
-    The analytics VPC is private-isolated (no IGW, no NAT) and hosts only
-    the SageMaker Studio domain, EFS mount targets, and VPC interface/
-    gateway endpoints. Findings on this VPC and its interface-endpoint
-    security groups relate to patterns that don't apply here:
-
-    - ``VPCFlowLogsEnabled`` — the private-isolated VPC has no external
-      egress by construction. Flow logs capture intra-VPC traffic (EFS,
-      Studio, endpoint) that is already inspectable via the service-
-      specific CloudTrail data events.
-    - ``CdkNagValidationFailure`` on VPC interface-endpoint security
-      groups — cdk-nag cannot resolve the VPC CIDR block at synth time
-      because it's an ``Fn::GetAtt`` token; the security group rule is
-      scoped to the VPC CIDR, which is the tightest possible scope.
+    The analytics VPC uses private subnets with NAT egress for notebook
+    internet access (pip install, git clone) plus a small public subnet
+    that hosts only the NAT gateway ENI. Findings on the public subnet
+    and IGW route are expected — no compute runs there.
     """
     NagSuppressions.add_stack_suppressions(
         stack,
@@ -1065,6 +1056,54 @@ def add_analytics_vpc_suppressions(stack: Stack) -> None:
                     "validate the rule; the rule itself is scoped to the "
                     "VPC CIDR, which is the tightest possible source for "
                     "intra-VPC endpoint traffic."
+                ),
+            ),
+            # Public subnet findings — the NAT gateway requires a public
+            # subnet with an IGW route. No compute runs in the public
+            # subnet; it only hosts the NAT gateway's ENI.
+            NagPackSuppression(
+                id="HIPAA.Security-VPCSubnetAutoAssignPublicIpDisabled",
+                reason=(
+                    "The public subnet exists solely to host the NAT "
+                    "gateway ENI for notebook internet egress (pip install, "
+                    "git clone). No EC2 instances or Studio compute runs "
+                    "in this subnet."
+                ),
+            ),
+            NagPackSuppression(
+                id="NIST.800.53.R5-VPCSubnetAutoAssignPublicIpDisabled",
+                reason=(
+                    "The public subnet exists solely to host the NAT "
+                    "gateway ENI. No compute workloads run here."
+                ),
+            ),
+            NagPackSuppression(
+                id="PCI.DSS.321-VPCSubnetAutoAssignPublicIpDisabled",
+                reason=(
+                    "The public subnet exists solely to host the NAT "
+                    "gateway ENI. No compute workloads run here."
+                ),
+            ),
+            NagPackSuppression(
+                id="HIPAA.Security-VPCNoUnrestrictedRouteToIGW",
+                reason=(
+                    "The 0.0.0.0/0 route to the IGW is in the public "
+                    "subnet's route table, which only hosts the NAT "
+                    "gateway. Private subnets route through NAT, not IGW."
+                ),
+            ),
+            NagPackSuppression(
+                id="NIST.800.53.R5-VPCNoUnrestrictedRouteToIGW",
+                reason=(
+                    "The 0.0.0.0/0 route to the IGW is in the public "
+                    "subnet's route table for NAT gateway egress only."
+                ),
+            ),
+            NagPackSuppression(
+                id="PCI.DSS.321-VPCNoUnrestrictedRouteToIGW",
+                reason=(
+                    "The 0.0.0.0/0 route to the IGW is in the public "
+                    "subnet's route table for NAT gateway egress only."
                 ),
             ),
         ],
