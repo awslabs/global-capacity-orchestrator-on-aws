@@ -317,17 +317,17 @@ class TestAnalyticsVpc:
         template = _synth_analytics()
         template.resource_count_is("AWS::EC2::VPC", 1)
 
-    def test_vpc_has_no_internet_gateway(self) -> None:
-        """Private-isolated subnets only, no public subnets, so no
-        internet gateway is attached.
+    def test_vpc_has_internet_gateway_for_nat(self) -> None:
+        """Private-with-egress subnets require a NAT gateway which needs
+        an internet gateway in the public subnet.
         """
         template = _synth_analytics()
-        template.resource_count_is("AWS::EC2::InternetGateway", 0)
+        template.resource_count_is("AWS::EC2::InternetGateway", 1)
 
-    def test_vpc_has_no_nat_gateway(self) -> None:
-        """No NAT gateways in a private-isolated VPC."""
+    def test_vpc_has_one_nat_gateway(self) -> None:
+        """Single NAT gateway for internet egress (pip install, git clone)."""
         template = _synth_analytics()
-        template.resource_count_is("AWS::EC2::NatGateway", 0)
+        template.resource_count_is("AWS::EC2::NatGateway", 1)
 
     def test_vpc_has_two_subnets_across_two_azs(self) -> None:
         """At least two subnets across at least two availability
@@ -1023,7 +1023,7 @@ class TestEmrServerlessApp:
 
     def test_emr_app_network_config_uses_private_subnets(self) -> None:
         """``NetworkConfiguration.SubnetIds`` references at least one
-        ``PRIVATE_ISOLATED`` subnet from the analytics VPC via ``Ref``."""
+        private subnet from the analytics VPC via ``Ref``."""
         template = _synth_analytics()
         apps = template.find_resources("AWS::EMRServerless::Application")
         assert len(apps) == 1
@@ -1036,25 +1036,28 @@ class TestEmrServerlessApp:
         ), f"expected NetworkConfiguration.SubnetIds on the EMR app, got {network!r}"
 
         # Collect every subnet Ref and verify it resolves to one of the
-        # private-isolated subnets.
+        # private subnets (Private or Isolated).
         all_subnets = template.find_resources("AWS::EC2::Subnet")
-        private_isolated_lids: set[str] = set()
+        private_lids: set[str] = set()
         for lid, res in all_subnets.items():
             tags = res["Properties"].get("Tags") or []
             for tag in tags:
-                if tag.get("Key") == "aws-cdk:subnet-type" and tag.get("Value") == "Isolated":
-                    private_isolated_lids.add(lid)
+                if tag.get("Key") == "aws-cdk:subnet-type" and tag.get("Value") in (
+                    "Isolated",
+                    "Private",
+                ):
+                    private_lids.add(lid)
                     break
-        assert private_isolated_lids, (
-            "expected at least one private-isolated subnet in the template; "
+        assert private_lids, (
+            "expected at least one private subnet in the template; "
             f"all subnets={list(all_subnets)!r}"
         )
 
         referenced_lids = {
             ref["Ref"] for ref in subnet_refs if isinstance(ref, dict) and "Ref" in ref
         }
-        assert referenced_lids & private_isolated_lids, (
+        assert referenced_lids & private_lids, (
             f"expected EMR NetworkConfiguration.SubnetIds to reference at "
-            f"least one private-isolated subnet; got "
-            f"refs={referenced_lids!r}, private_isolated={private_isolated_lids!r}"
+            f"least one private subnet; got "
+            f"refs={referenced_lids!r}, private={private_lids!r}"
         )

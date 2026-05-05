@@ -7,7 +7,7 @@ When the toggle is ``false`` (the default), ``app.py`` skips creating it so
 Resources (wired in this order):
 
 1. ``_create_kms_key``                                    — ``Analytics_KMS_Key``
-2. ``_create_vpc_and_endpoints``                          — private-isolated VPC + endpoints
+2. ``_create_vpc_and_endpoints``                          — private VPC + endpoints
 3. ``_create_access_logs_bucket``                         — S3 access-logs bucket
 4. ``_create_studio_only_bucket``                         — ``Studio_Only_Bucket``
 5. ``_create_studio_efs``                                 — ``Studio_EFS``
@@ -168,24 +168,30 @@ class GCOAnalyticsStack(Stack):
             )
 
     def _create_vpc_and_endpoints(self) -> None:
-        """Create a private-isolated VPC plus every VPC endpoint Studio needs.
+        """Create a private VPC plus every VPC endpoint Studio needs.
 
         Notebooks never land on public subnets (the VPC has none).
         The nine interface endpoints plus the S3 gateway endpoint
-        keep all Studio/EMR/EFS traffic on the private-isolated network
-        without NAT.
+        keep all Studio/EMR/EFS traffic on the private network. A NAT
+        gateway provides internet egress so notebooks can pip install,
+        git clone, and access external APIs (HuggingFace, PyPI, etc.).
         """
         self.vpc = ec2.Vpc(
             self,
             "AnalyticsVpc",
             max_azs=2,
-            nat_gateways=0,
+            nat_gateways=1,
             subnet_configuration=[
                 ec2.SubnetConfiguration(
-                    name="AnalyticsPrivateIsolated",
-                    subnet_type=ec2.SubnetType.PRIVATE_ISOLATED,
+                    name="AnalyticsPrivate",
+                    subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS,
                     cidr_mask=24,
-                )
+                ),
+                ec2.SubnetConfiguration(
+                    name="AnalyticsPublic",
+                    subnet_type=ec2.SubnetType.PUBLIC,
+                    cidr_mask=28,
+                ),
             ],
         )
 
@@ -196,7 +202,7 @@ class GCOAnalyticsStack(Stack):
         )
 
         # Interface endpoints — one per AWS service required by Studio. Each
-        # lands in the VPC's private-isolated subnets using the default
+        # lands in the VPC's private subnets using the default
         # VPC-endpoint security group.
         interface_services: dict[str, ec2.InterfaceVpcEndpointAwsService] = {
             "SagemakerApiEndpoint": ec2.InterfaceVpcEndpointAwsService.SAGEMAKER_API,
@@ -213,7 +219,7 @@ class GCOAnalyticsStack(Stack):
             self.vpc.add_interface_endpoint(
                 construct_id,
                 service=service,
-                subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
+                subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
             )
 
     # ==================================================================
@@ -304,7 +310,7 @@ class GCOAnalyticsStack(Stack):
         here, so the file system's ``/`` root is effectively inaccessible
         until the Lambda materializes a per-user AP.
 
-        The dedicated security group only allows the VPC's private-isolated
+        The dedicated security group only allows the VPC's private
         CIDR on TCP/2049 (NFS). SageMaker Studio mount traffic originates
         from the Studio compute subnet, which shares the VPC with this EFS.
         """
@@ -318,14 +324,14 @@ class GCOAnalyticsStack(Stack):
         self.studio_efs_security_group.add_ingress_rule(
             peer=ec2.Peer.ipv4(self.vpc.vpc_cidr_block),
             connection=ec2.Port.tcp(2049),
-            description="NFS from analytics VPC private-isolated subnets",
+            description="NFS from analytics VPC private subnets",
         )
 
         self.studio_efs = efs.FileSystem(
             self,
             "StudioEfs",
             vpc=self.vpc,
-            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
             encrypted=True,
             kms_key=self.kms_key,
             enable_automatic_backups=True,
@@ -375,6 +381,15 @@ class GCOAnalyticsStack(Stack):
         # IAM-side authorization per the double-auth model.
         self.studio_only_bucket.grant_read_write(self.sagemaker_execution_role)
         self.kms_key.grant_encrypt_decrypt(self.sagemaker_execution_role)
+
+        # SageMaker needs CreateGrant on the KMS key to delegate encryption
+        # to EBS when creating space volumes. The grant is scoped to the
+        # key and conditioned on the grantee being an AWS service.
+        self.kms_key.grant(
+            self.sagemaker_execution_role,
+            "kms:CreateGrant",
+            "kms:DescribeKey",
+        )
 
         # Read-only GCO API scope: every GET route under /api/v1/*. The
         # exact API id is not known here (it lives in the api-gateway stack
@@ -646,7 +661,7 @@ class GCOAnalyticsStack(Stack):
         """Create the SageMaker Studio domain bound to the private VPC.
 
         ``auth_mode=IAM`` + ``app_network_access_type=VpcOnly`` keeps Studio
-        traffic on the private-isolated subnets.
+        traffic on the private subnets.
         ``DefaultUserSettings.ExecutionRole`` points at the role created in
         :meth:`_create_execution_role_and_grants`. ``CustomImages`` is
         intentionally left unset so Studio falls back to the stock AWS-
@@ -658,7 +673,7 @@ class GCOAnalyticsStack(Stack):
         creates lazily on first login.
         """
         private_subnets = self.vpc.select_subnets(
-            subnet_type=ec2.SubnetType.PRIVATE_ISOLATED
+            subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
         ).subnets
 
         efs_fs_config = sagemaker.CfnDomain.EFSFileSystemConfigProperty(
@@ -702,6 +717,51 @@ class GCOAnalyticsStack(Stack):
             description="Name of the SageMaker Studio domain",
         )
 
+        # Cleanup custom resource — on stack deletion, removes all user
+        # profiles from the domain and all access points from the EFS so
+        # CloudFormation can delete the domain and file system cleanly.
+        from aws_cdk import CustomResource
+        from aws_cdk import custom_resources as cr_provider
+
+        cleanup_fn = lambda_.Function(
+            self,
+            "CleanupFunction",
+            runtime=getattr(lambda_.Runtime, LAMBDA_PYTHON_RUNTIME),
+            handler="handler.handler",
+            code=lambda_.Code.from_asset("lambda/analytics-cleanup"),
+            timeout=Duration.minutes(5),
+            environment={
+                "DOMAIN_ID": self.studio_domain.attr_domain_id,
+                "EFS_ID": self.studio_efs.file_system_id,
+                "REGION": self.region,
+            },
+        )
+
+        cleanup_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "sagemaker:ListUserProfiles",
+                    "sagemaker:DeleteUserProfile",
+                    "efs:DescribeAccessPoints",
+                    "efs:DeleteAccessPoint",
+                ],
+                resources=["*"],
+            )
+        )
+
+        cleanup_provider = cr_provider.Provider(
+            self,
+            "CleanupProvider",
+            on_event_handler=cleanup_fn,
+        )
+
+        CustomResource(
+            self,
+            "DomainCleanup",
+            service_token=cleanup_provider.service_token,
+        )
+
     # ==================================================================
     # EMR Serverless application
     # ==================================================================
@@ -712,13 +772,13 @@ class GCOAnalyticsStack(Stack):
         Pinned ``release_label`` lives in
         ``gco.stacks.constants.EMR_SERVERLESS_RELEASE_LABEL`` so analytics
         workloads get a reproducible Spark runtime across deployments. The
-        application's network configuration uses the private-isolated
+        application's network configuration uses the private
         subnets + a dedicated security group so Spark workers stay on the
         same network perimeter as the Studio notebooks.
         """
         private_subnet_ids = [
             s.subnet_id
-            for s in self.vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED).subnets
+            for s in self.vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS).subnets
         ]
 
         self.emr_security_group = ec2.SecurityGroup(

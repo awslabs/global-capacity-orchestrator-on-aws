@@ -77,6 +77,12 @@ by `gco stacks destroy gco-analytics`. The analytics resources are all
 orphaned retained resources (see section (l) for the opt-in retain
 override on `Studio_EFS`).
 
+A cleanup Lambda (`lambda/analytics-cleanup/`) runs automatically as a
+CloudFormation custom resource during stack deletion. It removes all
+SageMaker user profiles and EFS access points that were created at
+runtime by the presigned-URL Lambda — resources CloudFormation doesn't
+know about because they weren't in the original template.
+
 ## Default image
 
 The Studio domain uses the **stock AWS-published SageMaker

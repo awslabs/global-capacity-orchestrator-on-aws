@@ -322,6 +322,53 @@ CONFIGS.extend(
                 }
             },
         ),
+        (
+            "analytics-efs-retain",
+            {
+                "analytics_environment": {
+                    "enabled": True,
+                    "hyperpod": {"enabled": False},
+                    "efs": {"removal_policy": "retain"},
+                    "cognito": {"removal_policy": "destroy"},
+                }
+            },
+        ),
+        (
+            "analytics-cognito-retain",
+            {
+                "analytics_environment": {
+                    "enabled": True,
+                    "hyperpod": {"enabled": False},
+                    "efs": {"removal_policy": "destroy"},
+                    "cognito": {"removal_policy": "retain"},
+                }
+            },
+        ),
+        (
+            "analytics-custom-domain-prefix",
+            {
+                "analytics_environment": {
+                    "enabled": True,
+                    "hyperpod": {"enabled": False},
+                    "cognito": {
+                        "removal_policy": "destroy",
+                        "domain_prefix": "my-custom-studio",
+                    },
+                    "efs": {"removal_policy": "destroy"},
+                }
+            },
+        ),
+        (
+            "analytics-all-retain",
+            {
+                "analytics_environment": {
+                    "enabled": True,
+                    "hyperpod": {"enabled": True},
+                    "efs": {"removal_policy": "retain"},
+                    "cognito": {"removal_policy": "retain"},
+                }
+            },
+        ),
     ]
 )
 
