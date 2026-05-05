@@ -40,6 +40,12 @@ def handler(event: dict, context: object) -> dict:
 
     errors: list[str] = []
 
+    # Delete all apps (must be deleted before spaces/profiles)
+    errors.extend(_delete_apps(region, domain_id))
+
+    # Delete all spaces
+    errors.extend(_delete_spaces(region, domain_id))
+
     # Delete all user profiles from the domain
     errors.extend(_delete_user_profiles(region, domain_id))
 
@@ -58,6 +64,86 @@ def handler(event: dict, context: object) -> dict:
     # Always return SUCCESS so CloudFormation can proceed with deletion.
     # Failing here would block the entire stack destroy.
     return {"Status": "SUCCESS", "PhysicalResourceId": physical_id}
+
+
+def _delete_apps(region: str, domain_id: str) -> list[str]:
+    """Delete all apps in the domain. Apps must be deleted before spaces/profiles."""
+    errors: list[str] = []
+    sm = boto3.client("sagemaker", region_name=region)
+
+    try:
+        paginator = sm.get_paginator("list_apps")
+        for page in paginator.paginate(DomainIdEquals=domain_id):
+            for app in page.get("Apps", []):
+                if app.get("Status") in ("Deleted", "Failed"):
+                    continue
+                app_name = app["AppName"]
+                app_type = app["AppType"]
+                space_name = app.get("SpaceName")
+                user_profile = app.get("UserProfileName")
+                try:
+                    kwargs = {
+                        "DomainId": domain_id,
+                        "AppType": app_type,
+                        "AppName": app_name,
+                    }
+                    if space_name:
+                        kwargs["SpaceName"] = space_name
+                    if user_profile:
+                        kwargs["UserProfileName"] = user_profile
+                    sm.delete_app(**kwargs)
+                    logger.info("Deleted app: %s (%s)", app_name, app_type)
+                except ClientError as e:
+                    if "does not exist" not in str(e):
+                        msg = f"Failed to delete app {app_name}: {e}"
+                        logger.error(msg)
+                        errors.append(msg)
+
+        # Wait for apps to finish deleting (up to 2 minutes)
+        for _ in range(24):
+            time.sleep(5)
+            active = []
+            for page in paginator.paginate(DomainIdEquals=domain_id):
+                for app in page.get("Apps", []):
+                    if app.get("Status") not in ("Deleted", "Failed"):
+                        active.append(app["AppName"])
+            if not active:
+                break
+            logger.info("Waiting for %d app(s) to delete...", len(active))
+
+    except ClientError as e:
+        msg = f"Failed to list apps: {e}"
+        logger.error(msg)
+        errors.append(msg)
+
+    return errors
+
+
+def _delete_spaces(region: str, domain_id: str) -> list[str]:
+    """Delete all spaces in the domain. Spaces must be deleted before profiles."""
+    errors: list[str] = []
+    sm = boto3.client("sagemaker", region_name=region)
+
+    try:
+        paginator = sm.get_paginator("list_spaces")
+        for page in paginator.paginate(DomainIdEquals=domain_id):
+            for space in page.get("Spaces", []):
+                space_name = space["SpaceName"]
+                try:
+                    sm.delete_space(DomainId=domain_id, SpaceName=space_name)
+                    logger.info("Deleted space: %s", space_name)
+                    time.sleep(1)
+                except ClientError as e:
+                    if "does not exist" not in str(e):
+                        msg = f"Failed to delete space {space_name}: {e}"
+                        logger.error(msg)
+                        errors.append(msg)
+    except ClientError as e:
+        msg = f"Failed to list spaces: {e}"
+        logger.error(msg)
+        errors.append(msg)
+
+    return errors
 
 
 def _delete_user_profiles(region: str, domain_id: str) -> list[str]:

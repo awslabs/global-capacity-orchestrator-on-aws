@@ -742,6 +742,10 @@ class GCOAnalyticsStack(Stack):
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
                 actions=[
+                    "sagemaker:ListApps",
+                    "sagemaker:DeleteApp",
+                    "sagemaker:ListSpaces",
+                    "sagemaker:DeleteSpace",
                     "sagemaker:ListUserProfiles",
                     "sagemaker:DeleteUserProfile",
                     "efs:DescribeAccessPoints",

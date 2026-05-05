@@ -43,6 +43,7 @@ _ENV = {
     "DOMAIN_ID": "d-test123",
     "EFS_ID": "fs-abc123",
     "REGION": "us-east-2",
+    "VPC_ID": "vpc-test123",
 }
 
 
@@ -66,17 +67,29 @@ class TestHandler:
         result = handler({"RequestType": "Update"}, None)
         assert result["Status"] == "SUCCESS"
 
+    @patch("analytics_cleanup_handler._delete_sagemaker_security_groups", return_value=[])
     @patch("analytics_cleanup_handler._delete_access_points", return_value=[])
     @patch("analytics_cleanup_handler._delete_user_profiles", return_value=[])
-    def test_delete_event_calls_cleanup(self, mock_profiles, mock_aps):
+    @patch("analytics_cleanup_handler._delete_spaces", return_value=[])
+    @patch("analytics_cleanup_handler._delete_apps", return_value=[])
+    def test_delete_event_calls_cleanup(
+        self, mock_apps, mock_spaces, mock_profiles, mock_aps, mock_sgs
+    ):
         result = handler({"RequestType": "Delete"}, None)
         assert result["Status"] == "SUCCESS"
+        mock_apps.assert_called_once_with("us-east-2", "d-test123")
+        mock_spaces.assert_called_once_with("us-east-2", "d-test123")
         mock_profiles.assert_called_once_with("us-east-2", "d-test123")
         mock_aps.assert_called_once_with("us-east-2", "fs-abc123")
 
+    @patch("analytics_cleanup_handler._delete_sagemaker_security_groups", return_value=["err0"])
     @patch("analytics_cleanup_handler._delete_access_points", return_value=["err1"])
     @patch("analytics_cleanup_handler._delete_user_profiles", return_value=["err2"])
-    def test_delete_returns_success_even_on_errors(self, mock_profiles, mock_aps):
+    @patch("analytics_cleanup_handler._delete_spaces", return_value=[])
+    @patch("analytics_cleanup_handler._delete_apps", return_value=[])
+    def test_delete_returns_success_even_on_errors(
+        self, mock_apps, mock_spaces, mock_profiles, mock_aps, mock_sgs
+    ):
         """Cleanup errors must not block stack deletion."""
         result = handler({"RequestType": "Delete"}, None)
         assert result["Status"] == "SUCCESS"
