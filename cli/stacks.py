@@ -700,12 +700,29 @@ class StackManager:
     ) -> bool:
         """Destroy CDK stacks.
 
+        If the target stack exists in CloudFormation but isn't in the CDK
+        app (e.g. because a toggle was disabled), temporarily enables the
+        toggle so CDK can synthesize and destroy the stack properly. This
+        ensures custom resource cleanup handlers (like the analytics
+        cleanup Lambda) fire during deletion.
+
         Args:
             stack_name: Name of the stack to destroy
             all_stacks: Destroy all stacks
             force: Skip confirmation prompts
             output_dir: Custom CDK output directory (for parallel deployments)
         """
+        # If destroying a specific stack that exists in CloudFormation but
+        # might not be in the CDK app, temporarily enable its toggle.
+        toggle_restored = False
+        if (
+            stack_name
+            and not all_stacks
+            and "analytics" in stack_name
+            and self._stack_exists_in_cloudformation(stack_name)
+        ):
+            toggle_restored = self._ensure_analytics_enabled_for_destroy()
+
         cmd = ["destroy"]
 
         if all_stacks:
@@ -716,12 +733,89 @@ class StackManager:
         if force:
             cmd.append("--force")
 
-        # Use custom output directory for parallel deployments
         if output_dir:
             cmd.extend(["--output", output_dir])
 
         result = self._run_cdk(cmd)
+
+        # Restore the toggle if we changed it
+        if toggle_restored:
+            self._restore_analytics_disabled()
+
+        # If CDK still didn't delete it, fall back to CloudFormation directly
+        if (
+            result.returncode == 0
+            and stack_name
+            and not all_stacks
+            and self._stack_exists_in_cloudformation(stack_name)
+        ):
+            return self._cloudformation_delete_stack(stack_name)
+
         return result.returncode == 0
+
+    def _stack_exists_in_cloudformation(self, stack_name: str) -> bool:
+        """Check if a stack exists and is not in a deleted state."""
+        import boto3
+
+        region = self._get_destroy_region(stack_name)
+        cfn = boto3.client("cloudformation", region_name=region)
+        try:
+            resp = cfn.describe_stacks(StackName=stack_name)
+            status = resp["Stacks"][0]["StackStatus"]
+            return "DELETE" not in status
+        except Exception:
+            return False
+
+    def _cloudformation_delete_stack(self, stack_name: str) -> bool:
+        """Delete a stack directly via CloudFormation API."""
+        import boto3
+
+        region = self._get_destroy_region(stack_name)
+        cfn = boto3.client("cloudformation", region_name=region)
+        try:
+            cfn.delete_stack(StackName=stack_name)
+            waiter = cfn.get_waiter("stack_delete_complete")
+            waiter.wait(
+                StackName=stack_name,
+                WaiterConfig={"Delay": 15, "MaxAttempts": 120},
+            )
+            return True
+        except Exception:
+            return False
+
+    def _get_destroy_region(self, stack_name: str) -> str:
+        """Determine the region for a stack based on its name."""
+        try:
+            region = self._get_deploy_region(stack_name)
+            return region or self.config.api_gateway_region
+        except Exception:
+            return self.config.api_gateway_region
+
+    def _ensure_analytics_enabled_for_destroy(self) -> bool:
+        """Temporarily enable analytics so CDK includes the stack for destroy."""
+        try:
+            current = get_analytics_config()
+            if not current.get("enabled"):
+                update_analytics_config({"enabled": True})
+                return True
+        except Exception as exc:
+            logger.debug(
+                "Failed to enable analytics toggle for destroy: %s",
+                exc,
+                exc_info=True,
+            )
+        return False
+
+    def _restore_analytics_disabled(self) -> None:
+        """Restore analytics toggle to disabled after destroy."""
+        try:
+            update_analytics_config({"enabled": False})
+        except Exception as exc:
+            logger.warning(
+                "Failed to restore analytics toggle to disabled after destroy: %s",
+                exc,
+                exc_info=True,
+            )
 
     def bootstrap(
         self,

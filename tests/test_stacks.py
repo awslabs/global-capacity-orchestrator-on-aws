@@ -1993,6 +1993,84 @@ class TestStackManagerDestroyWithOptions:
             assert "--all" in call_args
 
 
+class TestStackManagerDestroyAnalyticsFallback:
+    """Tests for the analytics destroy fallback when the toggle is disabled."""
+
+    def test_destroy_enables_toggle_when_stack_exists(self):
+        """When analytics toggle is off but stack exists, destroy enables it first."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        config.api_gateway_region = "us-east-2"
+
+        with (
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(
+                StackManager, "_stack_exists_in_cloudformation", return_value=True
+            ) as mock_exists,
+            patch.object(
+                StackManager, "_ensure_analytics_enabled_for_destroy", return_value=True
+            ) as mock_enable,
+            patch.object(StackManager, "_restore_analytics_disabled") as mock_restore,
+        ):
+            # CDK destroy succeeds (because we enabled the toggle)
+            mock_run.return_value = MagicMock(returncode=0)
+            # After CDK destroy, stack no longer exists
+            mock_exists.side_effect = [True, False]
+
+            manager = StackManager(config)
+            result = manager.destroy(stack_name="gco-analytics", force=True)
+
+            assert result is True
+            mock_enable.assert_called_once()
+            mock_restore.assert_called_once()
+
+    def test_destroy_falls_back_to_cloudformation_when_cdk_doesnt_delete(self):
+        """If CDK destroy succeeds but stack still exists, use CloudFormation."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        config.api_gateway_region = "us-east-2"
+
+        with (
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_stack_exists_in_cloudformation") as mock_exists,
+            patch.object(StackManager, "_ensure_analytics_enabled_for_destroy", return_value=True),
+            patch.object(StackManager, "_restore_analytics_disabled"),
+            patch.object(
+                StackManager, "_cloudformation_delete_stack", return_value=True
+            ) as mock_cfn_delete,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            # Stack still exists after CDK destroy
+            mock_exists.return_value = True
+
+            manager = StackManager(config)
+            result = manager.destroy(stack_name="gco-analytics", force=True)
+
+            assert result is True
+            mock_cfn_delete.assert_called_once_with("gco-analytics")
+
+    def test_destroy_skips_toggle_for_non_analytics_stacks(self):
+        """Non-analytics stacks don't trigger the toggle logic."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+
+        with (
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=False),
+            patch.object(StackManager, "_ensure_analytics_enabled_for_destroy") as mock_enable,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+
+            manager = StackManager(config)
+            result = manager.destroy(stack_name="gco-us-east-1", force=True)
+
+            assert result is True
+            mock_enable.assert_not_called()
+
+
 class TestStackManagerOrchestratedParallel:
     """Tests for orchestrated deploy/destroy with parallel execution."""
 
