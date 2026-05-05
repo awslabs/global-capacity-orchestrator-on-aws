@@ -445,6 +445,7 @@ class GCOAnalyticsStack(Stack):
                 actions=[
                     "sagemaker:DescribeDomain",
                     "sagemaker:DescribeUserProfile",
+                    "sagemaker:CreatePresignedDomainUrl",
                     "sagemaker:ListSpaces",
                     "sagemaker:ListApps",
                     "sagemaker:DescribeApp",
@@ -462,6 +463,28 @@ class GCOAnalyticsStack(Stack):
                     f"arn:aws:sagemaker:{self.region}:{self.account}:space/*/*",
                     f"arn:aws:sagemaker:{self.region}:{self.account}:app/*/*/*/*",
                 ],
+            )
+        )
+
+        # EMR Serverless — allow the execution role to discover, connect to,
+        # and manage the EMR Serverless application from Studio's Data panel.
+        self.sagemaker_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "emr-serverless:ListApplications",
+                    "emr-serverless:GetApplication",
+                    "emr-serverless:CreateApplication",
+                    "emr-serverless:StartApplication",
+                    "emr-serverless:StopApplication",
+                    "emr-serverless:StartJobRun",
+                    "emr-serverless:GetJobRun",
+                    "emr-serverless:ListJobRuns",
+                    "emr-serverless:CancelJobRun",
+                    "emr-serverless:GetDashboardForJobRun",
+                    "emr-serverless:AccessLivyEndpoints",
+                ],
+                resources=["*"],
             )
         )
 

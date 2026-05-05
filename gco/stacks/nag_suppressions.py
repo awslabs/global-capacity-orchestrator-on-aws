@@ -835,6 +835,10 @@ def add_sagemaker_suppressions(
         f"Resource::arn:aws:sagemaker:{api_region}:<AWS::AccountId>:user-profile/*/*",
         f"Resource::arn:aws:sagemaker:{api_region}:<AWS::AccountId>:space/*/*",
         f"Resource::arn:aws:sagemaker:{api_region}:<AWS::AccountId>:app/*/*/*/*",
+        # EMR Serverless — Studio discovers and manages EMR apps via these
+        # actions. Resource::* is required because EMR Serverless does not
+        # support resource-level scoping on most actions.
+        "Action::emr-serverless:*",
     ]
 
     NagSuppressions.add_stack_suppressions(
