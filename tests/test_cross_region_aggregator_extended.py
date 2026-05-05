@@ -513,18 +513,16 @@ class TestAggregateMetricsEdgeCases:
         }
         handler._cached_secret = "test-token"  # nosec B105 - test fixture, not a real credential
 
-        call_count = [0]
-
-        def mock_request(*args, **kwargs):
-            call_count[0] += 1
+        def mock_request(method, url, **kwargs):
             response = MagicMock()
-            if call_count[0] == 1:
+            if "alb-1" in url:
                 response.status = 200
                 response.data = json.dumps(
                     {"cluster_id": "gco-us-east-1", "templates_count": 3}
                 ).encode("utf-8")
             else:
                 response.status = 500
+                response.data = b""
             return response
 
         mock_http = MagicMock()

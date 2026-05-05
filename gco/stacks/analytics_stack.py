@@ -734,6 +734,7 @@ class GCOAnalyticsStack(Stack):
                 "DOMAIN_ID": self.studio_domain.attr_domain_id,
                 "EFS_ID": self.studio_efs.file_system_id,
                 "REGION": self.region,
+                "VPC_ID": self.vpc.vpc_id,
             },
         )
 
@@ -745,6 +746,8 @@ class GCOAnalyticsStack(Stack):
                     "sagemaker:DeleteUserProfile",
                     "efs:DescribeAccessPoints",
                     "efs:DeleteAccessPoint",
+                    "ec2:DescribeSecurityGroups",
+                    "ec2:DeleteSecurityGroup",
                 ],
                 resources=["*"],
             )
@@ -760,6 +763,66 @@ class GCOAnalyticsStack(Stack):
             self,
             "DomainCleanup",
             service_token=cleanup_provider.service_token,
+        )
+
+        # Nag suppression for the cleanup Lambda — Resource::* is required
+        # because ListUserProfiles/DeleteUserProfile and
+        # DescribeAccessPoints/DeleteAccessPoint don't support resource-level
+        # scoping (the domain ID and EFS ID are passed via env vars, not ARNs).
+        from cdk_nag import NagSuppressions
+
+        NagSuppressions.add_resource_suppressions(
+            cleanup_fn.role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "Cleanup Lambda needs Resource::* for "
+                        "sagemaker:ListUserProfiles/DeleteUserProfile and "
+                        "efs:DescribeAccessPoints/DeleteAccessPoint. These "
+                        "APIs don't support resource-level scoping. The "
+                        "Lambda only runs on stack deletion and is scoped "
+                        "to the domain ID and EFS ID via environment variables."
+                    ),
+                    "appliesTo": ["Resource::*"],
+                },
+                {
+                    "id": "AwsSolutions-IAM4",
+                    "reason": (
+                        "Cleanup Lambda uses AWSLambdaBasicExecutionRole "
+                        "managed policy for CloudWatch Logs access."
+                    ),
+                    "appliesTo": [
+                        "Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+                    ],
+                },
+            ],
+            apply_to_children=True,
+        )
+        NagSuppressions.add_resource_suppressions(
+            cleanup_provider,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "CDK Provider framework uses Resource::* for its "
+                        "internal Lambda invocation policy."
+                    ),
+                    "appliesTo": ["Resource::*"],
+                },
+                {
+                    "id": "AwsSolutions-IAM4",
+                    "reason": ("CDK Provider framework uses AWSLambdaBasicExecutionRole."),
+                    "appliesTo": [
+                        "Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+                    ],
+                },
+                {
+                    "id": "AwsSolutions-L1",
+                    "reason": ("CDK Provider framework manages its own Lambda runtime version."),
+                },
+            ],
+            apply_to_children=True,
         )
 
     # ==================================================================

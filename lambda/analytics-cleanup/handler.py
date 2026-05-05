@@ -36,6 +36,7 @@ def handler(event: dict, context: object) -> dict:
     region = os.environ["REGION"]
     domain_id = os.environ["DOMAIN_ID"]
     efs_id = os.environ["EFS_ID"]
+    vpc_id = os.environ.get("VPC_ID", "")
 
     errors: list[str] = []
 
@@ -44,6 +45,10 @@ def handler(event: dict, context: object) -> dict:
 
     # Delete all EFS access points
     errors.extend(_delete_access_points(region, efs_id))
+
+    # Delete SageMaker-managed NFS security groups
+    if vpc_id:
+        errors.extend(_delete_sagemaker_security_groups(region, domain_id, vpc_id))
 
     if errors:
         logger.warning("Cleanup completed with %d errors: %s", len(errors), errors)
@@ -66,9 +71,7 @@ def _delete_user_profiles(region: str, domain_id: str) -> list[str]:
             for profile in page.get("UserProfiles", []):
                 name = profile["UserProfileName"]
                 try:
-                    sm.delete_user_profile(
-                        DomainId=domain_id, UserProfileName=name
-                    )
+                    sm.delete_user_profile(DomainId=domain_id, UserProfileName=name)
                     logger.info("Deleted user profile: %s", name)
                     # Brief pause to avoid throttling
                     time.sleep(1)
@@ -103,6 +106,43 @@ def _delete_access_points(region: str, efs_id: str) -> list[str]:
                     errors.append(msg)
     except ClientError as e:
         msg = f"Failed to list access points: {e}"
+        logger.error(msg)
+        errors.append(msg)
+
+    return errors
+
+
+def _delete_sagemaker_security_groups(region: str, domain_id: str, vpc_id: str) -> list[str]:
+    """Delete SageMaker-managed security groups for the domain.
+
+    SageMaker creates security groups named
+    ``security-group-for-outbound-nfs-<domain-id>`` and
+    ``security-group-for-inbound-nfs-<domain-id>`` when the domain uses
+    a custom EFS. These are tagged "[DO NOT DELETE]" but must be removed
+    for the VPC to be deletable.
+    """
+    errors: list[str] = []
+    ec2 = boto3.client("ec2", region_name=region)
+
+    try:
+        response = ec2.describe_security_groups(
+            Filters=[
+                {"Name": "vpc-id", "Values": [vpc_id]},
+                {"Name": "group-name", "Values": [f"*{domain_id}*"]},
+            ]
+        )
+        for sg in response.get("SecurityGroups", []):
+            sg_id = sg["GroupId"]
+            sg_name = sg.get("GroupName", "")
+            try:
+                ec2.delete_security_group(GroupId=sg_id)
+                logger.info("Deleted SageMaker security group: %s (%s)", sg_id, sg_name)
+            except ClientError as e:
+                msg = f"Failed to delete security group {sg_id}: {e}"
+                logger.error(msg)
+                errors.append(msg)
+    except ClientError as e:
+        msg = f"Failed to list SageMaker security groups: {e}"
         logger.error(msg)
         errors.append(msg)
 

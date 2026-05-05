@@ -21,7 +21,9 @@ import pytest
 # Import the handler module from lambda/analytics-cleanup/
 # ---------------------------------------------------------------------------
 
-_HANDLER_PATH = Path(__file__).resolve().parent.parent / "lambda" / "analytics-cleanup" / "handler.py"
+_HANDLER_PATH = (
+    Path(__file__).resolve().parent.parent / "lambda" / "analytics-cleanup" / "handler.py"
+)
 _SPEC = importlib.util.spec_from_file_location("analytics_cleanup_handler", _HANDLER_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 _module = importlib.util.module_from_spec(_SPEC)
@@ -90,10 +92,12 @@ class TestDeleteUserProfiles:
         mock_sm = MagicMock()
         mock_paginator = MagicMock()
         mock_paginator.paginate.return_value = [
-            {"UserProfiles": [
-                {"UserProfileName": "alice"},
-                {"UserProfileName": "bob"},
-            ]}
+            {
+                "UserProfiles": [
+                    {"UserProfileName": "alice"},
+                    {"UserProfileName": "bob"},
+                ]
+            }
         ]
         mock_sm.get_paginator.return_value = mock_paginator
 
@@ -102,12 +106,8 @@ class TestDeleteUserProfiles:
 
         assert errors == []
         assert mock_sm.delete_user_profile.call_count == 2
-        mock_sm.delete_user_profile.assert_any_call(
-            DomainId="d-test123", UserProfileName="alice"
-        )
-        mock_sm.delete_user_profile.assert_any_call(
-            DomainId="d-test123", UserProfileName="bob"
-        )
+        mock_sm.delete_user_profile.assert_any_call(DomainId="d-test123", UserProfileName="alice")
+        mock_sm.delete_user_profile.assert_any_call(DomainId="d-test123", UserProfileName="bob")
 
     def test_empty_domain_returns_no_errors(self):
         mock_sm = MagicMock()
@@ -126,9 +126,7 @@ class TestDeleteUserProfiles:
 
         mock_sm = MagicMock()
         mock_paginator = MagicMock()
-        mock_paginator.paginate.return_value = [
-            {"UserProfiles": [{"UserProfileName": "alice"}]}
-        ]
+        mock_paginator.paginate.return_value = [{"UserProfiles": [{"UserProfileName": "alice"}]}]
         mock_sm.get_paginator.return_value = mock_paginator
         mock_sm.delete_user_profile.side_effect = ClientError(
             {"Error": {"Code": "ValidationException", "Message": "in use"}},
@@ -167,10 +165,12 @@ class TestDeleteAccessPoints:
         mock_efs = MagicMock()
         mock_paginator = MagicMock()
         mock_paginator.paginate.return_value = [
-            {"AccessPoints": [
-                {"AccessPointId": "fsap-001"},
-                {"AccessPointId": "fsap-002"},
-            ]}
+            {
+                "AccessPoints": [
+                    {"AccessPointId": "fsap-001"},
+                    {"AccessPointId": "fsap-002"},
+                ]
+            }
         ]
         mock_efs.get_paginator.return_value = mock_paginator
 
@@ -196,9 +196,7 @@ class TestDeleteAccessPoints:
 
         mock_efs = MagicMock()
         mock_paginator = MagicMock()
-        mock_paginator.paginate.return_value = [
-            {"AccessPoints": [{"AccessPointId": "fsap-001"}]}
-        ]
+        mock_paginator.paginate.return_value = [{"AccessPoints": [{"AccessPointId": "fsap-001"}]}]
         mock_efs.get_paginator.return_value = mock_paginator
         mock_efs.delete_access_point.side_effect = ClientError(
             {"Error": {"Code": "InternalError", "Message": "oops"}},
