@@ -297,6 +297,11 @@ def fetch_studio_url(api_base: str, id_token: str) -> tuple[str, int, str]:
         correlation_id = response.headers.get("x-amzn-RequestId") or "N/A"
     # fmt: on
 
+    if status == 202:
+        # Profile is still provisioning -- return empty URL so the caller
+        # can poll.  The body is ``{"status": "provisioning"}``.
+        return "", 0, correlation_id
+
     if status != 200:
         # HTTPError requires a Message (email.message.Message) as its
         # headers argument; build an empty one for determinism.

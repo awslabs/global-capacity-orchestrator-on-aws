@@ -336,7 +336,36 @@ def studio_login(
         sys.exit(1)
 
     try:
-        url, _, _ = fetch_studio_url(api_base, id_token)
+        # Poll until the Lambda returns HTTP 200 with the presigned URL.
+        # First-time logins trigger user-profile provisioning (30-60s);
+        # the Lambda returns HTTP 202 while the profile is pending.
+        import time as _time
+
+        max_wait = 120  # seconds
+        poll_interval = 5  # seconds
+        elapsed = 0
+        url = ""
+        expires_in = 0
+
+        while elapsed < max_wait:
+            url, expires_in, _ = fetch_studio_url(api_base, id_token)
+            if url:
+                break
+            # 202 -- profile still provisioning.
+            if elapsed == 0:
+                click.echo("  Waiting for user profile to provision...", nl=False)
+            click.echo(".", nl=False)
+            _time.sleep(poll_interval)
+            elapsed += poll_interval
+
+        if elapsed > 0 and url:
+            click.echo(" ready")
+        elif not url:
+            click.echo("")
+            formatter.print_error(
+                "User profile did not become ready within " f"{max_wait}s. Try again in a minute."
+            )
+            sys.exit(2)
     except urllib.error.HTTPError as exc:
         correlation_id = exc.headers.get("x-amzn-RequestId") if exc.headers else "N/A"
         formatter.print_error(

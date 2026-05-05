@@ -10,14 +10,19 @@ Flow (happy path):
    shape doesn't namespace Cognito claims).
 2. Resolve the Studio ``DomainId`` from the ``STUDIO_DOMAIN_ID`` env var
    (preferred) or by calling ``sagemaker:ListDomains`` as a fallback.
-3. ``sagemaker:DescribeUserProfile`` — if the profile doesn't exist yet
+3. ``sagemaker:DescribeUserProfile`` -- if the profile doesn't exist yet
    (``ValidationException`` / ``ResourceNotFound``), create it via
-   ``sagemaker:CreateUserProfile`` with a ``CustomFileSystemConfigs``
-   entry mounting ``STUDIO_EFS_ID`` at ``/home/<username>``.
-4. Ensure the per-user EFS access point exists (lazy creation — not
-   eager-from-CLI so the stack doesn't need to know about user profiles
-   at deploy time).
-5. ``sagemaker:CreatePresignedDomainUrl`` and return the URL.
+   ``sagemaker:CreateUserProfile``.  If the profile is still provisioning
+   (``Pending`` / ``Updating``), return HTTP 202 so the CLI can poll.
+   If the profile is ``Failed``, delete it and recreate.
+4. Once the profile is ``InService``, ensure the per-user EFS access
+   point exists (lazy creation).
+5. ``sagemaker:CreatePresignedDomainUrl`` and return the URL (HTTP 200).
+
+The Lambda never blocks waiting for profile provisioning.  Instead it
+returns HTTP 202 ``{"status": "provisioning"}`` and the CLI retries
+every few seconds until it receives HTTP 200 with the presigned URL.
+This avoids hitting the API Gateway 29-second integration timeout.
 
 All failures funnel through the outer ``try/except`` in
 :func:`lambda_handler`; the response body is always JSON and never
@@ -25,11 +30,11 @@ leaks an exception string.
 
 Environment variables (set by ``GCOAnalyticsStack._create_presigned_url_lambda``):
 
-- ``STUDIO_DOMAIN_ID`` — the Studio domain ID (e.g. ``d-abc123xyz``).
-- ``SAGEMAKER_EXECUTION_ROLE_ARN`` — passed on ``CreateUserProfile``.
-- ``STUDIO_EFS_ID`` — used by ``_ensure_access_point``.
-- ``URL_EXPIRES_SECONDS`` — default ``300`` (5 minutes).
-- ``SESSION_EXPIRES_SECONDS`` — default ``43200`` (12 hours).
+- ``STUDIO_DOMAIN_ID`` -- the Studio domain ID (e.g. ``d-abc123xyz``).
+- ``SAGEMAKER_EXECUTION_ROLE_ARN`` -- passed on ``CreateUserProfile``.
+- ``STUDIO_EFS_ID`` -- used by ``_ensure_access_point``.
+- ``URL_EXPIRES_SECONDS`` -- default ``300`` (5 minutes).
+- ``SESSION_EXPIRES_SECONDS`` -- default ``43200`` (12 hours).
 
 The module-level boto3 clients (``sagemaker`` and ``efs``) are created
 once at cold start so repeat invocations inside a warm container reuse
@@ -70,7 +75,7 @@ URL_EXPIRES_SECONDS = int(os.environ.get("URL_EXPIRES_SECONDS", "300"))
 SESSION_EXPIRES_SECONDS = int(os.environ.get("SESSION_EXPIRES_SECONDS", "43200"))
 
 # ---------------------------------------------------------------------------
-# Error tokens — opaque strings returned in the ``error`` body key.
+# Error tokens -- opaque strings returned in the ``error`` body key.
 # ---------------------------------------------------------------------------
 # Keep these short, stable, and free of implementation details so clients
 # can switch on them without parsing exception messages.
@@ -96,7 +101,7 @@ def _parse_claims(event: dict[str, Any]) -> dict[str, Any]:
 
     Returns an empty dict if ``event["requestContext"]["authorizer"]["claims"]``
     is not present or not a dict. The caller decides whether an empty
-    result warrants a 401 — see :func:`lambda_handler`.
+    result warrants a 401 -- see :func:`lambda_handler`.
     """
     if not isinstance(event, dict):
         return {}
@@ -121,7 +126,7 @@ def _derive_posix_ids(username: str) -> tuple[int, int]:
     result is always ``>= 100000`` and fits within the 32-bit signed
     range EFS expects.
 
-    The gid is always equal to the uid — per-user home directories own
+    The gid is always equal to the uid -- per-user home directories own
     a single-user group, matching the ``0700`` permissions on
     ``/home/<username>`` access points.
     """
@@ -140,12 +145,25 @@ def _format_success(url: str, expires: int) -> dict[str, Any]:
     }
 
 
+def _format_provisioning() -> dict[str, Any]:
+    """Format an HTTP 202 response indicating the profile is still provisioning.
+
+    The CLI polls on this status code until the profile reaches InService
+    and the Lambda returns HTTP 200 with the presigned URL.
+    """
+    return {
+        "statusCode": 202,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({"status": "provisioning"}),
+    }
+
+
 def _format_error(status: int, token: str) -> dict[str, Any]:
     """Format an HTTP error API Gateway proxy response.
 
     ``token`` is one of the module-level ``_ERR_*`` constants; ``status``
     is the HTTP status code. The body never contains an exception
-    message — callers log the underlying exception via :data:`logger`
+    message -- callers log the underlying exception via :data:`logger`
     before returning.
     """
     return {
@@ -180,45 +198,62 @@ def _resolve_domain_id(domain_name: str) -> str | None:
             return None
 
 
-def _ensure_user_profile(domain_id: str, username: str, efs_id: str) -> None:
-    """Ensure a ``sagemaker:UserProfile`` exists and is ``InService``.
+def _ensure_user_profile(domain_id: str, username: str, efs_id: str) -> str:
+    """Ensure a ``sagemaker:UserProfile`` exists for ``username``.
 
-    If ``DescribeUserProfile`` raises a ``ValidationException`` /
-    ``ResourceNotFound`` (the two boto3 error codes SageMaker returns for
-    missing profiles), the profile is created via ``CreateUserProfile``
-    with ``ExecutionRole`` set to :data:`SAGEMAKER_EXECUTION_ROLE_ARN`
-    and a ``CustomFileSystemConfigs`` entry mounting ``efs_id`` at
-    ``/home/<username>``.
+    Returns the profile status:
 
-    After creation, the function polls ``DescribeUserProfile`` until the
-    profile reaches ``InService`` (up to ~90 seconds). SageMaker profiles
-    typically take 30-60 seconds to provision; without this wait the
-    subsequent ``CreatePresignedDomainUrl`` call fails with
-    "UserProfile not found or in unusable state".
+    * ``"InService"`` -- profile is ready; caller can mint a presigned URL.
+    * ``"Provisioning"`` -- profile was just created or is still starting;
+      caller should return HTTP 202 so the CLI can poll.
+
+    If the profile is in ``Failed`` state, it is deleted and recreated
+    so the next poll attempt finds a fresh ``Pending`` profile.
     """
-    needs_wait = False
     try:
         resp = sagemaker.describe_user_profile(
             DomainId=domain_id,
             UserProfileName=username,
         )
-        # Profile exists but may still be provisioning from a previous request.
         status = resp.get("Status", "")
+
         if status == "InService":
-            return
-        # Profile exists but isn't ready yet — fall through to the wait loop.
-        needs_wait = True
+            return "InService"
+
+        if status == "Failed":
+            logger.warning(
+                "User profile %s is Failed (%s) -- deleting and recreating",
+                username,
+                resp.get("FailureReason", "unknown"),
+            )
+            try:
+                sagemaker.delete_user_profile(
+                    DomainId=domain_id,
+                    UserProfileName=username,
+                )
+            except ClientError as del_exc:
+                logger.warning("Could not delete failed profile %s: %s", username, del_exc)
+            # Create a fresh profile (may race with the delete; ResourceInUse
+            # is caught below).
+            _create_user_profile(domain_id, username, efs_id)
+            return "Provisioning"
+
+        # Pending / Updating / any other transient state.
+        logger.info("User profile %s status=%s, still provisioning", username, status)
+        return "Provisioning"
+
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "")
         if code not in {"ValidationException", "ResourceNotFound"}:
             raise
-        needs_wait = True
 
-    if not needs_wait:
-        return
+    # Profile doesn't exist -- create it.
+    _create_user_profile(domain_id, username, efs_id)
+    return "Provisioning"
 
-    # Create the profile if it doesn't exist yet. If it already exists
-    # (e.g. in Pending status), skip creation and just wait.
+
+def _create_user_profile(domain_id: str, username: str, efs_id: str) -> None:
+    """Create a SageMaker user profile. Silently ignores ResourceInUse."""
     try:
         sagemaker.create_user_profile(
             DomainId=domain_id,
@@ -238,58 +273,9 @@ def _ensure_user_profile(domain_id: str, username: str, efs_id: str) -> None:
         logger.info("Created user profile %s in domain %s", username, domain_id)
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "")
-        # ResourceInUse means the profile already exists (e.g. still provisioning).
         if code != "ResourceInUse":
             raise
-        logger.info("User profile %s already exists, waiting for InService", username)
-
-    # Poll until InService (up to ~90 seconds).
-    _wait_for_profile_in_service(domain_id, username)
-
-
-# Maximum time (seconds) to wait for a user profile to reach InService.
-_PROFILE_WAIT_TIMEOUT = 90
-_PROFILE_POLL_INTERVAL = 3
-
-
-def _wait_for_profile_in_service(domain_id: str, username: str) -> None:
-    """Poll ``DescribeUserProfile`` until ``Status == "InService"``.
-
-    Raises ``TimeoutError`` if the profile doesn't reach ``InService``
-    within :data:`_PROFILE_WAIT_TIMEOUT` seconds. The caller's outer
-    ``try/except`` in :func:`lambda_handler` converts this into an
-    HTTP 500 with the opaque error token.
-    """
-    import time
-
-    elapsed = 0
-    while elapsed < _PROFILE_WAIT_TIMEOUT:
-        resp = sagemaker.describe_user_profile(
-            DomainId=domain_id,
-            UserProfileName=username,
-        )
-        status = resp.get("Status", "")
-        if status == "InService":
-            logger.info("User profile %s is InService (waited %ds)", username, elapsed)
-            return
-        if status == "Failed":
-            raise RuntimeError(
-                f"User profile {username} entered Failed state: "
-                f"{resp.get('FailureReason', 'unknown')}"
-            )
-        logger.info(
-            "User profile %s status=%s, waiting... (%ds/%ds)",
-            username,
-            status,
-            elapsed,
-            _PROFILE_WAIT_TIMEOUT,
-        )
-        time.sleep(_PROFILE_POLL_INTERVAL)
-        elapsed += _PROFILE_POLL_INTERVAL
-
-    raise TimeoutError(
-        f"User profile {username} did not reach InService within " f"{_PROFILE_WAIT_TIMEOUT}s"
-    )
+        logger.info("User profile %s already exists (ResourceInUse)", username)
 
 
 def _ensure_access_point(username: str, efs_id: str) -> str:
@@ -350,11 +336,17 @@ def _ensure_access_point(username: str, efs_id: str) -> str:
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Exchange a Cognito-authorized event for a presigned Studio URL.
 
-    Wraps the full happy-path flow in an outer ``try/except`` so any
-    unexpected failure returns HTTP 500 with the opaque
-    ``PresignedUrlGenerationFailed`` token. The underlying exception is
-    logged at ``ERROR`` level via :data:`logger` but never included in
-    the response body.
+    Returns:
+
+    * **HTTP 200** with ``{"url": "...", "expires_in": N}`` when the
+      user profile is ``InService`` and the presigned URL is ready.
+    * **HTTP 202** with ``{"status": "provisioning"}`` when the user
+      profile is still being created.  The CLI should retry after a
+      few seconds.
+    * **HTTP 4xx / 5xx** with ``{"error": "<token>"}`` on failure.
+
+    The Lambda never blocks waiting for profile provisioning.  The CLI
+    is responsible for polling until it receives HTTP 200.
     """
     try:
         # Step 1: extract + validate the Cognito username claim.
@@ -374,7 +366,9 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return _format_error(404, _ERR_DOMAIN_NOT_FOUND)
 
         # Step 3: describe-or-create the user profile.
-        _ensure_user_profile(domain_id, username, STUDIO_EFS_ID)
+        profile_status = _ensure_user_profile(domain_id, username, STUDIO_EFS_ID)
+        if profile_status != "InService":
+            return _format_provisioning()
 
         # Step 4: lazy per-user EFS access point.
         _ensure_access_point(username, STUDIO_EFS_ID)
@@ -391,7 +385,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     except (
         Exception
-    ) as exc:  # noqa: BLE001 — outer catch-all so every failure returns an opaque error token
+    ) as exc:  # noqa: BLE001 -- outer catch-all so every failure returns an opaque error token
         # Log with exception info so CloudWatch captures the stack trace,
         # but never leak the message to the HTTP response body.
         logger.error("Presigned URL generation failed: %s", exc, exc_info=True)

@@ -172,27 +172,25 @@ class TestPresignedUrlHappyPath:
 class TestPresignedUrlCreatesResources:
     """Lazy-provisioning branches for user profile + EFS access point."""
 
-    def test_creates_user_profile_if_missing(self, handler_module) -> None:
+    def test_creates_user_profile_if_missing_returns_202(self, handler_module) -> None:
         handler, sagemaker_mock, _ = handler_module
 
-        # First call: profile doesn't exist (triggers creation).
-        # Second call (from _wait_for_profile_in_service): profile is InService.
-        sagemaker_mock.describe_user_profile.side_effect = [
-            ClientError(
-                error_response={
-                    "Error": {
-                        "Code": "ValidationException",
-                        "Message": "User profile not found",
-                    }
-                },
-                operation_name="DescribeUserProfile",
-            ),
-            {"UserProfileName": "alice", "DomainId": _STUDIO_DOMAIN_ID, "Status": "InService"},
-        ]
+        # Profile doesn't exist -- triggers creation, returns 202.
+        sagemaker_mock.describe_user_profile.side_effect = ClientError(
+            error_response={
+                "Error": {
+                    "Code": "ValidationException",
+                    "Message": "User profile not found",
+                }
+            },
+            operation_name="DescribeUserProfile",
+        )
 
         response = handler.lambda_handler(_make_event(), None)
 
-        assert response["statusCode"] == 200
+        assert response["statusCode"] == 202
+        body = json.loads(response["body"])
+        assert body == {"status": "provisioning"}
         sagemaker_mock.create_user_profile.assert_called_once()
         call_kwargs = sagemaker_mock.create_user_profile.call_args.kwargs
         assert call_kwargs["DomainId"] == _STUDIO_DOMAIN_ID
@@ -202,95 +200,59 @@ class TestPresignedUrlCreatesResources:
         efs_configs = user_settings["CustomFileSystemConfigs"]
         assert efs_configs[0]["EFSFileSystemConfig"]["FileSystemId"] == _STUDIO_EFS_ID
         assert efs_configs[0]["EFSFileSystemConfig"]["FileSystemPath"] == "/home/alice"
+        # No presigned URL minted on a 202.
+        sagemaker_mock.create_presigned_domain_url.assert_not_called()
 
     def test_creates_user_profile_on_resource_not_found(self, handler_module) -> None:
         """``ResourceNotFound`` is also treated as 'profile missing'."""
         handler, sagemaker_mock, _ = handler_module
 
-        sagemaker_mock.describe_user_profile.side_effect = [
-            ClientError(
-                error_response={"Error": {"Code": "ResourceNotFound", "Message": "not found"}},
-                operation_name="DescribeUserProfile",
-            ),
-            {"UserProfileName": "alice", "DomainId": _STUDIO_DOMAIN_ID, "Status": "InService"},
-        ]
+        sagemaker_mock.describe_user_profile.side_effect = ClientError(
+            error_response={"Error": {"Code": "ResourceNotFound", "Message": "not found"}},
+            operation_name="DescribeUserProfile",
+        )
 
         response = handler.lambda_handler(_make_event(), None)
 
-        assert response["statusCode"] == 200
+        assert response["statusCode"] == 202
         sagemaker_mock.create_user_profile.assert_called_once()
 
-    def test_waits_for_profile_in_service_after_creation(self, handler_module) -> None:
-        """After creating a profile, the handler polls until InService."""
+    def test_pending_profile_returns_202(self, handler_module) -> None:
+        """If the profile exists but is Pending, return 202 without creating."""
         handler, sagemaker_mock, _ = handler_module
 
-        # First call: profile doesn't exist.
-        # Second call (poll 1): still Pending.
-        # Third call (poll 2): InService.
-        sagemaker_mock.describe_user_profile.side_effect = [
-            ClientError(
-                error_response={"Error": {"Code": "ValidationException", "Message": "not found"}},
-                operation_name="DescribeUserProfile",
-            ),
-            {"UserProfileName": "alice", "DomainId": _STUDIO_DOMAIN_ID, "Status": "Pending"},
-            {"UserProfileName": "alice", "DomainId": _STUDIO_DOMAIN_ID, "Status": "InService"},
-        ]
+        sagemaker_mock.describe_user_profile.return_value = {
+            "UserProfileName": "alice",
+            "DomainId": _STUDIO_DOMAIN_ID,
+            "Status": "Pending",
+        }
 
-        # Patch time.sleep so the test doesn't actually wait.
-        with patch("time.sleep"):
-            response = handler.lambda_handler(_make_event(), None)
+        response = handler.lambda_handler(_make_event(), None)
 
-        assert response["statusCode"] == 200
-        sagemaker_mock.create_user_profile.assert_called_once()
-        # describe_user_profile called 3 times: initial check + 2 polls.
-        assert sagemaker_mock.describe_user_profile.call_count == 3
-
-    def test_profile_failed_status_returns_500(self, handler_module) -> None:
-        """If the profile enters Failed state, the handler returns 500."""
-        handler, sagemaker_mock, _ = handler_module
-
-        sagemaker_mock.describe_user_profile.side_effect = [
-            ClientError(
-                error_response={"Error": {"Code": "ValidationException", "Message": "not found"}},
-                operation_name="DescribeUserProfile",
-            ),
-            {
-                "UserProfileName": "alice",
-                "DomainId": _STUDIO_DOMAIN_ID,
-                "Status": "Failed",
-                "FailureReason": "Internal error",
-            },
-        ]
-
-        with patch("time.sleep"):
-            response = handler.lambda_handler(_make_event(), None)
-
-        assert response["statusCode"] == 500
+        assert response["statusCode"] == 202
         body = json.loads(response["body"])
-        assert body == {"error": "PresignedUrlGenerationFailed"}
+        assert body == {"status": "provisioning"}
+        sagemaker_mock.create_user_profile.assert_not_called()
 
-    def test_existing_pending_profile_waits_without_recreating(self, handler_module) -> None:
-        """If the profile exists but is Pending, wait without creating a new one."""
+    def test_failed_profile_deletes_and_recreates(self, handler_module) -> None:
+        """If the profile is Failed, delete it, recreate, and return 202."""
         handler, sagemaker_mock, _ = handler_module
 
-        # First describe: profile exists but Pending.
-        # create_user_profile raises ResourceInUse.
-        # Second describe (poll): InService.
-        sagemaker_mock.describe_user_profile.side_effect = [
-            {"UserProfileName": "alice", "DomainId": _STUDIO_DOMAIN_ID, "Status": "Pending"},
-            {"UserProfileName": "alice", "DomainId": _STUDIO_DOMAIN_ID, "Status": "InService"},
-        ]
-        sagemaker_mock.create_user_profile.side_effect = ClientError(
-            error_response={"Error": {"Code": "ResourceInUse", "Message": "already exists"}},
-            operation_name="CreateUserProfile",
+        sagemaker_mock.describe_user_profile.return_value = {
+            "UserProfileName": "alice",
+            "DomainId": _STUDIO_DOMAIN_ID,
+            "Status": "Failed",
+            "FailureReason": "Permission error",
+        }
+
+        response = handler.lambda_handler(_make_event(), None)
+
+        assert response["statusCode"] == 202
+        sagemaker_mock.delete_user_profile.assert_called_once_with(
+            DomainId=_STUDIO_DOMAIN_ID,
+            UserProfileName="alice",
         )
-
-        with patch("time.sleep"):
-            response = handler.lambda_handler(_make_event(), None)
-
-        assert response["statusCode"] == 200
-        # describe called twice: initial check + 1 poll.
-        assert sagemaker_mock.describe_user_profile.call_count == 2
+        sagemaker_mock.create_user_profile.assert_called_once()
 
     def test_creates_access_point_if_missing(self, handler_module) -> None:
         handler, _, efs_mock = handler_module
@@ -550,6 +512,7 @@ def test_handler_module_exposes_pure_helpers(monkeypatch: pytest.MonkeyPatch) ->
     assert callable(handler._parse_claims)
     assert callable(handler._derive_posix_ids)
     assert callable(handler._format_success)
+    assert callable(handler._format_provisioning)
     assert callable(handler._format_error)
 
     # _format_success returns the documented proxy-response shape.
