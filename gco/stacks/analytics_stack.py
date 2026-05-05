@@ -892,6 +892,7 @@ class GCOAnalyticsStack(Stack):
                 actions=[
                     "elasticfilesystem:DescribeAccessPoints",
                     "elasticfilesystem:CreateAccessPoint",
+                    "elasticfilesystem:TagResource",
                 ],
                 resources=[self.studio_efs.file_system_arn],
             )

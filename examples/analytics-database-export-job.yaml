@@ -100,7 +100,7 @@ spec:
           import psycopg2
 
           secret_arn = os.environ["AURORA_SECRET_ARN"]
-          aurora_region = os.environ.get("AURORA_REGION", "us-east-1")
+          aurora_region = os.environ.get("AWS_REGION", "us-east-1")
           sm = boto3.client("secretsmanager", region_name=aurora_region)
           secret = json.loads(sm.get_secret_value(SecretId=secret_arn)["SecretString"])
 
@@ -195,11 +195,17 @@ spec:
               name: gco-aurora-pgvector
               key: secret_arn
               optional: true
-        - name: AURORA_REGION
+        - name: AWS_REGION
           valueFrom:
             configMapKeyRef:
               name: gco-aurora-pgvector
               key: region
+              optional: true
+        - name: AWS_ROLE_ARN
+          valueFrom:
+            configMapKeyRef:
+              name: gco-aurora-pgvector
+              key: role_arn
               optional: true
         - name: AWS_WEB_IDENTITY_TOKEN_FILE
           value: "/var/run/secrets/eks.amazonaws.com/serviceaccount/token"

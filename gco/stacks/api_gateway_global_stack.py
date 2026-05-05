@@ -496,6 +496,20 @@ class GCOApiGatewayGlobalStack(Stack):
             )
         )
 
+        # Allow Cognito-authorized requests on /studio/* paths. The Cognito
+        # authorizer on the method handles authentication; the resource
+        # policy just needs to not block the request before it reaches the
+        # authorizer. Cognito tokens don't carry aws:PrincipalAccount so
+        # the account-scoped statement above would reject them.
+        api.add_to_resource_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                principals=[iam.AnyPrincipal()],
+                actions=["execute-api:Invoke"],
+                resources=["execute-api:/*/GET/studio/*"],
+            )
+        )
+
         # Create Lambda integration
         lambda_integration = apigateway.LambdaIntegration(
             self.proxy_lambda, proxy=True, timeout=Duration.seconds(29)
