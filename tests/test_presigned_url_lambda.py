@@ -34,7 +34,7 @@ from tests._lambda_imports import load_lambda_module
 # Constants that must match the handler's env-var defaults / error tokens.
 # ---------------------------------------------------------------------------
 
-_STUDIO_DOMAIN_NAME = "gco-analytics-us-east-2"
+_STUDIO_DOMAIN_ID = "d-abc123xyz"
 _STUDIO_EFS_ID = "fs-0123456789abcdef0"
 _SAGEMAKER_EXECUTION_ROLE_ARN = (
     "arn:aws:iam::123456789012:role/AmazonSageMaker-gco-analytics-exec-us-east-2"
@@ -43,7 +43,7 @@ _URL_EXPIRES_SECONDS = "300"
 _SESSION_EXPIRES_SECONDS = "43200"
 
 _HANDLER_ENV = {
-    "STUDIO_DOMAIN_NAME": _STUDIO_DOMAIN_NAME,
+    "STUDIO_DOMAIN_ID": _STUDIO_DOMAIN_ID,
     "STUDIO_EFS_ID": _STUDIO_EFS_ID,
     "SAGEMAKER_EXECUTION_ROLE_ARN": _SAGEMAKER_EXECUTION_ROLE_ARN,
     "URL_EXPIRES_SECONDS": _URL_EXPIRES_SECONDS,
@@ -103,12 +103,13 @@ def handler_module(monkeypatch: pytest.MonkeyPatch):
     # these as needed.
     sagemaker_mock.list_domains.return_value = {
         "Domains": [
-            {"DomainName": _STUDIO_DOMAIN_NAME, "DomainId": "d-abc123xyz"},
+            {"DomainName": "gco-analytics-us-east-2", "DomainId": _STUDIO_DOMAIN_ID},
         ],
     }
     sagemaker_mock.describe_user_profile.return_value = {
         "UserProfileName": "alice",
-        "DomainId": "d-abc123xyz",
+        "DomainId": _STUDIO_DOMAIN_ID,
+        "Status": "InService",
     }
     sagemaker_mock.create_presigned_domain_url.return_value = {
         "AuthorizedUrl": "https://d-abc123xyz.studio.us-east-2.sagemaker.aws/auth?token=xyz",
@@ -150,7 +151,7 @@ class TestPresignedUrlHappyPath:
         assert body["expires_in"] > 0
         # Session-expiration + URL-expiration kwargs are passed through.
         sagemaker_mock.create_presigned_domain_url.assert_called_once_with(
-            DomainId="d-abc123xyz",
+            DomainId=_STUDIO_DOMAIN_ID,
             UserProfileName="alice",
             SessionExpirationDurationInSeconds=int(_SESSION_EXPIRES_SECONDS),
             ExpiresInSeconds=int(_URL_EXPIRES_SECONDS),
@@ -174,22 +175,27 @@ class TestPresignedUrlCreatesResources:
     def test_creates_user_profile_if_missing(self, handler_module) -> None:
         handler, sagemaker_mock, _ = handler_module
 
-        sagemaker_mock.describe_user_profile.side_effect = ClientError(
-            error_response={
-                "Error": {
-                    "Code": "ValidationException",
-                    "Message": "User profile not found",
-                }
-            },
-            operation_name="DescribeUserProfile",
-        )
+        # First call: profile doesn't exist (triggers creation).
+        # Second call (from _wait_for_profile_in_service): profile is InService.
+        sagemaker_mock.describe_user_profile.side_effect = [
+            ClientError(
+                error_response={
+                    "Error": {
+                        "Code": "ValidationException",
+                        "Message": "User profile not found",
+                    }
+                },
+                operation_name="DescribeUserProfile",
+            ),
+            {"UserProfileName": "alice", "DomainId": _STUDIO_DOMAIN_ID, "Status": "InService"},
+        ]
 
         response = handler.lambda_handler(_make_event(), None)
 
         assert response["statusCode"] == 200
         sagemaker_mock.create_user_profile.assert_called_once()
         call_kwargs = sagemaker_mock.create_user_profile.call_args.kwargs
-        assert call_kwargs["DomainId"] == "d-abc123xyz"
+        assert call_kwargs["DomainId"] == _STUDIO_DOMAIN_ID
         assert call_kwargs["UserProfileName"] == "alice"
         user_settings = call_kwargs["UserSettings"]
         assert user_settings["ExecutionRole"] == _SAGEMAKER_EXECUTION_ROLE_ARN
@@ -201,15 +207,90 @@ class TestPresignedUrlCreatesResources:
         """``ResourceNotFound`` is also treated as 'profile missing'."""
         handler, sagemaker_mock, _ = handler_module
 
-        sagemaker_mock.describe_user_profile.side_effect = ClientError(
-            error_response={"Error": {"Code": "ResourceNotFound", "Message": "not found"}},
-            operation_name="DescribeUserProfile",
-        )
+        sagemaker_mock.describe_user_profile.side_effect = [
+            ClientError(
+                error_response={"Error": {"Code": "ResourceNotFound", "Message": "not found"}},
+                operation_name="DescribeUserProfile",
+            ),
+            {"UserProfileName": "alice", "DomainId": _STUDIO_DOMAIN_ID, "Status": "InService"},
+        ]
 
         response = handler.lambda_handler(_make_event(), None)
 
         assert response["statusCode"] == 200
         sagemaker_mock.create_user_profile.assert_called_once()
+
+    def test_waits_for_profile_in_service_after_creation(self, handler_module) -> None:
+        """After creating a profile, the handler polls until InService."""
+        handler, sagemaker_mock, _ = handler_module
+
+        # First call: profile doesn't exist.
+        # Second call (poll 1): still Pending.
+        # Third call (poll 2): InService.
+        sagemaker_mock.describe_user_profile.side_effect = [
+            ClientError(
+                error_response={"Error": {"Code": "ValidationException", "Message": "not found"}},
+                operation_name="DescribeUserProfile",
+            ),
+            {"UserProfileName": "alice", "DomainId": _STUDIO_DOMAIN_ID, "Status": "Pending"},
+            {"UserProfileName": "alice", "DomainId": _STUDIO_DOMAIN_ID, "Status": "InService"},
+        ]
+
+        # Patch time.sleep so the test doesn't actually wait.
+        with patch("time.sleep"):
+            response = handler.lambda_handler(_make_event(), None)
+
+        assert response["statusCode"] == 200
+        sagemaker_mock.create_user_profile.assert_called_once()
+        # describe_user_profile called 3 times: initial check + 2 polls.
+        assert sagemaker_mock.describe_user_profile.call_count == 3
+
+    def test_profile_failed_status_returns_500(self, handler_module) -> None:
+        """If the profile enters Failed state, the handler returns 500."""
+        handler, sagemaker_mock, _ = handler_module
+
+        sagemaker_mock.describe_user_profile.side_effect = [
+            ClientError(
+                error_response={"Error": {"Code": "ValidationException", "Message": "not found"}},
+                operation_name="DescribeUserProfile",
+            ),
+            {
+                "UserProfileName": "alice",
+                "DomainId": _STUDIO_DOMAIN_ID,
+                "Status": "Failed",
+                "FailureReason": "Internal error",
+            },
+        ]
+
+        with patch("time.sleep"):
+            response = handler.lambda_handler(_make_event(), None)
+
+        assert response["statusCode"] == 500
+        body = json.loads(response["body"])
+        assert body == {"error": "PresignedUrlGenerationFailed"}
+
+    def test_existing_pending_profile_waits_without_recreating(self, handler_module) -> None:
+        """If the profile exists but is Pending, wait without creating a new one."""
+        handler, sagemaker_mock, _ = handler_module
+
+        # First describe: profile exists but Pending.
+        # create_user_profile raises ResourceInUse.
+        # Second describe (poll): InService.
+        sagemaker_mock.describe_user_profile.side_effect = [
+            {"UserProfileName": "alice", "DomainId": _STUDIO_DOMAIN_ID, "Status": "Pending"},
+            {"UserProfileName": "alice", "DomainId": _STUDIO_DOMAIN_ID, "Status": "InService"},
+        ]
+        sagemaker_mock.create_user_profile.side_effect = ClientError(
+            error_response={"Error": {"Code": "ResourceInUse", "Message": "already exists"}},
+            operation_name="CreateUserProfile",
+        )
+
+        with patch("time.sleep"):
+            response = handler.lambda_handler(_make_event(), None)
+
+        assert response["statusCode"] == 200
+        # describe called twice: initial check + 1 poll.
+        assert sagemaker_mock.describe_user_profile.call_count == 2
 
     def test_creates_access_point_if_missing(self, handler_module) -> None:
         handler, _, efs_mock = handler_module
@@ -272,7 +353,10 @@ class TestPresignedUrlErrorPaths:
     def test_domain_not_found_returns_404(self, handler_module) -> None:
         handler, sagemaker_mock, _ = handler_module
 
-        # ListDomains returns a different domain (and no next token).
+        # Override the module-level STUDIO_DOMAIN_ID to empty so the handler
+        # falls back to _resolve_domain_id, which returns None when no
+        # matching domain is found.
+        handler.STUDIO_DOMAIN_ID = ""
         sagemaker_mock.list_domains.return_value = {
             "Domains": [
                 {"DomainName": "some-other-domain", "DomainId": "d-xxxxxxxx"},
@@ -405,12 +489,13 @@ class TestPresignedUrlResponseShapeProperty:
         username = claims["cognito:username"]
         sagemaker_mock.list_domains.return_value = {
             "Domains": [
-                {"DomainName": _STUDIO_DOMAIN_NAME, "DomainId": "d-propcheck"},
+                {"DomainName": "gco-analytics-us-east-2", "DomainId": _STUDIO_DOMAIN_ID},
             ],
         }
         sagemaker_mock.describe_user_profile.return_value = {
             "UserProfileName": username,
-            "DomainId": "d-propcheck",
+            "DomainId": _STUDIO_DOMAIN_ID,
+            "Status": "InService",
         }
         sagemaker_mock.create_presigned_domain_url.return_value = {
             "AuthorizedUrl": (
@@ -486,4 +571,4 @@ def test_handler_module_exposes_pure_helpers(monkeypatch: pytest.MonkeyPatch) ->
     ) == {"cognito:username": "x"}
 
     # Env vars were read at import time.
-    assert os.environ["STUDIO_DOMAIN_NAME"] == _STUDIO_DOMAIN_NAME
+    assert os.environ["STUDIO_DOMAIN_ID"] == _STUDIO_DOMAIN_ID

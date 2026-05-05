@@ -8,8 +8,8 @@ Flow (happy path):
 1. Extract ``claims = event["requestContext"]["authorizer"]["claims"]`` and
    read ``cognito:username`` (falling back to ``username`` if the token
    shape doesn't namespace Cognito claims).
-2. Resolve the Studio ``DomainId`` by calling ``sagemaker:ListDomains`` and
-   filtering on ``DomainName`` equality against ``STUDIO_DOMAIN_NAME``.
+2. Resolve the Studio ``DomainId`` from the ``STUDIO_DOMAIN_ID`` env var
+   (preferred) or by calling ``sagemaker:ListDomains`` as a fallback.
 3. ``sagemaker:DescribeUserProfile`` — if the profile doesn't exist yet
    (``ValidationException`` / ``ResourceNotFound``), create it via
    ``sagemaker:CreateUserProfile`` with a ``CustomFileSystemConfigs``
@@ -25,7 +25,7 @@ leaks an exception string.
 
 Environment variables (set by ``GCOAnalyticsStack._create_presigned_url_lambda``):
 
-- ``STUDIO_DOMAIN_NAME`` — the Studio domain's human-readable name.
+- ``STUDIO_DOMAIN_ID`` — the Studio domain ID (e.g. ``d-abc123xyz``).
 - ``SAGEMAKER_EXECUTION_ROLE_ARN`` — passed on ``CreateUserProfile``.
 - ``STUDIO_EFS_ID`` — used by ``_ensure_access_point``.
 - ``URL_EXPIRES_SECONDS`` — default ``300`` (5 minutes).
@@ -181,7 +181,7 @@ def _resolve_domain_id(domain_name: str) -> str | None:
 
 
 def _ensure_user_profile(domain_id: str, username: str, efs_id: str) -> None:
-    """Ensure a ``sagemaker:UserProfile`` exists for ``username`` in ``domain_id``.
+    """Ensure a ``sagemaker:UserProfile`` exists and is ``InService``.
 
     If ``DescribeUserProfile`` raises a ``ValidationException`` /
     ``ResourceNotFound`` (the two boto3 error codes SageMaker returns for
@@ -189,32 +189,106 @@ def _ensure_user_profile(domain_id: str, username: str, efs_id: str) -> None:
     with ``ExecutionRole`` set to :data:`SAGEMAKER_EXECUTION_ROLE_ARN`
     and a ``CustomFileSystemConfigs`` entry mounting ``efs_id`` at
     ``/home/<username>``.
+
+    After creation, the function polls ``DescribeUserProfile`` until the
+    profile reaches ``InService`` (up to ~90 seconds). SageMaker profiles
+    typically take 30-60 seconds to provision; without this wait the
+    subsequent ``CreatePresignedDomainUrl`` call fails with
+    "UserProfile not found or in unusable state".
     """
+    needs_wait = False
     try:
-        sagemaker.describe_user_profile(
+        resp = sagemaker.describe_user_profile(
             DomainId=domain_id,
             UserProfileName=username,
         )
-        return
+        # Profile exists but may still be provisioning from a previous request.
+        status = resp.get("Status", "")
+        if status == "InService":
+            return
+        # Profile exists but isn't ready yet — fall through to the wait loop.
+        needs_wait = True
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "")
         if code not in {"ValidationException", "ResourceNotFound"}:
             raise
+        needs_wait = True
 
-    sagemaker.create_user_profile(
-        DomainId=domain_id,
-        UserProfileName=username,
-        UserSettings={
-            "ExecutionRole": SAGEMAKER_EXECUTION_ROLE_ARN,
-            "CustomFileSystemConfigs": [
-                {
-                    "EFSFileSystemConfig": {
-                        "FileSystemId": efs_id,
-                        "FileSystemPath": f"/home/{username}",
+    if not needs_wait:
+        return
+
+    # Create the profile if it doesn't exist yet. If it already exists
+    # (e.g. in Pending status), skip creation and just wait.
+    try:
+        sagemaker.create_user_profile(
+            DomainId=domain_id,
+            UserProfileName=username,
+            UserSettings={
+                "ExecutionRole": SAGEMAKER_EXECUTION_ROLE_ARN,
+                "CustomFileSystemConfigs": [
+                    {
+                        "EFSFileSystemConfig": {
+                            "FileSystemId": efs_id,
+                            "FileSystemPath": f"/home/{username}",
+                        }
                     }
-                }
-            ],
-        },
+                ],
+            },
+        )
+        logger.info("Created user profile %s in domain %s", username, domain_id)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        # ResourceInUse means the profile already exists (e.g. still provisioning).
+        if code != "ResourceInUse":
+            raise
+        logger.info("User profile %s already exists, waiting for InService", username)
+
+    # Poll until InService (up to ~90 seconds).
+    _wait_for_profile_in_service(domain_id, username)
+
+
+# Maximum time (seconds) to wait for a user profile to reach InService.
+_PROFILE_WAIT_TIMEOUT = 90
+_PROFILE_POLL_INTERVAL = 3
+
+
+def _wait_for_profile_in_service(domain_id: str, username: str) -> None:
+    """Poll ``DescribeUserProfile`` until ``Status == "InService"``.
+
+    Raises ``TimeoutError`` if the profile doesn't reach ``InService``
+    within :data:`_PROFILE_WAIT_TIMEOUT` seconds. The caller's outer
+    ``try/except`` in :func:`lambda_handler` converts this into an
+    HTTP 500 with the opaque error token.
+    """
+    import time
+
+    elapsed = 0
+    while elapsed < _PROFILE_WAIT_TIMEOUT:
+        resp = sagemaker.describe_user_profile(
+            DomainId=domain_id,
+            UserProfileName=username,
+        )
+        status = resp.get("Status", "")
+        if status == "InService":
+            logger.info("User profile %s is InService (waited %ds)", username, elapsed)
+            return
+        if status == "Failed":
+            raise RuntimeError(
+                f"User profile {username} entered Failed state: "
+                f"{resp.get('FailureReason', 'unknown')}"
+            )
+        logger.info(
+            "User profile %s status=%s, waiting... (%ds/%ds)",
+            username,
+            status,
+            elapsed,
+            _PROFILE_WAIT_TIMEOUT,
+        )
+        time.sleep(_PROFILE_POLL_INTERVAL)
+        elapsed += _PROFILE_POLL_INTERVAL
+
+    raise TimeoutError(
+        f"User profile {username} did not reach InService within " f"{_PROFILE_WAIT_TIMEOUT}s"
     )
 
 
