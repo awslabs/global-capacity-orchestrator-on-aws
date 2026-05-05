@@ -698,7 +698,7 @@ class GCOAnalyticsStack(Stack):
             "StudioDomain",
             auth_mode="IAM",
             app_network_access_type="VpcOnly",
-            domain_name=f"gco-analytics-{self.region}",
+            domain_name=f"gco-studio-{self.region}",
             subnet_ids=[s.subnet_id for s in private_subnets],
             vpc_id=self.vpc.vpc_id,
             kms_key_id=self.kms_key.key_id,
@@ -867,7 +867,7 @@ class GCOAnalyticsStack(Stack):
         self.emr_app = emrserverless.CfnApplication(
             self,
             "EmrServerlessApp",
-            name=f"gco-analytics-spark-{self.region}",
+            name=f"gco-spark-{self.region}",
             release_label=EMR_SERVERLESS_RELEASE_LABEL,
             type="SPARK",
             network_configuration=emrserverless.CfnApplication.NetworkConfigurationProperty(
@@ -1124,7 +1124,7 @@ class GCOAnalyticsStack(Stack):
                 "GCOApiGatewayGlobalStack."
             ),
             environment={
-                "STUDIO_DOMAIN_NAME": f"gco-analytics-{self.region}",
+                "STUDIO_DOMAIN_ID": self.studio_domain.attr_domain_id,
                 "SAGEMAKER_EXECUTION_ROLE_ARN": self.sagemaker_execution_role.role_arn,
                 "STUDIO_EFS_ID": self.studio_efs.file_system_id,
                 "URL_EXPIRES_SECONDS": "300",

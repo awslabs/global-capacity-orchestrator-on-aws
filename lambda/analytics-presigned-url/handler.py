@@ -63,7 +63,7 @@ efs = boto3.client("efs")
 # Environment variables (read at module import, i.e. cold start)
 # ---------------------------------------------------------------------------
 
-STUDIO_DOMAIN_NAME = os.environ.get("STUDIO_DOMAIN_NAME", "")
+STUDIO_DOMAIN_ID = os.environ.get("STUDIO_DOMAIN_ID", "")
 SAGEMAKER_EXECUTION_ROLE_ARN = os.environ.get("SAGEMAKER_EXECUTION_ROLE_ARN", "")
 STUDIO_EFS_ID = os.environ.get("STUDIO_EFS_ID", "")
 URL_EXPIRES_SECONDS = int(os.environ.get("URL_EXPIRES_SECONDS", "300"))
@@ -291,11 +291,11 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return _format_error(401, _ERR_MISSING_CLAIM)
 
         # Step 2: resolve the Studio DomainId.
-        domain_id = _resolve_domain_id(STUDIO_DOMAIN_NAME)
-        if domain_id is None:
+        domain_id = STUDIO_DOMAIN_ID if STUDIO_DOMAIN_ID else _resolve_domain_id("")
+        if not domain_id:
             logger.error(
-                "SageMaker domain %r not found via ListDomains",
-                STUDIO_DOMAIN_NAME,
+                "SageMaker domain not found (STUDIO_DOMAIN_ID=%r)",
+                STUDIO_DOMAIN_ID,
             )
             return _format_error(404, _ERR_DOMAIN_NOT_FOUND)
 
