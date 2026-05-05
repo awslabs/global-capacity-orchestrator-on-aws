@@ -128,6 +128,10 @@ deployed, the following resources appear in the API-gateway region
 - **EMR Serverless application** (`SPARK` type) pinned to
   `EMR_SERVERLESS_RELEASE_LABEL` from
   [`gco/stacks/constants.py`](../gco/stacks/constants.py).
+  Once deployed, the application is visible from the Studio Data
+  panel:
+
+  ![EMR Serverless in Studio](../images/sagemaker_studio_emr_serverless.png)
 - **Cognito user pool** with a strong password policy (12+ chars,
   digits/symbols/uppercase required), SRP auth flow, and a hosted
   `UserPoolDomain` at prefix `gco-studio-<account>`.
@@ -359,6 +363,19 @@ SRP flow explained:
 
 The URL expires in 5 minutes — open it promptly.
 
+After opening the URL, Studio presents the landing screen where you
+can create or open a JupyterLab space:
+
+![SageMaker Studio landing screen](../images/sagemaker_studio_landing_screen.png)
+
+Click into a JupyterLab space to open the notebook IDE:
+
+![JupyterLab app in Studio](../images/sagemaker_studio_jupyterlab_app.png)
+
+The JupyterLab landing page shows the file browser and launcher:
+
+![JupyterLab landing page](../images/sagemaker_studio_jupyterlab_landing_page.png)
+
 ## (e) Optional user-driven install of GCO CLI and MCP server
 
 Nothing in this section is installed by CDK. Every step below is
@@ -375,6 +392,8 @@ Open a JupyterLab terminal (`File` → `New` → `Terminal`) and run:
 git clone https://github.com/awslabs/global-capacity-orchestrator-on-aws ~/gco
 pip install -e ~/gco
 ```
+
+![Cloning GCO in JupyterLab](../images/sagemaker_studio_cloning_gco_in_jupyter.png)
 
 Because `/home/sagemaker-user` (which contains `~/gco`) is mounted
 from `Studio_EFS`, the install **persists across JupyterLab restarts
