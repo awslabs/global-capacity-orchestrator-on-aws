@@ -699,9 +699,22 @@ class GCOAnalyticsStack(Stack):
             efs_file_system_config=efs_fs_config,
         )
 
+        # Security group for Studio compute — allows all outbound so
+        # notebooks can reach the internet (pip, git, etc.) via the NAT
+        # gateway. SageMaker's default VpcOnly security group only permits
+        # NFS traffic, which blocks all internet access from notebooks.
+        self.studio_compute_sg = ec2.SecurityGroup(
+            self,
+            "StudioComputeSg",
+            vpc=self.vpc,
+            description="Allows outbound internet access from Studio notebooks",
+            allow_all_outbound=True,
+        )
+
         default_user_settings = sagemaker.CfnDomain.UserSettingsProperty(
             execution_role=self.sagemaker_execution_role.role_arn,
             custom_file_system_configs=[custom_fs_config],
+            security_groups=[self.studio_compute_sg.security_group_id],
             # ``jupyter_lab_app_settings`` is deliberately omitted so
             # ``CustomImages`` stays absent — the template contains no
             # SageMaker image resources and no CustomImages
