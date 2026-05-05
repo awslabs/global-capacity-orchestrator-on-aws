@@ -41,7 +41,7 @@ EKS_ADDON_POD_IDENTITY_AGENT = "v1.3.10-eksbuild.3"
 EKS_ADDON_METRICS_SERVER = "v0.8.1-eksbuild.6"
 """Kubernetes Metrics Server — provides CPU/memory metrics for HPA and ``kubectl top``."""
 
-EKS_ADDON_EFS_CSI_DRIVER = "v3.0.1-eksbuild.1"
+EKS_ADDON_EFS_CSI_DRIVER = "v3.1.0-eksbuild.1"
 """Amazon EFS CSI Driver — mounts EFS file systems as Kubernetes persistent volumes."""
 
 EKS_ADDON_CLOUDWATCH_OBSERVABILITY = "v5.3.1-eksbuild.1"

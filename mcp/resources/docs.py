@@ -89,7 +89,7 @@ EXAMPLE_METADATA: dict[str, dict[str, str]] = {
         "summary": "vLLM OpenAI-compatible LLM serving with PagedAttention.",
         "gpu": "NVIDIA",
         "opt_in": "",
-        "submission": "gco inference deploy my-llm -i vllm/vllm-openai:v0.20.0 --gpu-count 1",
+        "submission": "gco inference deploy my-llm -i vllm/vllm-openai:v0.20.1 --gpu-count 1",
     },
     "inference-tgi": {
         "category": "Inference Serving",

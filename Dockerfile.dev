@@ -98,7 +98,7 @@ RUN curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubec
 # Install AWS CLI v2 — pinned to a specific release so reproducibility is
 # preserved across rebuilds. Bump when a new feature or bugfix is needed
 # (see https://github.com/aws/aws-cli/blob/v2/CHANGELOG.rst).
-ARG AWSCLI_VERSION=2.32.2
+ARG AWSCLI_VERSION=2.34.42
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWSCLI_VERSION}.zip" -o "awscliv2.zip" \
     && unzip awscliv2.zip \
     && ./aws/install \
@@ -113,7 +113,7 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWSCLI_VERSION}
 # here. Pinned to a specific version to keep the image reproducible —
 # bump intentionally when testing against a new Docker release.
 # Latest stable at pin time (see https://download.docker.com/linux/static/stable/x86_64/):
-ARG DOCKER_VERSION=28.5.2
+ARG DOCKER_VERSION=29.4.2
 RUN curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz" \
       -o /tmp/docker.tgz \
     && tar -xzf /tmp/docker.tgz -C /tmp \

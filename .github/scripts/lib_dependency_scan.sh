@@ -188,8 +188,8 @@ extract_k8s_version() {
 #     NODE_MAJOR|24
 #     CDK_VERSION|2.1120.0
 #     KUBECTL_VERSION|v1.35.4
-#     AWSCLI_VERSION|2.32.2
-#     DOCKER_VERSION|28.5.2
+#     AWSCLI_VERSION|2.34.42
+#     DOCKER_VERSION|29.4.2
 extract_dockerfile_pins() {
   local file="${1:-Dockerfile.dev}"
   [ -f "$file" ] || return 0
