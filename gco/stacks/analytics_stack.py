@@ -333,24 +333,6 @@ class GCOAnalyticsStack(Stack):
             security_group=self.studio_efs_security_group,
         )
 
-        # SageMaker calls DescribeMountTargets on the EFS during user profile
-        # provisioning. The default CDK-generated file system policy only
-        # allows data-plane actions (ClientMount/ClientWrite) with the
-        # AccessedViaMountTarget condition, which blocks control-plane
-        # describe calls. Add an explicit statement allowing the execution
-        # role to describe the file system.
-        self.studio_efs.add_to_resource_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                principals=[iam.AnyPrincipal()],
-                actions=[
-                    "elasticfilesystem:DescribeMountTargets",
-                    "elasticfilesystem:DescribeFileSystems",
-                ],
-                resources=[self.studio_efs.file_system_arn],
-            )
-        )
-
     # ==================================================================
     # SageMaker execution role + grants
     # ==================================================================
