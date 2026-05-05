@@ -4,24 +4,23 @@ Instantiated only when ``analytics_environment.enabled=true`` in ``cdk.json``.
 When the toggle is ``false`` (the default), ``app.py`` skips creating it so
 ``cdk synth`` emits no SageMaker, EMR Serverless, or Cognito resources.
 
-Scope after task 9 (presigned-URL Lambda wired):
+Resources (wired in this order):
 
-1. ``_create_kms_key`` (task 7.2)                         — ``Analytics_KMS_Key``
-2. ``_create_vpc_and_endpoints`` (task 7.3)               — private-isolated VPC + endpoints
-3. ``_create_access_logs_bucket`` (task 8.1)              — S3 access-logs bucket
-4. ``_create_studio_only_bucket`` (task 8.1)              — ``Studio_Only_Bucket``
-5. ``_create_studio_efs`` (task 8.4)                      — ``Studio_EFS``
-6. ``_create_execution_role_and_grants`` (task 8.2)       — ``SageMaker_Execution_Role``
-7. ``_grant_sagemaker_role_on_cluster_shared_bucket``     — cross-region IAM grant (task 8.3)
-   (task 8.3)
-8. ``_create_studio_domain`` (task 8.5)                   — ``sagemaker.CfnDomain``
-9. ``_create_emr_app`` (task 8.6)                         — ``emrserverless.CfnApplication``
-10. ``_create_cognito_pool`` (task 8.7)                   — Cognito pool + client + domain
-11. ``_create_presigned_url_lambda`` (task 9.2)           — ``Presigned_URL_Lambda``
-12. ``_apply_nag_suppressions`` (task 8.8)                — analytics-branch nag dispatch
+1. ``_create_kms_key``                                    — ``Analytics_KMS_Key``
+2. ``_create_vpc_and_endpoints``                          — private-isolated VPC + endpoints
+3. ``_create_access_logs_bucket``                         — S3 access-logs bucket
+4. ``_create_studio_only_bucket``                         — ``Studio_Only_Bucket``
+5. ``_create_studio_efs``                                 — ``Studio_EFS``
+6. ``_create_execution_role_and_grants``                  — ``SageMaker_Execution_Role``
+7. ``_grant_sagemaker_role_on_cluster_shared_bucket``     — cross-region IAM grant
+8. ``_create_studio_domain``                              — ``sagemaker.CfnDomain``
+9. ``_create_emr_app``                                    — ``emrserverless.CfnApplication``
+10. ``_create_cognito_pool``                              — Cognito pool + client + domain
+11. ``_create_presigned_url_lambda``                      — ``Presigned_URL_Lambda``
+12. ``_apply_nag_suppressions``                           — analytics-branch nag dispatch
 
-The API Gateway ``/studio/*`` wiring that consumes this Lambda lands in
-task 10.
+The API Gateway ``/studio/*`` wiring that consumes this Lambda lives in
+``gco/stacks/api_gateway_global_stack.py``.
 """
 
 from __future__ import annotations
@@ -79,9 +78,9 @@ class GCOAnalyticsStack(Stack):
     """Optional ML/analytics environment: SageMaker Studio, EMR Serverless, Cognito.
 
     Only instantiated when ``analytics_environment.enabled=true``. Lives in
-    the API gateway region so the presigned-URL Lambda (task 9) can wire
-    into the existing ``/studio/*`` routes on ``GCOApiGatewayGlobalStack``
-    without a cross-region hop.
+    the API gateway region so the presigned-URL Lambda can wire into the
+    existing ``/studio/*`` routes on ``GCOApiGatewayGlobalStack`` without
+    a cross-region hop.
     """
 
     def __init__(
@@ -97,7 +96,7 @@ class GCOAnalyticsStack(Stack):
 
         self.config = config
         # ``api_gateway_secret_arn`` is reserved for future auth wiring;
-        # accepted now so the constructor shape is stable across tasks.
+        # accepted now so the constructor signature is stable.
         self.api_gateway_secret_arn = api_gateway_secret_arn
 
         cfg = config.get_analytics_config()
@@ -108,7 +107,6 @@ class GCOAnalyticsStack(Stack):
 
         # Wiring order is load-bearing — each helper consumes resources from
         # earlier helpers (EFS ARN → execution role → studio domain, etc.).
-        # See task 8 WIRING ORDER in tasks.md for the rationale.
         self._create_kms_key()
         self._create_vpc_and_endpoints()
         self._create_access_logs_bucket()
@@ -219,7 +217,7 @@ class GCOAnalyticsStack(Stack):
             )
 
     # ==================================================================
-    # S3 buckets (task 8.1)
+    # S3 buckets
     # ==================================================================
 
     def _create_access_logs_bucket(self) -> None:
@@ -257,8 +255,8 @@ class GCOAnalyticsStack(Stack):
         Named ``gco-analytics-studio-<account>-<region>`` so the cdk-nag
         deny-list assertion (``arn:aws:s3:::gco-analytics-studio-*``) stays
         stable. KMS-encrypted with ``self.kms_key``; every access path goes
-        through the ``SageMaker_Execution_Role`` grant emitted in task 8.2 —
-        no other principal is granted access.
+        through the ``SageMaker_Execution_Role`` grant — no other principal
+        is granted access.
         """
         self.studio_only_bucket = s3.Bucket(
             self,
@@ -295,16 +293,16 @@ class GCOAnalyticsStack(Stack):
         )
 
     # ==================================================================
-    # Studio EFS (task 8.4)
+    # Studio EFS
     # ==================================================================
 
     def _create_studio_efs(self) -> None:
         """Create ``Studio_EFS`` with KMS encryption + TLS in transit.
 
         Per-user access points are created lazily by the presigned-URL
-        Lambda (task 9) on first profile creation. No access points are
-        defined here, so the file system's ``/`` root is effectively
-        inaccessible until the Lambda materializes a per-user AP.
+        Lambda on first profile creation. No access points are defined
+        here, so the file system's ``/`` root is effectively inaccessible
+        until the Lambda materializes a per-user AP.
 
         The dedicated security group only allows the VPC's private-isolated
         CIDR on TCP/2049 (NFS). SageMaker Studio mount traffic originates
@@ -336,7 +334,7 @@ class GCOAnalyticsStack(Stack):
         )
 
     # ==================================================================
-    # SageMaker execution role + grants (task 8.2)
+    # SageMaker execution role + grants
     # ==================================================================
 
     def _create_execution_role_and_grants(self) -> None:
@@ -381,9 +379,9 @@ class GCOAnalyticsStack(Stack):
         # Read-only GCO API scope: every GET route under /api/v1/*. The
         # exact API id is not known here (it lives in the api-gateway stack
         # and is discovered through SSM or CfnOutput at synth time — see
-        # the api_gateway_global_stack wiring in task 10). Scope to the
-        # api-gateway region with any REST API id for now; tighter scope
-        # lands in task 10 when AnalyticsApiConfig is introduced.
+        # the api_gateway_global_stack wiring). Scope to the api-gateway
+        # region with any REST API id for now; tighter scope is applied
+        # once ``AnalyticsApiConfig`` is wired in.
         api_gw_region = self.config.get_api_gateway_region()
         self.sagemaker_execution_role.add_to_policy(
             iam.PolicyStatement(
@@ -413,8 +411,8 @@ class GCOAnalyticsStack(Stack):
 
         # EFS mount actions — the ``elasticfilesystem:AccessPointArn``
         # condition that scopes this to the per-user AP is attached by the
-        # presigned-URL Lambda on AP creation (task 9). At this stage the
-        # grant is scoped to the EFS file-system ARN.
+        # presigned-URL Lambda on AP creation. At this stage the grant is
+        # scoped to the EFS file-system ARN.
         self.sagemaker_execution_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -577,7 +575,7 @@ class GCOAnalyticsStack(Stack):
         )
 
     # ==================================================================
-    # SageMaker Studio domain (task 8.5)
+    # SageMaker Studio domain
     # ==================================================================
 
     def _create_studio_domain(self) -> None:
@@ -593,7 +591,7 @@ class GCOAnalyticsStack(Stack):
         ``CustomFileSystemConfigs`` mounts ``self.studio_efs`` at
         ``/home/sagemaker-user`` — per-user ``/home/<username>`` isolation
         is enforced by the access points that the presigned-URL Lambda
-        creates lazily on first login (task 9).
+        creates lazily on first login.
         """
         private_subnets = self.vpc.select_subnets(
             subnet_type=ec2.SubnetType.PRIVATE_ISOLATED
@@ -636,7 +634,7 @@ class GCOAnalyticsStack(Stack):
         )
 
     # ==================================================================
-    # EMR Serverless application (task 8.6)
+    # EMR Serverless application
     # ==================================================================
 
     def _create_emr_app(self) -> None:
@@ -675,7 +673,7 @@ class GCOAnalyticsStack(Stack):
         )
 
     # ==================================================================
-    # Cognito pool + client + domain (task 8.7)
+    # Cognito pool + client + domain
     # ==================================================================
 
     def _create_cognito_pool(self) -> None:
@@ -684,10 +682,10 @@ class GCOAnalyticsStack(Stack):
         Password policy, standard threat-protection mode, and self-sign-up-
         disabled flags are configured for SRP-backed Studio logins. The
         attached ``UserPoolClient`` runs SRP auth
-        (used by ``gco analytics studio login`` — see CLI in task 12) with
-        token revocation enabled. The ``UserPoolDomain`` uses the
-        configurable prefix from ``analytics_environment.cognito.domain_prefix``
-        or defaults to ``gco-studio-<account>``.
+        (used by ``gco analytics studio login``) with token revocation
+        enabled. The ``UserPoolDomain`` uses the configurable prefix from
+        ``analytics_environment.cognito.domain_prefix`` or defaults to
+        ``gco-studio-<account>``.
         """
         self.cognito_pool = cognito.UserPool(
             self,
@@ -760,17 +758,18 @@ class GCOAnalyticsStack(Stack):
         )
 
     # ==================================================================
-    # Presigned-URL Lambda (task 9.2)
+    # Presigned-URL Lambda
     # ==================================================================
 
     def _create_presigned_url_lambda(self) -> None:
         """Create the ``Presigned_URL_Lambda`` that mints Studio login URLs.
 
-        Wired into API Gateway's ``/studio/login`` route in task 10. The
-        function lives on ``GCOAnalyticsStack`` (not the API gateway stack)
-        so its IAM role can reference ``SageMaker_Execution_Role.role_arn``
-        on ``PassRole`` and ``Studio_EFS.file_system_arn`` on the EFS
-        access-point actions without a cross-stack import.
+        Wired into API Gateway's ``/studio/login`` route from
+        ``GCOApiGatewayGlobalStack``. The function lives on
+        ``GCOAnalyticsStack`` (not the API gateway stack) so its IAM role
+        can reference ``SageMaker_Execution_Role.role_arn`` on ``PassRole``
+        and ``Studio_EFS.file_system_arn`` on the EFS access-point actions
+        without a cross-stack import.
 
         Key configuration:
 
@@ -913,7 +912,8 @@ class GCOAnalyticsStack(Stack):
             log_group=presigned_url_log_group,
             description=(
                 "Exchanges a Cognito-authorized event for a presigned "
-                "SageMaker Studio URL. Wired into /studio/login in task 10."
+                "SageMaker Studio URL. Wired into /studio/login by "
+                "GCOApiGatewayGlobalStack."
             ),
             environment={
                 "STUDIO_DOMAIN_NAME": f"gco-analytics-{self.region}",
@@ -930,7 +930,7 @@ class GCOAnalyticsStack(Stack):
             value=self.presigned_url_lambda.function_arn,
             description=(
                 "ARN of the presigned-URL Lambda — consumed by the API "
-                "Gateway stack's /studio/login integration (task 10)."
+                "Gateway stack's /studio/login integration."
             ),
         )
 
@@ -972,7 +972,7 @@ class GCOAnalyticsStack(Stack):
         )
 
     # ==================================================================
-    # Nag suppressions (task 8.8)
+    # Nag suppressions
     # ==================================================================
 
     def _apply_nag_suppressions(self) -> None:
@@ -982,9 +982,8 @@ class GCOAnalyticsStack(Stack):
         ``add_cognito_suppressions``, ``add_emr_serverless_suppressions``,
         ``add_storage_suppressions`` (for ``Studio_Only_Bucket`` + access-
         logs bucket), ``add_lambda_suppressions`` (for the presigned-URL
-        Lambda provider framework landing in task 9), and
-        ``add_iam_suppressions`` (for cross-region SSM reads + CDK custom
-        resources).
+        Lambda provider framework), and ``add_iam_suppressions`` (for
+        cross-region SSM reads + CDK custom resources).
         """
         apply_all_suppressions(
             self,

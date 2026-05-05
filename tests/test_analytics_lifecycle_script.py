@@ -1,4 +1,4 @@
-"""Tests for ``scripts/test_analytics_lifecycle.py`` (Task 15.3).
+"""Tests for ``scripts/test_analytics_lifecycle.py``.
 
 Covers:
 

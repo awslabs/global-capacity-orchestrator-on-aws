@@ -157,8 +157,8 @@ def main() -> None:
 
     # Optionally instantiate the analytics stack when explicitly enabled via
     # cdk.json. The stack lives in the API gateway region so the
-    # presigned-URL Lambda (added in a later task) can be wired into the
-    # existing /studio/* API Gateway routes without a cross-region hop.
+    # presigned-URL Lambda can be wired into the existing /studio/* API
+    # Gateway routes without a cross-region hop.
     # When the toggle is off, the stack is skipped entirely so cdk synth
     # emits no SageMaker, EMR Serverless, or Cognito resources.
     if config.get_analytics_enabled():

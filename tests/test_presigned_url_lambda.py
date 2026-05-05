@@ -129,7 +129,7 @@ def handler_module(monkeypatch: pytest.MonkeyPatch):
 
 
 # ---------------------------------------------------------------------------
-# Task 9.3 — happy path + error-path unit tests
+# Happy path + error-path unit tests
 # ---------------------------------------------------------------------------
 
 
@@ -454,7 +454,7 @@ class TestPresignedUrlResponseShapeProperty:
 
 def test_handler_module_exposes_pure_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
     """``_parse_claims``, ``_derive_posix_ids``, ``_format_success``, and
-    ``_format_error`` are factored out as pure helpers per task 9.1.
+    ``_format_error`` are factored out as pure helpers.
     """
     for key, value in _HANDLER_ENV.items():
         monkeypatch.setenv(key, value)

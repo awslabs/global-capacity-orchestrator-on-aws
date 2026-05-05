@@ -47,9 +47,9 @@ class _AnalyticsMockConfig:
     ``GCOAnalyticsStack.__init__``.
 
     ``GCOAnalyticsStack`` only reads
-    ``config.get_analytics_config()`` during construction at this task
-    level, so we expose that single method plus the minimum demographic
-    helpers needed by the base ``Stack`` identity (project name, tags).
+    ``config.get_analytics_config()`` during construction, so we expose
+    that single method plus the minimum demographic helpers needed by
+    the base ``Stack`` identity (project name, tags).
     """
 
     def __init__(

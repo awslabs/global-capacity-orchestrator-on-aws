@@ -857,7 +857,7 @@ def add_sagemaker_suppressions(
                 applies_to=applies_to,
             ),
             # SageMaker execution role does not require MFA — callers reach
-            # the role through Cognito-gated presigned URLs (task 9) rather
+            # the role through Cognito-gated presigned URLs rather
             # than direct AssumeRole calls from operator terminals.
             NagPackSuppression(
                 id="AwsSolutions-IAM4",
@@ -1288,7 +1288,7 @@ def apply_all_suppressions(
     elif stack_type == "analytics":
         # Analytics stack has S3 buckets (Studio_Only + access-logs), KMS,
         # EFS, Cognito, SageMaker, EMR Serverless, and the presigned-URL
-        # Lambda (task 9). Each helper scopes its own applies_to list.
+        # Lambda. Each helper scopes its own applies_to list.
         add_storage_suppressions(stack)
         add_sagemaker_suppressions(
             stack,

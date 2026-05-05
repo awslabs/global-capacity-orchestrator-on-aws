@@ -248,7 +248,7 @@ class TestAnalyticsApiConfigPresent:
 
 
 class TestSetAnalyticsConfigMutator:
-    """The ``set_analytics_config`` mutator must be called at most once (Task 10.3)."""
+    """The ``set_analytics_config`` mutator must be called at most once."""
 
     def test_double_call_raises(self) -> None:
         """Calling ``set_analytics_config`` twice raises ``RuntimeError``."""
