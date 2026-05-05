@@ -125,17 +125,20 @@ class LifecycleState:
 # ---------------------------------------------------------------------------
 
 
-def _expected_stack_names(project_name: str, region: str) -> list[str]:
+def _expected_stack_names(project_name: str) -> list[str]:
     """Return the ordered list of stack names the analytics loop cares about.
 
     Ordering matters for deploy/destroy phase decisions — ``detect_state``
     iterates this list to populate ``LifecycleState.stacks``.
+
+    The analytics environment lives in the API gateway region and does not
+    depend on any regional EKS cluster, so only the three collocated stacks
+    are queried.
     """
     return [
         f"{project_name}-global",
         f"{project_name}-api-gateway",
         f"{project_name}-analytics",
-        f"{project_name}-{region}",
     ]
 
 
@@ -214,7 +217,7 @@ def detect_state(
     # --- Stacks ------------------------------------------------------------
     cfn = session.client("cloudformation", region_name=region)
     stacks: dict[str, str] = {}
-    for stack_name in _expected_stack_names(project_name, region):
+    for stack_name in _expected_stack_names(project_name):
         try:
             resp = cfn.describe_stacks(StackName=stack_name)
         except ClientError as exc:
@@ -345,11 +348,9 @@ def next_step(state: LifecycleState, phase: str) -> dict[str, Any]:
         ``done`` (``bool`` — ``True`` when the phase has no remaining work).
     """
     project = state.project_name
-    region = state.region
     global_name = f"{project}-global"
     apigw_name = f"{project}-api-gateway"
     analytics_name = f"{project}-analytics"
-    regional_name = f"{project}-{region}"
 
     def _plan(action: str, command: str, reason: str, done: bool) -> dict[str, Any]:
         return {"action": action, "command": command, "reason": reason, "done": done}
@@ -363,12 +364,12 @@ def next_step(state: LifecycleState, phase: str) -> dict[str, Any]:
                 "cluster-shared bucket SSM parameters exist.",
                 False,
             )
-        if not _stack_present(state, regional_name):
+        if not _stack_present(state, apigw_name):
             return _plan(
-                "deploy-regional",
-                f"cdk deploy {regional_name}",
-                f"{regional_name} is missing — the regional cluster must be "
-                "deployed before analytics can run smoke tests.",
+                "deploy-api-gateway",
+                f"cdk deploy {apigw_name}",
+                f"{apigw_name} is missing — deploy it before analytics so "
+                "the /studio/* routes can be wired in.",
                 False,
             )
         if state.analytics_enabled and not _stack_present(state, analytics_name):
@@ -382,7 +383,7 @@ def next_step(state: LifecycleState, phase: str) -> dict[str, Any]:
         return _plan("noop", "", "All required stacks already present.", True)
 
     if phase == "test":
-        required = [global_name, apigw_name, regional_name]
+        required = [global_name, apigw_name]
         if state.analytics_enabled:
             required.append(analytics_name)
         for stack in required:
@@ -419,13 +420,6 @@ def next_step(state: LifecycleState, phase: str) -> dict[str, Any]:
                 "destroy-analytics",
                 f"cdk destroy {analytics_name} --force",
                 f"{analytics_name} exists — tear it down first.{remediation}",
-                False,
-            )
-        if _stack_present(state, regional_name):
-            return _plan(
-                "destroy-regional",
-                f"cdk destroy {regional_name} --force",
-                f"{regional_name} exists — tear it down next.{remediation}",
                 False,
             )
         if _stack_present(state, global_name):

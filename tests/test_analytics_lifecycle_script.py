@@ -146,7 +146,6 @@ class TestDetectState:
             "gco-global",
             "gco-api-gateway",
             "gco-analytics",
-            "gco-us-east-2",
         }
         assert all(present is False for present in state.ssm_params.values())
         assert state.retained_efs_count == 0
@@ -187,7 +186,7 @@ class TestDetectState:
         )
 
         with mock_aws():
-            for stack in ("gco-global", "gco-api-gateway", "gco-analytics", "gco-us-east-2"):
+            for stack in ("gco-global", "gco-api-gateway", "gco-analytics"):
                 _seed_stack("us-east-2", stack)
             _seed_ssm_params("us-east-2")
 
@@ -290,7 +289,7 @@ class TestDetectState:
 
 def _state_with_stacks(present_stacks: set[str], *, analytics_enabled: bool = False):
     """Build a ``LifecycleState`` where only ``present_stacks`` are CREATE_COMPLETE."""
-    all_stacks = {"gco-global", "gco-api-gateway", "gco-analytics", "gco-us-east-2"}
+    all_stacks = {"gco-global", "gco-api-gateway", "gco-analytics"}
     stacks = {
         name: ("CREATE_COMPLETE" if name in present_stacks else lifecycle.STACK_ABSENT)
         for name in all_stacks
@@ -313,8 +312,8 @@ class TestNextStepDeploy:
         "present,expected_action",
         [
             (set(), "deploy-gco-global"),
-            ({"gco-global"}, "deploy-regional"),
-            ({"gco-global", "gco-us-east-2"}, "deploy-analytics"),
+            ({"gco-global"}, "deploy-api-gateway"),
+            ({"gco-global", "gco-api-gateway"}, "deploy-analytics"),
         ],
     )
     def test_deploy_phase_walks_in_order(self, present, expected_action):
@@ -325,7 +324,7 @@ class TestNextStepDeploy:
 
     def test_deploy_phase_noop_when_complete(self):
         state = _state_with_stacks(
-            {"gco-global", "gco-api-gateway", "gco-analytics", "gco-us-east-2"},
+            {"gco-global", "gco-api-gateway", "gco-analytics"},
             analytics_enabled=True,
         )
         plan = lifecycle.next_step(state, "deploy")
@@ -333,7 +332,9 @@ class TestNextStepDeploy:
         assert plan["done"] is True
 
     def test_deploy_phase_skips_analytics_when_toggle_off(self):
-        state = _state_with_stacks({"gco-global", "gco-us-east-2"}, analytics_enabled=False)
+        state = _state_with_stacks(
+            {"gco-global", "gco-api-gateway"}, analytics_enabled=False
+        )
         plan = lifecycle.next_step(state, "deploy")
         assert plan["action"] == "noop"
         assert plan["done"] is True
@@ -349,12 +350,8 @@ class TestNextStepDestroy:
         "present,expected_action",
         [
             (
-                {"gco-global", "gco-api-gateway", "gco-analytics", "gco-us-east-2"},
+                {"gco-global", "gco-api-gateway", "gco-analytics"},
                 "destroy-analytics",
-            ),
-            (
-                {"gco-global", "gco-api-gateway", "gco-us-east-2"},
-                "destroy-regional",
             ),
             ({"gco-global", "gco-api-gateway"}, "destroy-global"),
         ],
@@ -380,7 +377,7 @@ class TestNextStepDestroy:
 class TestNextStepTestPhase:
     def test_test_phase_happy(self):
         state = _state_with_stacks(
-            {"gco-global", "gco-api-gateway", "gco-analytics", "gco-us-east-2"},
+            {"gco-global", "gco-api-gateway", "gco-analytics"},
             analytics_enabled=True,
         )
         plan = lifecycle.next_step(state, "test")
@@ -390,7 +387,7 @@ class TestNextStepTestPhase:
 
     def test_test_phase_blocked_on_stuck_stack(self):
         state = _state_with_stacks(
-            {"gco-global", "gco-api-gateway", "gco-us-east-2"}, analytics_enabled=True
+            {"gco-global", "gco-api-gateway"}, analytics_enabled=True
         )
         # Replace gco-analytics with a stuck status.
         stacks = dict(state.stacks)
@@ -417,7 +414,7 @@ class TestFormatRemediation:
     def test_clean_state(self):
         """7. Clean state returns the sentinel string."""
         state = _state_with_stacks(
-            {"gco-global", "gco-api-gateway", "gco-us-east-2"}, analytics_enabled=False
+            {"gco-global", "gco-api-gateway"}, analytics_enabled=False
         )
         assert lifecycle.format_remediation(state) == "No remediation needed — state is clean."
 
@@ -518,7 +515,6 @@ class TestMain:
                 "gco-global": "CREATE_COMPLETE",
                 "gco-api-gateway": "CREATE_COMPLETE",
                 "gco-analytics": "ROLLBACK_FAILED",
-                "gco-us-east-2": "CREATE_COMPLETE",
             },
             ssm_params={
                 "/gco/cluster-shared-bucket/name": True,
