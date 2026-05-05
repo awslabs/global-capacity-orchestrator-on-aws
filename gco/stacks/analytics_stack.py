@@ -136,7 +136,7 @@ class GCOAnalyticsStack(Stack):
         self.kms_key = kms.Key(
             self,
             "AnalyticsKmsKey",
-            description="Analytics_KMS_Key — encrypts analytics S3 buckets, Studio EFS, SageMaker artifacts",
+            description="Analytics_KMS_Key - encrypts analytics S3 buckets, Studio EFS, SageMaker artifacts",
             enable_key_rotation=True,
             pending_window=Duration.days(7),
             removal_policy=RemovalPolicy.DESTROY,
@@ -312,7 +312,7 @@ class GCOAnalyticsStack(Stack):
             self,
             "StudioEfsSecurityGroup",
             vpc=self.vpc,
-            description="SG for Studio_EFS — allows NFS from the analytics VPC only",
+            description="SG for Studio_EFS - allows NFS from the analytics VPC only",
             allow_all_outbound=False,
         )
         self.studio_efs_security_group.add_ingress_rule(
@@ -362,7 +362,7 @@ class GCOAnalyticsStack(Stack):
             role_name=f"{SAGEMAKER_ROLE_NAME_PREFIX}-gco-analytics-exec-{self.region}",
             assumed_by=iam.ServicePrincipal("sagemaker.amazonaws.com"),
             description=(
-                "SageMaker_Execution_Role — assumed by notebooks in the Studio "
+                "SageMaker_Execution_Role - assumed by notebooks in the Studio "
                 "domain. Grants RW on Studio_Only_Bucket and (via a separate "
                 "cross-region policy) Cluster_Shared_Bucket, plus read-only GCO "
                 "API access and SQS job submission."
@@ -625,6 +625,11 @@ class GCOAnalyticsStack(Stack):
             kms_key_id=self.kms_key.key_id,
             default_user_settings=default_user_settings,
         )
+
+        # The domain validates that the EFS file system has mount targets in
+        # every subnet before stabilizing. CDK doesn't infer this dependency
+        # from the file_system_id reference alone, so we add it explicitly.
+        self.studio_domain.node.add_dependency(self.studio_efs)
 
         CfnOutput(
             self,
@@ -929,7 +934,7 @@ class GCOAnalyticsStack(Stack):
             "PresignedUrlLambdaArn",
             value=self.presigned_url_lambda.function_arn,
             description=(
-                "ARN of the presigned-URL Lambda — consumed by the API "
+                "ARN of the presigned-URL Lambda - consumed by the API "
                 "Gateway stack's /studio/login integration."
             ),
         )

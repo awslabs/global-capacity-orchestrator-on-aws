@@ -332,9 +332,7 @@ class TestNextStepDeploy:
         assert plan["done"] is True
 
     def test_deploy_phase_skips_analytics_when_toggle_off(self):
-        state = _state_with_stacks(
-            {"gco-global", "gco-api-gateway"}, analytics_enabled=False
-        )
+        state = _state_with_stacks({"gco-global", "gco-api-gateway"}, analytics_enabled=False)
         plan = lifecycle.next_step(state, "deploy")
         assert plan["action"] == "noop"
         assert plan["done"] is True
@@ -386,9 +384,7 @@ class TestNextStepTestPhase:
         assert plan["done"] is True
 
     def test_test_phase_blocked_on_stuck_stack(self):
-        state = _state_with_stacks(
-            {"gco-global", "gco-api-gateway"}, analytics_enabled=True
-        )
+        state = _state_with_stacks({"gco-global", "gco-api-gateway"}, analytics_enabled=True)
         # Replace gco-analytics with a stuck status.
         stacks = dict(state.stacks)
         stacks["gco-analytics"] = "ROLLBACK_COMPLETE"
@@ -413,9 +409,7 @@ class TestNextStepTestPhase:
 class TestFormatRemediation:
     def test_clean_state(self):
         """7. Clean state returns the sentinel string."""
-        state = _state_with_stacks(
-            {"gco-global", "gco-api-gateway"}, analytics_enabled=False
-        )
+        state = _state_with_stacks({"gco-global", "gco-api-gateway"}, analytics_enabled=False)
         assert lifecycle.format_remediation(state) == "No remediation needed — state is clean."
 
     def test_with_orphans(self):
