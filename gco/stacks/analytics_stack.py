@@ -121,7 +121,7 @@ class GCOAnalyticsStack(Stack):
         self._apply_nag_suppressions()
 
     # ==================================================================
-    # KMS + VPC (tasks 7.2, 7.3)
+    # KMS + VPC
     # ==================================================================
 
     def _create_kms_key(self) -> None:
@@ -333,6 +333,24 @@ class GCOAnalyticsStack(Stack):
             security_group=self.studio_efs_security_group,
         )
 
+        # SageMaker calls DescribeMountTargets on the EFS during user profile
+        # provisioning. The default CDK-generated file system policy only
+        # allows data-plane actions (ClientMount/ClientWrite) with the
+        # AccessedViaMountTarget condition, which blocks control-plane
+        # describe calls. Add an explicit statement allowing the execution
+        # role to describe the file system.
+        self.studio_efs.add_to_resource_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                principals=[iam.AnyPrincipal()],
+                actions=[
+                    "elasticfilesystem:DescribeMountTargets",
+                    "elasticfilesystem:DescribeFileSystems",
+                ],
+                resources=[self.studio_efs.file_system_arn],
+            )
+        )
+
     # ==================================================================
     # SageMaker execution role + grants
     # ==================================================================
@@ -409,10 +427,7 @@ class GCOAnalyticsStack(Stack):
             )
         )
 
-        # EFS mount actions — the ``elasticfilesystem:AccessPointArn``
-        # condition that scopes this to the per-user AP is attached by the
-        # presigned-URL Lambda on AP creation. At this stage the grant is
-        # scoped to the EFS file-system ARN.
+        # EFS mount actions — scoped to the Studio EFS file-system ARN.
         self.sagemaker_execution_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -422,6 +437,49 @@ class GCOAnalyticsStack(Stack):
                     "elasticfilesystem:ClientRootAccess",
                 ],
                 resources=[self.studio_efs.file_system_arn],
+            )
+        )
+
+        # DescribeMountTargets does not support resource-level scoping —
+        # SageMaker calls it during user profile provisioning to validate
+        # the EFS mount configuration.
+        self.sagemaker_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "elasticfilesystem:DescribeMountTargets",
+                    "elasticfilesystem:DescribeFileSystems",
+                ],
+                resources=["*"],
+            )
+        )
+
+        # SageMaker Studio UI actions — the execution role is assumed by
+        # the Studio notebook runtime and needs these to render the IDE,
+        # list spaces/apps, and manage its own lifecycle.
+        self.sagemaker_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "sagemaker:DescribeDomain",
+                    "sagemaker:DescribeUserProfile",
+                    "sagemaker:ListSpaces",
+                    "sagemaker:ListApps",
+                    "sagemaker:DescribeApp",
+                    "sagemaker:DescribeSpace",
+                    "sagemaker:CreateApp",
+                    "sagemaker:DeleteApp",
+                    "sagemaker:CreateSpace",
+                    "sagemaker:DeleteSpace",
+                    "sagemaker:UpdateSpace",
+                    "sagemaker:ListTags",
+                ],
+                resources=[
+                    f"arn:aws:sagemaker:{self.region}:{self.account}:domain/*",
+                    f"arn:aws:sagemaker:{self.region}:{self.account}:user-profile/*/*",
+                    f"arn:aws:sagemaker:{self.region}:{self.account}:space/*/*",
+                    f"arn:aws:sagemaker:{self.region}:{self.account}:app/*/*/*/*",
+                ],
             )
         )
 

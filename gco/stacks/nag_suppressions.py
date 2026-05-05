@@ -828,6 +828,13 @@ def add_sagemaker_suppressions(
         # shared bucket's KMS key — only matched when s3 is the invoking
         # service in the global region.
         f"Condition::kms:ViaService:s3.{gbl_region}.amazonaws.com",
+        # Studio UI actions — the execution role is assumed by the Studio
+        # runtime and needs domain/space/app/user-profile wildcards to
+        # render the IDE and manage notebook apps.
+        f"Resource::arn:aws:sagemaker:{api_region}:<AWS::AccountId>:domain/*",
+        f"Resource::arn:aws:sagemaker:{api_region}:<AWS::AccountId>:user-profile/*/*",
+        f"Resource::arn:aws:sagemaker:{api_region}:<AWS::AccountId>:space/*/*",
+        f"Resource::arn:aws:sagemaker:{api_region}:<AWS::AccountId>:app/*/*/*/*",
     ]
 
     NagSuppressions.add_stack_suppressions(
