@@ -108,19 +108,3 @@ query-filters:
   - exclude:
       id: py/incomplete-url-substring-sanitization
 
-  # py/weak-sensitive-data-hashing
-  #
-  # Fires on ``cli/analytics_user_mgmt.py::_hash_sha256`` — the SRP
-  # message-digest primitive used by ``gco analytics studio login``.
-  # SRP (RFC 5054) requires SHA-1 or SHA-256 as the protocol-level
-  # digest; replacing it with PBKDF2 / bcrypt / argon2 would break
-  # authentication server-side. The password itself is never stored
-  # (only the verifier ``v = g^x mod N`` on the Cognito server), so
-  # the password-hashing-for-storage concern this rule targets does
-  # not apply.
-  #
-  # Genuine password-hashing regressions (e.g. someone adding a new
-  # ``hashlib.sha256(password)`` call elsewhere) should surface in
-  # code review. The SRP file is the only legitimate caller.
-  - exclude:
-      id: py/weak-sensitive-data-hashing

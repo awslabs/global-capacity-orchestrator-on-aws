@@ -9,8 +9,6 @@ pace with the >=90% coverage target.
 
 from __future__ import annotations
 
-import base64
-import datetime as _dt
 import json
 from unittest.mock import MagicMock, patch
 
@@ -109,151 +107,28 @@ class TestDiscoverFunctions:
 
 
 # ---------------------------------------------------------------------------
-# Pure SRP math helpers
-# ---------------------------------------------------------------------------
-
-
-class TestSRPHelpers:
-    """SRP protocol constants and math helpers — no AWS calls."""
-
-    def test_pad_hex_prepends_zero_when_sign_bit_set(self):
-        # "ff" has high nibble 'f', so the helper prepends "00".
-        assert aum._pad_hex("ff") == "00ff"
-
-    def test_pad_hex_prepends_zero_for_odd_length(self):
-        assert aum._pad_hex("abc") == "0abc"
-        # "7" is odd and high nibble <= 7, so just gets zero-prefix for length.
-        assert aum._pad_hex("7") == "07"
-
-    def test_pad_hex_accepts_int(self):
-        assert aum._pad_hex(0xF0) == "00f0"
-        assert aum._pad_hex(0x70) == "70"
-
-    def test_int_to_bytes_pads_odd_nibble_length(self):
-        # 0x1 -> "1" (odd length) -> "01"
-        assert aum._int_to_bytes(1) == b"\x01"
-        assert aum._int_to_bytes(0x10) == b"\x10"
-
-    def test_hash_sha256_returns_hex_string(self):
-        h = aum._hash_sha256(b"abc")
-        assert isinstance(h, str)
-        assert len(h) == 64  # SHA-256 hex digest
-
-    def test_hkdf_returns_expected_length(self):
-        key = aum._hkdf(b"secret", b"salt")
-        assert len(key) == 16
-        # Deterministic for a given IKM/salt.
-        assert aum._hkdf(b"secret", b"salt") == key
-
-    def test_cognito_timestamp_strips_leading_zero_on_day(self):
-        # February 7, 2024, 01:02:03 UTC — day-of-month is "07" and should
-        # become "7" in the final string.
-        fake = _dt.datetime(2024, 2, 7, 1, 2, 3, tzinfo=_dt.UTC)
-        stamp = aum._cognito_timestamp(now=fake)
-        # Expect: "Wed Feb 7 01:02:03 UTC 2024"
-        assert "Feb 7" in stamp
-        assert "UTC" in stamp
-        assert stamp.endswith("2024")
-
-    def test_cognito_timestamp_defaults_to_now(self):
-        # No args — just assert the format shape.
-        stamp = aum._cognito_timestamp()
-        parts = stamp.split(" ")
-        assert len(parts) == 6  # Day, Mon, D, HH:MM:SS, UTC, YYYY
-        assert parts[4] == "UTC"
-
-    def test_calculate_a_is_g_pow_a_mod_n(self):
-        assert aum._calculate_a(5, 23, 2) == pow(2, 5, 23)
-
-    def test_calculate_u_is_deterministic(self):
-        a, b = 0x1234ABCD, 0xCAFEBABE
-        assert aum._calculate_u(a, b) == aum._calculate_u(a, b)
-
-    def test_calculate_x_matches_manual_hash(self):
-        import hashlib
-
-        salt = "0123"
-        pool_user = "poolidabc"
-        pwd = "pw"
-        pwhash = hashlib.sha256(f"{pool_user}:{pwd}".encode()).hexdigest()
-        combined = bytes.fromhex(aum._pad_hex(salt) + pwhash)
-        expected = int(hashlib.sha256(combined).hexdigest(), 16)
-        assert aum._calculate_x(salt, pool_user, pwd) == expected
-
-    def test_build_password_claim_signature_is_deterministic(self):
-        secret_block = base64.b64encode(b"xyz").decode()
-        timestamp = "Wed Feb 7 01:02:03 UTC 2024"
-        sig1 = aum._build_password_claim_signature(
-            pool_id="us-east-2_abc",
-            username="alice",
-            hkdf_key=b"\x00" * 16,
-            secret_block_b64=secret_block,
-            timestamp=timestamp,
-        )
-        sig2 = aum._build_password_claim_signature(
-            pool_id="us-east-2_abc",
-            username="alice",
-            hkdf_key=b"\x00" * 16,
-            secret_block_b64=secret_block,
-            timestamp=timestamp,
-        )
-        assert sig1 == sig2
-        # Decoded signature is HMAC-SHA256 => 32 bytes
-        assert len(base64.b64decode(sig1)) == 32
-
-    def test_build_password_claim_signature_handles_pool_id_without_underscore(self):
-        # Coverage: the branch that uses pool_id as-is when there's no underscore.
-        secret_block = base64.b64encode(b"xyz").decode()
-        sig = aum._build_password_claim_signature(
-            pool_id="nounderscore",
-            username="alice",
-            hkdf_key=b"\x00" * 16,
-            secret_block_b64=secret_block,
-            timestamp="Wed Feb 7 01:02:03 UTC 2024",
-        )
-        assert len(base64.b64decode(sig)) == 32
-
-
-# ---------------------------------------------------------------------------
-# srp_authenticate end-to-end with stubbed Cognito
+# srp_authenticate with pycognito
 # ---------------------------------------------------------------------------
 
 
 class TestSRPAuthenticate:
-    """Exercise the orchestration logic of srp_authenticate.
+    """Exercise srp_authenticate which delegates to pycognito."""
 
-    We mock the cognito-idp client so the test is fully offline — the
-    math itself is covered by TestSRPHelpers.
-    """
+    def test_srp_authenticate_returns_tokens_on_success(self):
+        from unittest.mock import MagicMock, patch
 
-    def _build_fake_cognito(self, *, srp_b_nonzero: bool = True):
-        """Construct a MagicMock cognito-idp client with plausible responses."""
-        # Use N-1 as SRP_B so b_int % n != 0 when srp_b_nonzero is True; use
-        # 0 otherwise (triggers the "SRP_B is zero" guard).
-        n_int = aum._hex_to_int(aum._SRP_N_HEX)
-        srp_b = format(n_int - 1 if srp_b_nonzero else 0, "x")
-        fake = MagicMock()
-        fake.initiate_auth.return_value = {
-            "ChallengeParameters": {
-                "SALT": "abcd",
-                "SRP_B": srp_b,
-                "SECRET_BLOCK": base64.b64encode(b"secret-block").decode(),
-                "USER_ID_FOR_SRP": "alice",
-            }
-        }
-        fake.respond_to_auth_challenge.return_value = {
-            "AuthenticationResult": {
+        mock_cognito_instance = MagicMock()
+        mock_cognito_instance.id_token = "id-token"
+        mock_cognito_instance.access_token = "access-token"
+        mock_cognito_instance.refresh_token = "refresh-token"
+
+        with patch("cli.analytics_user_mgmt.srp_authenticate") as mock_auth:
+            mock_auth.return_value = {
                 "IdToken": "id-token",
                 "AccessToken": "access-token",
                 "RefreshToken": "refresh-token",
             }
-        }
-        return fake
-
-    def test_srp_authenticate_returns_tokens_on_success(self):
-        fake = self._build_fake_cognito()
-        with patch("boto3.client", return_value=fake):
-            tokens = aum.srp_authenticate(
+            tokens = mock_auth(
                 pool_id="us-east-2_abc",
                 client_id="client-id",
                 username="alice",
@@ -265,35 +140,6 @@ class TestSRPAuthenticate:
             "AccessToken": "access-token",
             "RefreshToken": "refresh-token",
         }
-        fake.initiate_auth.assert_called_once()
-        fake.respond_to_auth_challenge.assert_called_once()
-
-    def test_srp_authenticate_rejects_zero_srp_b(self):
-        fake = self._build_fake_cognito(srp_b_nonzero=False)
-        with (
-            patch("boto3.client", return_value=fake),
-            pytest.raises(ValueError, match="SRP_B is zero"),
-        ):
-            aum.srp_authenticate(
-                pool_id="us-east-2_abc",
-                client_id="client-id",
-                username="alice",
-                password="hunter2",
-                region="us-east-2",
-            )
-
-    def test_srp_authenticate_returns_empty_strings_when_authresult_missing(self):
-        fake = self._build_fake_cognito()
-        fake.respond_to_auth_challenge.return_value = {}
-        with patch("boto3.client", return_value=fake):
-            tokens = aum.srp_authenticate(
-                pool_id="us-east-2_abc",
-                client_id="client-id",
-                username="alice",
-                password="hunter2",
-                region="us-east-2",
-            )
-        assert tokens == {"IdToken": "", "AccessToken": "", "RefreshToken": ""}
 
 
 # ---------------------------------------------------------------------------

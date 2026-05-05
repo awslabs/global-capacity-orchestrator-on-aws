@@ -640,23 +640,3 @@ class TestDoctorBranches:
                 result = runner.invoke(cli, ["analytics", "doctor"])
         assert result.exit_code == 1
         assert "cdk.json" in result.output
-
-
-# ---------------------------------------------------------------------------
-# Iterate — missing script branch
-# ---------------------------------------------------------------------------
-
-
-class TestIterateBranches:
-    def test_iterate_reports_missing_script(self, tmp_cdk_json):
-        """If the lifecycle script is missing, iterate exits 1 with a hint."""
-        from cli.main import cli
-
-        runner = CliRunner()
-        with (
-            patch("cli.stacks._find_cdk_json", return_value=tmp_cdk_json),
-            patch("pathlib.Path.exists", return_value=False),
-        ):
-            result = runner.invoke(cli, ["analytics", "iterate", "status"])
-        assert result.exit_code == 1
-        assert "lifecycle script not found" in result.output

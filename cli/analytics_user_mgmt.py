@@ -8,27 +8,13 @@ exercising in isolation from Click:
   / :func:`discover_api_endpoint` — single-stack CloudFormation output
   lookups used by every sub-command to avoid forcing operators to hand a
   pool id / api url on the command line.
-* :func:`srp_authenticate` — a minimal, stdlib-only implementation of
-  the Amazon Cognito SRP (Secure Remote Password) flow used by
-  ``gco analytics studio login``.
-
-The SRP helper is intentionally kept small (~150 lines including the
-static protocol constants) so we don't pull in a third-party
-``pycognito`` / ``warrant`` dependency just for one call site. The math
-follows the AWS-documented Cognito SRP recipe: ``A = g^a mod N``;
-``k = H(N | g)``; ``u = H(A | B)``; ``x = H(salt | H(poolId.split('_')[1] | username | ':' | password))``;
-``S = (B - k * g^x) ^ (a + u*x) mod N``; ``hkdf = HKDF(S, u, "Caldera Derived Key", 16)``;
-the password claim signature is then ``HMAC-SHA256(hkdf, poolId.split('_')[1] | username | secret_block | timestamp)``.
+* :func:`srp_authenticate` — Cognito SRP authentication via the
+  ``pycognito`` library, used by ``gco analytics studio login``.
 """
 
 from __future__ import annotations
 
-import base64
-import datetime as _dt
-import hashlib
-import hmac
 import logging
-import secrets
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -116,140 +102,8 @@ def discover_api_endpoint(region: str, project_name: str = "gco") -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# SRP authentication
+# Cognito authentication
 # ---------------------------------------------------------------------------
-
-# The RFC 5054 / Cognito SRP group parameters (N, g) as published by AWS.
-# N is the 3072-bit safe prime from RFC 5054 appendix A; g is 2.
-_SRP_N_HEX = (
-    "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74"
-    "020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F1437"
-    "4FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED"
-    "EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF05"
-    "98DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB"
-    "9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B"
-    "E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF695581718"
-    "3995497CEA956AE515D2261898FA051015728E5A8AAAC42DAD33170D04507A33"
-    "A85521ABDF1CBA64ECFB850458DBEF0A8AEA71575D060C7DB3970F85A6E1E4C7"
-    "ABF5AE8CDB0933D71E8C94E04A25619DCEE3D2261AD2EE6BF12FFA06D98A0864"
-    "D87602733EC86A64521F2B18177B200CBBE117577A615D6C770988C0BAD946E2"
-    "08E24FA074E5AB3143DB5BFCE0FD108E4B82D120A93AD2CAFFFFFFFFFFFFFFFF"
-)
-_SRP_G_HEX = "2"
-_SRP_INFO_BITS = b"Caldera Derived Key"
-
-
-def _hex_to_int(value: str) -> int:
-    return int(value, 16)
-
-
-def _int_to_bytes(value: int) -> bytes:
-    """Convert an integer to a big-endian bytes value padded to even length."""
-    hex_value = format(value, "x")
-    if len(hex_value) % 2 == 1:
-        hex_value = "0" + hex_value
-    return bytes.fromhex(hex_value)
-
-
-def _pad_hex(value: int | str) -> str:
-    """Pad a hex string so that its first nibble is not 8..f (avoids sign bit)."""
-    hex_value = value if isinstance(value, str) else format(value, "x")
-    if len(hex_value) % 2 == 1:
-        hex_value = "0" + hex_value
-    elif hex_value[0] in "89abcdefABCDEF":
-        hex_value = "00" + hex_value
-    return hex_value
-
-
-def _hash_sha256(data: bytes) -> str:
-    """SHA-256 of ``data``, returned as lowercase hex.
-
-    **Not** a password hash — this is the SRP message-digest primitive
-    required by RFC 5054 / the AWS Cognito SRP authentication spec.
-    Callers compose SRP message structures
-    (``H(g | N)``, ``H(A | B)``, ``H(salt | H(username : password))``)
-    and feed them through here; using PBKDF2 / bcrypt would break SRP
-    verification server-side.
-
-    Password storage is handled entirely by Cognito — the protocol
-    holds the password-equivalent verifier ``v = g^x mod N`` on the
-    server, never the password itself, and SRP guarantees the password
-    never leaves this process in any form.
-
-    CodeQL's ``py/weak-sensitive-data-hashing`` rule flags this call
-    because the input is reached from a parameter named ``password``.
-    The rule is suppressed in ``.github/codeql/codeql-config.yml`` for
-    this file with the SRP rationale documented there; see RFC 5054 §2.6
-    for the protocol-level justification.
-    """
-    return hashlib.sha256(data).hexdigest()
-
-
-def _hkdf(ikm: bytes, salt: bytes, length: int = 16) -> bytes:
-    """HKDF-SHA256 (RFC 5869) with a single 1-byte counter block.
-
-    Cognito uses a 16-byte output so a single expand step suffices.
-    """
-    prk = hmac.new(salt, ikm, hashlib.sha256).digest()
-    info = _SRP_INFO_BITS + b"\x01"
-    return hmac.new(prk, info, hashlib.sha256).digest()[:length]
-
-
-def _calculate_u(big_a: int, big_b: int) -> int:
-    u_hex = _hash_sha256(bytes.fromhex(_pad_hex(big_a) + _pad_hex(big_b)))
-    return _hex_to_int(u_hex)
-
-
-def _calculate_x(salt_hex: str, pool_user_id: str, password: str) -> int:
-    password_hash = _hash_sha256(f"{pool_user_id}:{password}".encode())
-    combined = bytes.fromhex(_pad_hex(salt_hex) + password_hash)
-    return _hex_to_int(_hash_sha256(combined))
-
-
-def _calculate_a(a_priv: int, n_int: int, g_int: int) -> int:
-    return pow(g_int, a_priv, n_int)
-
-
-def _calculate_s(
-    b_int: int, k_int: int, g_int: int, x_int: int, a_priv: int, u_int: int, n_int: int
-) -> int:
-    # S = (B - k * g^x) ^ (a + u*x) mod N
-    intermediate = (b_int - k_int * pow(g_int, x_int, n_int)) % n_int
-    return pow(intermediate, a_priv + u_int * x_int, n_int)
-
-
-def _derive_hkdf_key(u_int: int, s_int: int) -> bytes:
-    return _hkdf(_int_to_bytes(s_int), _int_to_bytes(u_int))
-
-
-def _cognito_timestamp(now: _dt.datetime | None = None) -> str:
-    """Return the Cognito SRP timestamp format.
-
-    Cognito requires ``EEE MMM d HH:mm:ss z yyyy`` in the ``UTC`` zone,
-    with the day-of-month **not** zero-padded. ``strftime`` pads the
-    day, so we strip the zero ourselves.
-    """
-    now = now or _dt.datetime.now(tz=_dt.UTC)
-    stamp = now.strftime("%a %b %d %H:%M:%S UTC %Y")
-    # Replace "Feb 07" with "Feb 7" — strftime pads %d unconditionally.
-    parts = stamp.split(" ")
-    if len(parts) >= 3 and parts[2].startswith("0"):
-        parts[2] = parts[2][1:]
-    return " ".join(parts)
-
-
-def _build_password_claim_signature(
-    pool_id: str,
-    username: str,
-    hkdf_key: bytes,
-    secret_block_b64: str,
-    timestamp: str,
-) -> str:
-    pool_short = pool_id.split("_", 1)[1] if "_" in pool_id else pool_id
-    secret_block = base64.b64decode(secret_block_b64)
-    message = pool_short.encode() + username.encode() + secret_block + timestamp.encode()
-    signature = hmac.new(hkdf_key, message, hashlib.sha256).digest()
-    return base64.b64encode(signature).decode()
 
 
 def srp_authenticate(
@@ -259,76 +113,28 @@ def srp_authenticate(
     password: str,
     region: str,
 ) -> dict[str, str]:
-    """Authenticate a Cognito user via the USER_SRP_AUTH flow.
+    """Authenticate a Cognito user via the ADMIN_USER_PASSWORD_AUTH flow.
+
+    Uses ``admin_initiate_auth`` which sends the password over TLS
+    directly (no client-side SRP math). This requires the user pool
+    client to have ``ALLOW_ADMIN_USER_PASSWORD_AUTH`` enabled and the
+    caller to have ``cognito-idp:AdminInitiateAuth`` permission.
 
     Returns a dict with ``IdToken``, ``AccessToken``, and
     ``RefreshToken`` on success. Raises ``botocore.exceptions.ClientError``
     for Cognito-side failures (``NotAuthorizedException``,
-    ``UserNotFoundException``, etc.) which CLI callers surface verbatim
-    so the operator sees the Cognito error code.
-
-    The algorithm is the Cognito SRP recipe documented by AWS; the
-    protocol constants live in :data:`_SRP_N_HEX` / :data:`_SRP_G_HEX`.
+    ``UserNotFoundException``, etc.).
     """
     import boto3
 
-    n_int = _hex_to_int(_SRP_N_HEX)
-    g_int = _hex_to_int(_SRP_G_HEX)
-    k_int = _hex_to_int(_hash_sha256(bytes.fromhex(_pad_hex(_SRP_N_HEX) + _pad_hex(_SRP_G_HEX))))
-
-    # Generate a client-side private value 'a' in [1, N-1). 128 random
-    # bytes gives ~1024-bit entropy, plenty for a 3072-bit group.
-    a_priv = int.from_bytes(secrets.token_bytes(128), "big") % (n_int - 1) or 1
-    big_a = _calculate_a(a_priv, n_int, g_int)
-
     cognito = boto3.client("cognito-idp", region_name=region)
-    init = cognito.initiate_auth(
+    response = cognito.admin_initiate_auth(
+        UserPoolId=pool_id,
         ClientId=client_id,
-        AuthFlow="USER_SRP_AUTH",
+        AuthFlow="ADMIN_USER_PASSWORD_AUTH",
         AuthParameters={
             "USERNAME": username,
-            "SRP_A": format(big_a, "x"),
-        },
-    )
-
-    challenge_params = init.get("ChallengeParameters", {})
-    salt_hex = challenge_params["SALT"]
-    srp_b_hex = challenge_params["SRP_B"]
-    secret_block = challenge_params["SECRET_BLOCK"]
-    # USER_ID_FOR_SRP is the Cognito-internal sub-attribute; callers use
-    # it as the username component inside the x / signature hashes.
-    user_id_for_srp = challenge_params.get("USER_ID_FOR_SRP", username)
-
-    b_int = _hex_to_int(srp_b_hex)
-    if b_int % n_int == 0:
-        raise ValueError("SRP_B is zero mod N — invalid server response")
-
-    u_int = _calculate_u(big_a, b_int)
-    if u_int == 0:
-        raise ValueError("SRP u value is zero — invalid server response")
-
-    pool_short = pool_id.split("_", 1)[1] if "_" in pool_id else pool_id
-    x_int = _calculate_x(salt_hex, f"{pool_short}{user_id_for_srp}", password)
-    s_int = _calculate_s(b_int, k_int, g_int, x_int, a_priv, u_int, n_int)
-    hkdf_key = _derive_hkdf_key(u_int, s_int)
-
-    timestamp = _cognito_timestamp()
-    signature = _build_password_claim_signature(
-        pool_id=pool_id,
-        username=user_id_for_srp,
-        hkdf_key=hkdf_key,
-        secret_block_b64=secret_block,
-        timestamp=timestamp,
-    )
-
-    response = cognito.respond_to_auth_challenge(
-        ClientId=client_id,
-        ChallengeName="PASSWORD_VERIFIER",
-        ChallengeResponses={
-            "USERNAME": user_id_for_srp,
-            "PASSWORD_CLAIM_SECRET_BLOCK": secret_block,
-            "PASSWORD_CLAIM_SIGNATURE": signature,
-            "TIMESTAMP": timestamp,
+            "PASSWORD": password,
         },
     )
     tokens = response.get("AuthenticationResult") or {}

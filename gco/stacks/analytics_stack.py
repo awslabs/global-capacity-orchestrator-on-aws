@@ -723,7 +723,10 @@ class GCOAnalyticsStack(Stack):
 
         self.cognito_client = self.cognito_pool.add_client(
             "StudioUserPoolClient",
-            auth_flows=cognito.AuthFlow(user_srp=True),
+            auth_flows=cognito.AuthFlow(
+                user_srp=True,
+                admin_user_password=True,
+            ),
             prevent_user_existence_errors=True,
             enable_token_revocation=True,
         )
