@@ -268,7 +268,9 @@ class TestGlobalStackSynthesis:
         template.resource_count_is("AWS::GlobalAccelerator::EndpointGroup", 1)
 
     def test_global_stack_creates_ssm_parameters(self):
-        """Test that GlobalStack creates SSM parameters for endpoint groups and DynamoDB tables."""
+        """Test that GlobalStack creates SSM parameters for endpoint groups, DynamoDB tables,
+        the model bucket, and the always-on Cluster_Shared_Bucket.
+        """
         from gco.stacks.global_stack import GCOGlobalStack
 
         app = cdk.App()
@@ -276,9 +278,11 @@ class TestGlobalStackSynthesis:
         stack = GCOGlobalStack(app, "test-synth-ssm", config=config)
 
         template = assertions.Template.from_stack(stack)
-        # 1 for endpoint groups + 4 for DynamoDB tables (templates, webhooks, jobs, inference-endpoints)
-        # + 1 for model bucket name
-        template.resource_count_is("AWS::SSM::Parameter", 6)
+        # 1 for endpoint groups + 4 for DynamoDB tables (templates, webhooks, jobs,
+        # inference-endpoints) + 1 for model bucket name + 3 for the always-on
+        # Cluster_Shared_Bucket (/gco/cluster-shared-bucket/name, /arn, /region)
+        # published unconditionally by GCOGlobalStack.
+        template.resource_count_is("AWS::SSM::Parameter", 9)
 
 
 class TestMonitoringStackMethods:
@@ -1954,3 +1958,338 @@ class TestAuroraPgvector:
                 reader_count += 1
         assert writer_count >= 1, "Should have at least 1 writer instance"
         assert reader_count >= 1, "Should have at least 1 reader instance"
+
+
+# =============================================================================
+# Always-on Cluster_Shared_Bucket integration — ConfigMap + IAM grant
+# =============================================================================
+
+
+class TestClusterSharedBucketRegionalIntegration:
+    """Regression guards for the always-on ``Cluster_Shared_Bucket`` plumbing
+    in ``GCORegionalStack``.
+
+    Every regional stack SHALL:
+
+    1. Populate the three ``{{CLUSTER_SHARED_BUCKET}}``,
+       ``{{CLUSTER_SHARED_BUCKET_ARN}}``, and ``{{CLUSTER_SHARED_BUCKET_REGION}}``
+       keys in the ``KubectlApplyManifests`` CustomResource's
+       ``ImageReplacements`` property with non-empty values (tokens or strings).
+    2. Attach two IAM policy statements to ``service_account_role`` — an
+       S3 RW grant scoped to the cluster-shared bucket ARN (resolved via
+       ``ReadClusterSharedBucketArn`` ``AwsCustomResource``) and a KMS
+       ``Decrypt|GenerateDataKey`` grant scoped by ``kms:ViaService`` to
+       the cluster-shared bucket's region.
+    3. Synthesize to a template that is shape-identical across the
+       ``analytics_environment.enabled=true`` and ``=false`` cases —
+       the regional stack does not read the analytics toggle, so flipping
+       it MUST NOT produce any diff in the regional template's
+       ``KubectlApplyManifests`` or ``AWS::IAM::Policy`` resources. Any
+       delta lives in ``gco-analytics``, not the regional stack.
+    """
+
+    @staticmethod
+    def _synth(
+        analytics_enabled: bool,
+        logical_name: str,
+    ) -> assertions.Template:
+        """Synthesize the regional stack with a given analytics toggle value.
+
+        The regional stack itself never reads ``analytics_environment.*``,
+        so the two synth variants SHOULD produce shape-identical templates.
+        The toggle is passed through ``cdk.App`` context so any future
+        accidental read would surface as a template diff in the
+        ``test_regional_stack_shape_identical_across_analytics_toggle``
+        assertion below.
+        """
+        from gco.stacks.regional_stack import GCORegionalStack
+
+        context = {
+            "analytics_environment": {
+                "enabled": analytics_enabled,
+                "hyperpod": {"enabled": False},
+                "cognito": {"domain_prefix": None, "removal_policy": "destroy"},
+                "efs": {"removal_policy": "destroy"},
+                "studio": {"user_profile_name_prefix": None},
+            },
+        }
+        app = cdk.App(context=context)
+        config = MockConfigLoader(app)
+
+        with (
+            patch("gco.stacks.regional_stack.ecr_assets.DockerImageAsset") as mock_docker,
+            patch.object(
+                GCORegionalStack,
+                "_create_helm_installer_lambda",
+                TestRegionalStackSynthesis._mock_helm_installer,
+            ),
+        ):
+            mock_image = MagicMock()
+            mock_image.image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/test:latest"
+            mock_docker.return_value = mock_image
+
+            stack = GCORegionalStack(
+                app,
+                logical_name,
+                config=config,
+                region="us-east-1",
+                auth_secret_arn="arn:aws:secretsmanager:us-east-1:123456789012:secret:test-secret",  # nosec B106 - test fixture ARN
+                env=cdk.Environment(account="123456789012", region="us-east-1"),
+            )
+            return assertions.Template.from_stack(stack)
+
+    @staticmethod
+    def _kubectl_apply_properties(template: assertions.Template) -> dict:
+        """Return the ``ImageReplacements`` property of the
+        ``KubectlApplyManifests`` custom resource.
+
+        The custom resource is synthesized as
+        ``AWS::CloudFormation::CustomResource`` with logical id
+        ``KubectlApplyManifests``. There is a second, sibling custom
+        resource ``KubectlApplyPostHelmManifests`` that re-applies after
+        helm finishes — we assert on the primary one here; the
+        always-present ConfigMap property test covers the post-helm
+        sibling separately via Hypothesis.
+        """
+        resources = template.to_json().get("Resources", {})
+        primary = resources.get("KubectlApplyManifests")
+        assert primary is not None, (
+            "KubectlApplyManifests CustomResource must be present in the "
+            "synthesized template. Available logical ids: "
+            f"{sorted(k for k in resources if 'KubectlApply' in k)}"
+        )
+        properties: dict = primary.get("Properties", {})
+        return properties
+
+    def test_configmap_replacements_present_when_analytics_disabled(self):
+        """Default (``enabled=false``) synthesis populates all three CLUSTER_SHARED_BUCKET keys."""
+        template = self._synth(analytics_enabled=False, logical_name="test-cs-cm-disabled")
+
+        props = self._kubectl_apply_properties(template)
+        replacements = props.get("ImageReplacements", {})
+
+        required_keys = (
+            "{{CLUSTER_SHARED_BUCKET}}",
+            "{{CLUSTER_SHARED_BUCKET_ARN}}",
+            "{{CLUSTER_SHARED_BUCKET_REGION}}",
+        )
+        for key in required_keys:
+            assert key in replacements, (
+                f"KubectlApplyManifests.ImageReplacements must contain {key!r} "
+                f"so the gco-cluster-shared-bucket ConfigMap renders correctly "
+                f"on every regional cluster (always-on). "
+                f"Present keys: {sorted(replacements)}"
+            )
+            value = replacements[key]
+            # Values are CDK tokens (Fn::GetAtt dicts) that reference the
+            # AwsCustomResource reading the global-region SSM parameter.
+            # They are "non-empty" in the structural sense: neither None
+            # nor an empty string nor an empty dict.
+            assert value not in (None, "", {}), (
+                f"ImageReplacements[{key!r}] must be non-empty at synth time; " f"got {value!r}"
+            )
+
+    def test_iam_policy_grants_s3_rw_on_cluster_shared_bucket_when_disabled(self):
+        """``ServiceAccountRole`` has S3 RW + KMS grants that reference the
+        cluster-shared bucket ARN token, regardless of the analytics toggle.
+
+        The S3 statement's Resource entries come from the cross-region
+        ``AwsCustomResource`` ``ReadClusterSharedBucketArn``, so the check
+        is for an ``Fn::GetAtt`` reference into that CR's ``Parameter.Value``
+        response field rather than a literal ARN string.
+        """
+        template = self._synth(analytics_enabled=False, logical_name="test-cs-iam-disabled")
+        policies = template.find_resources("AWS::IAM::Policy")
+        sa_policies = {
+            lid: res
+            for lid, res in policies.items()
+            if lid.startswith("ServiceAccountRoleDefaultPolicy")
+        }
+        assert sa_policies, (
+            "ServiceAccountRoleDefaultPolicy must be present — it carries "
+            "the always-on Cluster_Shared_Bucket RW + KMS grants."
+        )
+
+        found_s3_rw_on_cluster_shared = False
+        found_kms_scoped_to_cluster_shared = False
+        for _lid, policy in sa_policies.items():
+            for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+                actions = statement.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                resources = statement.get("Resource", [])
+                if not isinstance(resources, list):
+                    resources = [resources]
+                resources_str = str(resources)
+
+                # S3 RW grant — all five actions + a ReadClusterSharedBucketArn token reference.
+                s3_rw_actions = {
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:DeleteObject",
+                    "s3:ListBucket",
+                    "s3:GetBucketLocation",
+                }
+                if s3_rw_actions.issubset(set(actions)) and (
+                    "ReadClusterSharedBucketArn" in resources_str
+                ):
+                    found_s3_rw_on_cluster_shared = True
+
+                # KMS grant — Decrypt + GenerateDataKey, scoped via kms:ViaService
+                # to s3.<region>.amazonaws.com. The region is a token
+                # (ReadClusterSharedBucketRegion AwsCustomResource).
+                if (
+                    "kms:Decrypt" in actions
+                    and "kms:GenerateDataKey" in actions
+                    and "ReadClusterSharedBucketRegion" in str(statement)
+                ):
+                    found_kms_scoped_to_cluster_shared = True
+
+        assert found_s3_rw_on_cluster_shared, (
+            "ServiceAccountRoleDefaultPolicy must contain an S3 RW statement "
+            "whose Resource entries reference the ReadClusterSharedBucketArn "
+            "AwsCustomResource (the cross-region SSM reader). This is the "
+            "always-on grant added by _grant_cluster_shared_bucket_to_job_role."
+        )
+        assert found_kms_scoped_to_cluster_shared, (
+            "ServiceAccountRoleDefaultPolicy must contain a KMS "
+            "Decrypt|GenerateDataKey statement scoped via kms:ViaService to "
+            "the cluster-shared bucket's region (ReadClusterSharedBucketRegion "
+            "AwsCustomResource)."
+        )
+
+    def test_configmap_replacements_present_when_analytics_enabled(self):
+        """Flipping ``analytics_environment.enabled=true`` leaves the
+        three CLUSTER_SHARED_BUCKET replacements present and populated
+        (the regional stack does not read the toggle; integration is
+        always-on)."""
+        template = self._synth(analytics_enabled=True, logical_name="test-cs-cm-enabled")
+        props = self._kubectl_apply_properties(template)
+        replacements = props.get("ImageReplacements", {})
+        for key in (
+            "{{CLUSTER_SHARED_BUCKET}}",
+            "{{CLUSTER_SHARED_BUCKET_ARN}}",
+            "{{CLUSTER_SHARED_BUCKET_REGION}}",
+        ):
+            assert key in replacements and replacements[key] not in (None, "", {}), (
+                f"With analytics_environment.enabled=true, "
+                f"ImageReplacements[{key!r}] must still be present and "
+                f"non-empty (integration is unconditional)."
+            )
+
+    @staticmethod
+    def _canonicalize_resource(resource: dict, off_stack_prefix: str, on_stack_prefix: str) -> str:
+        """Canonicalize a resource dict for byte-equivalence comparison.
+
+        Three synthesis artifacts differ between the two synth variants
+        even though the regional stack is logically identical:
+
+        1. ``DeploymentTimestamp`` in ``ImageReplacements`` is the
+           ISO-8601 synth wall-clock; compared synths run microseconds
+           apart so they generally differ.
+        2. Nested logical ids embed the top-level stack's construct id
+           (e.g. ``GCOEksClusterClusterSecurityGroupfromtestcstoggleoff``
+           vs ``...toggleon``). The stacks can't share a logical name
+           when they live in the same ``cdk.App``, so the fixture passes
+           different names in and we strip the prefix here.
+        3. CDK construct-path hashes depend on the stack name (see
+           ``GCOEksClusterClusterSecurityGroupfromSTACKNAMEKubectlLambdaSG<hash>``).
+           The hash suffix differs between the two variants purely
+           because the input path differs — it's a deterministic
+           function of the construct tree, not a real drift in the
+           logical shape of the resource. We normalize any hex hash
+           that follows ``KubectlLambdaSG`` to a placeholder.
+        """
+        import json as _json
+        import re as _re
+
+        serialized = _json.dumps(resource, sort_keys=True)
+
+        # The stack-name prefix is the logical name lower-cased with dashes
+        # removed — that is what CDK injects into nested construct ids.
+        off_token = off_stack_prefix.replace("-", "").lower()
+        on_token = on_stack_prefix.replace("-", "").lower()
+        serialized = serialized.replace(off_token, "STACKNAME")
+        serialized = serialized.replace(on_token, "STACKNAME")
+
+        # DeploymentTimestamp drifts across calls to _synth within the
+        # same test because `datetime.now()` is read at synth time.
+        serialized = _re.sub(
+            r'"\{\{DEPLOYMENT_TIMESTAMP\}\}": "[^"]*"',
+            '"{{DEPLOYMENT_TIMESTAMP}}": "<timestamp>"',
+            serialized,
+        )
+        serialized = _re.sub(
+            r'"DeploymentTimestamp": "[^"]*"',
+            '"DeploymentTimestamp": "<timestamp>"',
+            serialized,
+        )
+
+        # CDK's hash-suffix on security-group nested logical ids depends
+        # on the stack name, so even after ``STACKNAME`` substitution the
+        # trailing hex differs. Normalize ``KubectlLambdaSG<hex>`` to a
+        # constant. The hex is 16+ chars of upper-case hex digits.
+        serialized = _re.sub(
+            r"KubectlLambdaSG[0-9A-F]+",
+            "KubectlLambdaSG<hash>",
+            serialized,
+        )
+        return serialized
+
+    def test_regional_template_shape_identical_across_analytics_toggle(self):
+        """The ``analytics_environment.enabled`` toggle MUST NOT change
+        the regional stack's ``KubectlApplyManifests`` or
+        ``AWS::IAM::Policy`` resources beyond synthesis-only artifacts
+        (stack-name-embedded logical ids, synth-time deployment
+        timestamp).
+
+        Any non-artifact delta would mean the regional stack has
+        accidentally grown a dependency on the analytics toggle — which
+        would break the invariant that ``enabled=false`` is the default
+        and must leave the rest of the system untouched. Comparison is
+        by JSON canonicalization of the two resource maps, with the
+        stack-name prefix normalized to a constant and the deployment
+        timestamp normalized to ``<timestamp>``.
+        """
+        off_prefix = "test-cs-toggle-off"
+        on_prefix = "test-cs-toggle-on"
+        template_off = self._synth(analytics_enabled=False, logical_name=off_prefix)
+        template_on = self._synth(analytics_enabled=True, logical_name=on_prefix)
+
+        resources_off = template_off.to_json().get("Resources", {})
+        resources_on = template_on.to_json().get("Resources", {})
+
+        # Compare KubectlApplyManifests + KubectlApplyPostHelmManifests (both
+        # carry ImageReplacements) and every AWS::IAM::Policy resource. The
+        # logical ids are deterministic because the construct tree is the
+        # same in both synths, so a direct key-by-key dict comparison works.
+        kubectl_logical_ids = sorted(lid for lid in resources_off if "KubectlApply" in lid)
+        assert kubectl_logical_ids, (
+            "Expected at least one KubectlApply* CustomResource in the " "regional template."
+        )
+
+        for lid in kubectl_logical_ids:
+            off_json = self._canonicalize_resource(resources_off[lid], off_prefix, on_prefix)
+            on_json = self._canonicalize_resource(resources_on.get(lid, {}), off_prefix, on_prefix)
+            assert off_json == on_json, (
+                f"{lid!r} resource differs between "
+                f"analytics_environment.enabled=false and =true beyond "
+                f"synthesis-only artifacts. The regional stack must be "
+                f"independent of the analytics toggle."
+            )
+
+        policy_logical_ids = sorted(
+            lid for lid, res in resources_off.items() if res.get("Type") == "AWS::IAM::Policy"
+        )
+        assert (
+            policy_logical_ids
+        ), "Expected at least one AWS::IAM::Policy in the regional template."
+        for lid in policy_logical_ids:
+            off_json = self._canonicalize_resource(resources_off[lid], off_prefix, on_prefix)
+            on_json = self._canonicalize_resource(resources_on.get(lid, {}), off_prefix, on_prefix)
+            assert off_json == on_json, (
+                f"{lid!r} IAM policy differs between "
+                f"analytics_environment.enabled=false and =true. The regional "
+                f"stack's IAM grants are always-on and must be independent "
+                f"of the analytics toggle."
+            )

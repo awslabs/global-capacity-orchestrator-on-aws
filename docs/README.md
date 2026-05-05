@@ -22,6 +22,8 @@ Comprehensive guides for understanding, deploying, operating, and customizing GC
 | [Inference Guide](INFERENCE.md) | ML engineers | Deploy and manage multi-region GPU inference endpoints (vLLM, TGI, Triton, SGLang, TorchServe) |
 | [API Reference](API.md) | Developers | REST API documentation for manifest submission, job management, and webhooks |
 | [Customization](CUSTOMIZATION.md) | Platform teams | Add regions, tune nodepools, enable FSx/Valkey/EFA, configure queue processor |
+| [Analytics Environment](ANALYTICS.md) | Data scientists / ML engineers | Optional SageMaker Studio + EMR Serverless environment for interactive analysis of cluster data |
+| [Cluster Shared Bucket](CLUSTER_SHARED_BUCKET.md) | Operators | Always-on cross-region S3 bucket shared across all regional clusters and the analytics environment |
 | [Schedulers & Orchestrators](SCHEDULERS.md) | ML/HPC engineers | Overview of all supported schedulers and when to use each one |
 | [Troubleshooting](TROUBLESHOOTING.md) | Operators | Common issues and solutions for deployment, networking, pods, and storage |
 | [Operational Runbooks](RUNBOOKS.md) | Operators | Step-by-step incident response procedures for common failure scenarios |
@@ -59,6 +61,8 @@ If you're customizing or operating:
 
 1. [Architecture](ARCHITECTURE.md) — understand the infrastructure
 2. [Customization](CUSTOMIZATION.md) — tune for your needs
-3. [Schedulers Overview](SCHEDULERS.md) — configure scheduling tools
-4. [Troubleshooting](TROUBLESHOOTING.md) — fix issues
-5. [Operational Runbooks](RUNBOOKS.md) — incident response procedures
+3. [Cluster Shared Bucket](CLUSTER_SHARED_BUCKET.md) — the always-on shared storage layer
+4. [Analytics Environment](ANALYTICS.md) — optional Studio + EMR for interactive analysis
+5. [Schedulers Overview](SCHEDULERS.md) — configure scheduling tools
+6. [Troubleshooting](TROUBLESHOOTING.md) — fix issues
+7. [Operational Runbooks](RUNBOOKS.md) — incident response procedures

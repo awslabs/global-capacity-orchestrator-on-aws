@@ -6,15 +6,26 @@ name: "GCO CodeQL config"
 # workflow-backed scan later.
 
 # --- Paths to scan ---------------------------------------------------------
-# gco/, cli/, mcp/, lambda/, and scripts/ are the only hand-authored Python
-# packages in the repo. Everything else is generated or third-party.
+# Scope the scan to the Python packages that carry security-sensitive
+# runtime code: ``gco/``, ``cli/``, ``mcp/``, ``lambda/``, ``scripts/``.
+# Anything else (tests, demos, CDK synthesis output, caches) is either
+# already excluded via ``paths-ignore`` below or falls outside these
+# directories.
+#
+# Notable omission: the top-level ``app.py`` (the CDK app entry point)
+# is intentionally out of scope. It is composition-only glue — it wires
+# stacks together and has no user input, no network code, and no
+# credential handling — so CodeQL hits on it are almost always
+# structural. The autobuilder also crashes on single-file ``paths:``
+# entries with ``NotADirectoryError`` (github/codeql's Python
+# buildtools walks each entry as a directory), so it cannot be added
+# here even if we wanted to scan it.
 paths:
   - gco
   - cli
   - mcp
   - lambda
   - scripts
-  - app.py
 
 # --- Paths to skip ---------------------------------------------------------
 paths-ignore:
@@ -42,39 +53,58 @@ queries:
   - uses: security-and-quality
 
 # --- Query filters ---------------------------------------------------------
-# Each exclusion below names a CodeQL rule and points at the specific
-# files/patterns where we've reviewed the finding and classified it as a
-# false positive. New findings that don't match the path still surface.
+# CodeQL query-filters only support metadata-keyed matching (id, tags,
+# kind, precision, severity). There is NO per-path exclude-by-rule
+# syntax — file-level exclusions go in ``paths-ignore`` above and apply
+# to all rules. So each entry below is repo-wide by necessity; we
+# document the specific call sites we've reviewed so a future maintainer
+# can confirm the suppression still matches the intent.
 query-filters:
   # py/clear-text-logging-sensitive-data
   #
-  # CodeQL flags log messages that include identifiers it heuristically
-  # marks as "sensitive" (variables named *secret*, *token*, *arn*, etc.).
-  # Our two hits both log operational identifiers, not credential values:
+  # Heuristic rule that matches any log/print where an interpolated
+  # identifier name (e.g. ``password``, ``token``, ``secret``) is in
+  # the "sensitive" allow-list. Our call sites are all operational
+  # identifiers rather than credential values:
   #
-  #   gco/services/manifest_processor.py:~215
+  #   gco/services/manifest_processor.py
   #     Logs the *name* of a trusted registry from configuration (e.g.
   #     "nvcr.io") when it fails a format check. Public configuration data.
   #
-  #   lambda/secret-rotation/handler.py:~50
+  #   lambda/secret-rotation/handler.py
   #     Logs the rotation step name and the secret ARN (the ARN being
   #     rotated, not the secret value itself). ARNs are routinely logged
   #     in CloudTrail and are not secret material.
   #
-  # We keep the query enabled everywhere else so genuine clear-text credential
-  # logging still surfaces.
+  #   cli/commands/analytics_cmd.py
+  #     Prints the Cognito-issued temporary password from the
+  #     ``users add`` sub-command exactly once. By design: the operator
+  #     hands the temp password to the end user, who is required to
+  #     change it on first login. Not persisted anywhere.
+  #
+  #   cli/output.py
+  #     The ``print_info`` / ``print_success`` formatters receive
+  #     already-formatted strings from callers; CodeQL follows tainted
+  #     data into these sinks via the call site above. Dismissing the
+  #     rule globally here avoids scattering per-call suppressions
+  #     inside the formatter helpers.
+  #
+  # Any *new* call site that trips this rule should surface as a
+  # regression in code review — the docstring on each flagged helper
+  # must explain why the value is not actually sensitive.
   - exclude:
       id: py/clear-text-logging-sensitive-data
 
   # py/incomplete-url-substring-sanitization
   #
-  # This query warns when a URL host is checked via substring containment
-  # (e.g. `"trusted.example" in url`). That's a vulnerability only when the
-  # check is used to gate access to a URL the code then fetches. All of
-  # our hits are already scoped out by `paths-ignore: tests`, but we keep
-  # a belt-and-braces exclude so any future test-adjacent helper that
-  # uses the same `in` idiom doesn't re-trip it. Genuine URL-based access
-  # control does not live in this codebase — we gate via API Gateway IAM
-  # and the ALB's GA-IP allowlist, not by URL hostname substring checks.
+  # Warns when a URL host is checked via substring containment
+  # (e.g. ``"trusted.example" in url``). That's a vulnerability only
+  # when the check is used to gate access to a URL the code then
+  # fetches. All of our legitimate hits are in tests (already covered
+  # by ``paths-ignore: tests`` above) and in ``docs/`` example
+  # snippets (not scanned). Genuine URL-based access control does not
+  # live in this codebase — we gate via API Gateway IAM and the ALB's
+  # GA-IP allowlist, not by URL hostname substring checks.
   - exclude:
       id: py/incomplete-url-substring-sanitization
+

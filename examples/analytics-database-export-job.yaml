@@ -1,0 +1,245 @@
+# Analytics Database Export Example Job
+# Exports rows from the regional Aurora Serverless v2 PostgreSQL cluster
+# (pgvector) to Cluster_Shared_Bucket as CSV, so a SageMaker Studio
+# notebook can analyse the export without direct database credentials.
+#
+# Uses two ConfigMaps via envFrom:
+#   - gco-cluster-shared-bucket — destination (sharedBucketName,
+#     sharedBucketArn, sharedBucketRegion). Always present.
+#   - gco-aurora-pgvector — source (endpoint, port, database, secret_arn,
+#     region, role_arn). Only present when aurora_pgvector.enabled = true
+#     in cdk.json and the regional stack has been redeployed.
+#
+# An init container checks for the Aurora ConfigMap on disk and exits 0
+# when Aurora is not enabled, turning this job into a safe no-op on
+# clusters that never provisioned Aurora. The main container uses
+# psycopg2-binary to read from the vectors table and uploads the result
+# to s3://${sharedBucketName}/analytics-data/vectors-export.csv.
+#
+# Prerequisites:
+#   1. aurora_pgvector.enabled = true in cdk.json
+#   2. gco stacks deploy gco-<region>
+#      Regional stack redeploys the Aurora cluster and applies the
+#      gco-aurora-pgvector ConfigMap.
+#   3. (Optional, for the notebook reader)
+#      gco analytics enable && gco stacks deploy gco-analytics
+#
+# Submit with:
+#   gco jobs submit-direct examples/analytics-database-export-job.yaml -r us-east-1
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: analytics-database-export
+  namespace: gco-jobs
+  labels:
+    app: analytics-database-export
+    project: gco
+spec:
+  template:
+    spec:
+      serviceAccountName: gco-service-account
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      initContainers:
+      - name: aurora-check
+        image: public.ecr.aws/docker/library/busybox:1.37.0
+        command: ["sh", "-c"]
+        args:
+        - |
+          # Guard: exit 0 if aurora-pgvector is not deployed in this cluster.
+          # The regional stack creates the gco-aurora-pgvector ConfigMap
+          # only when aurora_pgvector.enabled=true. When the ConfigMap is
+          # absent the projected file at /etc/aurora/endpoint is missing
+          # (because the ConfigMap volume below is marked optional).
+          if [ ! -f /etc/aurora/endpoint ]; then
+            echo "aurora_pgvector not enabled — skipping export"
+            exit 0
+          fi
+          echo "aurora_pgvector detected — proceeding with export"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "32Mi"
+          limits:
+            cpu: "100m"
+            memory: "64Mi"
+        volumeMounts:
+        - name: aurora-cfg
+          mountPath: /etc/aurora
+          readOnly: true
+      containers:
+      - name: exporter
+        image: python:3.14.4-slim
+        command:
+        - python
+        - -c
+        - |
+          import csv, io, json, os, subprocess, sys
+
+          # Short-circuit when Aurora is not enabled. The init container
+          # already logged this case; re-check here because the main
+          # container still runs after an init container exits 0.
+          if not os.environ.get("AURORA_ENDPOINT"):
+              print("AURORA_ENDPOINT not set — aurora_pgvector not enabled, skipping export")
+              sys.exit(0)
+
+          subprocess.check_call([sys.executable, "-m", "pip", "install",
+                                 "--target", "/tmp/pylib",
+                                 "psycopg2-binary", "boto3", "-q"])
+          sys.path.insert(0, "/tmp/pylib")
+          import boto3
+          import psycopg2
+
+          secret_arn = os.environ["AURORA_SECRET_ARN"]
+          aurora_region = os.environ.get("AWS_REGION", "us-east-1")
+          sm = boto3.client("secretsmanager", region_name=aurora_region)
+          secret = json.loads(sm.get_secret_value(SecretId=secret_arn)["SecretString"])
+
+          endpoint = os.environ["AURORA_ENDPOINT"]
+          port = int(os.environ.get("AURORA_PORT", "5432"))
+          database = os.environ.get("AURORA_DATABASE", "gco_vectors")
+
+          print(f"Connecting to Aurora at {endpoint}:{port}/{database}")
+          conn = psycopg2.connect(
+              host=endpoint, port=port, dbname=database,
+              user=secret["username"], password=secret["password"],
+              sslmode="require",
+          )
+          conn.autocommit = True
+          cur = conn.cursor()
+
+          # Seed a tiny export table so the example is self-contained.
+          cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+          cur.execute("""
+              CREATE TABLE IF NOT EXISTS export_vectors (
+                  id SERIAL PRIMARY KEY,
+                  label TEXT NOT NULL,
+                  magnitude FLOAT NOT NULL
+              );
+          """)
+          cur.execute("SELECT COUNT(*) FROM export_vectors;")
+          if cur.fetchone()[0] == 0:
+              cur.executemany(
+                  "INSERT INTO export_vectors (label, magnitude) VALUES (%s, %s)",
+                  [
+                      ("rag-chunk-a", 0.91),
+                      ("rag-chunk-b", 0.54),
+                      ("rag-chunk-c", 0.78),
+                      ("rag-chunk-d", 0.22),
+                  ],
+              )
+
+          cur.execute("SELECT id, label, magnitude FROM export_vectors ORDER BY id;")
+          rows = cur.fetchall()
+          print(f"Fetched {len(rows)} rows from export_vectors")
+
+          csv_buf = io.StringIO()
+          writer = csv.writer(csv_buf)
+          writer.writerow(["id", "label", "magnitude"])
+          writer.writerows(rows)
+
+          cur.close()
+          conn.close()
+
+          # Upload the export to the always-on Cluster_Shared_Bucket.
+          bucket = os.environ["sharedBucketName"]
+          bucket_region = os.environ["sharedBucketRegion"]
+          s3 = boto3.client("s3", region_name=bucket_region)
+          key = "analytics-data/vectors-export.csv"
+          s3.put_object(
+              Bucket=bucket,
+              Key=key,
+              Body=csv_buf.getvalue().encode("utf-8"),
+              ContentType="text/csv",
+          )
+          print(f"Uploaded export to s3://{bucket}/{key}")
+          print("Database export completed successfully!")
+        envFrom:
+        - configMapRef:
+            name: gco-cluster-shared-bucket
+        env:
+        # Source — Aurora pgvector. The gco-aurora-pgvector ConfigMap is
+        # only present when aurora_pgvector.enabled = true, so each entry
+        # below is marked optional. The main container short-circuits when
+        # AURORA_ENDPOINT is unset.
+        - name: AURORA_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: gco-aurora-pgvector
+              key: endpoint
+              optional: true
+        - name: AURORA_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: gco-aurora-pgvector
+              key: port
+              optional: true
+        - name: AURORA_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: gco-aurora-pgvector
+              key: database
+              optional: true
+        - name: AURORA_SECRET_ARN
+          valueFrom:
+            configMapKeyRef:
+              name: gco-aurora-pgvector
+              key: secret_arn
+              optional: true
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: gco-aurora-pgvector
+              key: region
+              optional: true
+        - name: AWS_ROLE_ARN
+          valueFrom:
+            configMapKeyRef:
+              name: gco-aurora-pgvector
+              key: role_arn
+              optional: true
+        - name: AWS_WEB_IDENTITY_TOKEN_FILE
+          value: "/var/run/secrets/eks.amazonaws.com/serviceaccount/token"
+        volumeMounts:
+        - name: aws-iam-token
+          mountPath: /var/run/secrets/eks.amazonaws.com/serviceaccount
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+              - ALL
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+      volumes:
+      - name: aurora-cfg
+        configMap:
+          name: gco-aurora-pgvector
+          optional: true
+          items:
+          - key: endpoint
+            path: endpoint
+      - name: aws-iam-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              audience: sts.amazonaws.com
+              expirationSeconds: 86400
+              path: token
+      restartPolicy: Never
+  backoffLimit: 2

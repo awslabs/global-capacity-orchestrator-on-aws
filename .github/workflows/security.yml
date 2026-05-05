@@ -7,15 +7,17 @@
 # Triggers: push: main, pull_request, workflow_dispatch.
 #
 # Jobs (alphabetical by display name):
-#   - security:bandit:sast           — bandit on gco/, cli/
-#   - security:checkov:iac           — checkov against the whole repo
-#   - security:gitleaks:secrets      — gitleaks on current files (no git history)
-#   - security:kics:iac              — KICS on cdk.out (needs CDK synth first)
-#   - security:pip-audit:deps        — pip-audit on requirements-lock.txt
-#   - security:semgrep:sast          — semgrep scan --config auto
-#   - security:trivy:filesystem      — trivy fs on the source tree
-#   - security:trivy:container-scan  — trivy image on each built service image
-#   - security:trufflehog:secrets    — trufflehog filesystem scan
+#   - security:bandit:sast               — bandit on gco/, cli/
+#   - security:checkov:iac               — checkov against the whole repo
+#   - security:codeql:python-code-analysis
+#                                        — CodeQL security-and-quality pack on Python
+#   - security:gitleaks:secrets          — gitleaks on current files (no git history)
+#   - security:kics:iac                  — KICS on cdk.out (needs CDK synth first)
+#   - security:pip-audit:deps            — pip-audit on requirements-lock.txt
+#   - security:semgrep:sast              — semgrep scan --config auto
+#   - security:trivy:filesystem          — trivy fs on the source tree
+#   - security:trivy:container-scan      — trivy image on each built service image
+#   - security:trufflehog:secrets        — trufflehog filesystem scan
 #
 # All scans are strict: if a scan finds issues the job fails. Fix the code,
 # don't silence the tool — policy inherited from the retired GitLab pipeline.
@@ -335,3 +337,48 @@ jobs:
             kics-report.json
             kics-report.html
           retention-days: 30
+  security-codeql-python-code-analysis:
+    name: "security:codeql:python-code-analysis"
+    # CodeQL is strict like every other job in this file: if a query in the
+    # security-and-quality pack raises a finding that isn't filtered by
+    # .github/codeql/codeql-config.yml, the analyze step fails the job.
+    #
+    # Why a workflow-file scan (Advanced Setup) rather than GitHub's
+    # Default Setup: Default Setup ignores the YAML config file on disk
+    # and stores its filters in repo Settings instead. That hides the
+    # allow-list / paths-ignore choices from code review and from this
+    # file's reviewers. Advanced Setup loads the config via the action's
+    # ``config-file`` input so every suppression is pinned in git.
+    #
+    # To swap back to Default Setup: disable this job (comment it out)
+    # and re-enable Default Setup in Settings → Code security → CodeQL.
+    # The config file has no effect under Default Setup.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # Needed to upload SARIF to the Code Scanning API. Overrides the
+      # top-level ``permissions: contents: read`` for this job only.
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # Pins paths, paths-ignore, and query-filters used by the scan.
+          # See the file itself for the rationale behind each filter.
+          config-file: ./.github/codeql/codeql-config.yml
+      # No build step — the Python extractor reads the source tree
+      # directly. The autobuilder is a no-op for Python and has a bug
+      # (``NotADirectoryError`` on single-file ``paths:`` entries) so
+      # we avoid invoking it.
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

@@ -229,7 +229,7 @@ charts:
     repo_name: neuron-oci
     repo_url: oci://public.ecr.aws/neuron
     chart: neuron-helm-chart
-    version: "1.6.0"
+    version: "1.7.0"
     namespace: kube-system
     create_namespace: false
     use_oci: true

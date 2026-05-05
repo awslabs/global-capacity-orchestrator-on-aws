@@ -1,0 +1,106 @@
+# Cluster Shared Bucket Upload Example Job
+# Demonstrates the always-on Cluster_Shared_Bucket: every regional GCO
+# cluster can read and write this bucket regardless of whether the
+# analytics environment is enabled. The bucket's name, ARN, and region
+# are injected via the gco-cluster-shared-bucket ConfigMap using envFrom,
+# which exposes the keys sharedBucketName, sharedBucketArn, and
+# sharedBucketRegion directly as env vars — no ConfigMap key lookup or
+# hardcoded bucket name.
+#
+# Cross-region caveat:
+#   The shared bucket lives in the global region (default us-east-2)
+#   where GCOGlobalStack is deployed, NOT in the regional cluster's own
+#   region. This job runs in whatever region you submit it to, but the
+#   boto3 S3 client below is pointed at os.environ["sharedBucketRegion"]
+#   so the request goes to the bucket's home region. Expect small
+#   cross-region egress charges on large uploads.
+#
+# Prerequisites:
+#   None — Cluster_Shared_Bucket is always on. This example works with
+#   analytics_environment.enabled = false.
+#
+# Submit with:
+#   gco jobs submit-direct examples/cluster-shared-bucket-upload-job.yaml -r us-east-1
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cluster-shared-bucket-upload
+  namespace: gco-jobs
+  labels:
+    app: cluster-shared-bucket-upload
+    project: gco
+spec:
+  template:
+    spec:
+      serviceAccountName: gco-service-account
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: uploader
+        image: python:3.14.4-slim
+        command:
+        - python
+        - -c
+        - |
+          import json, os, subprocess, sys
+          from datetime import datetime, timezone
+
+          # Install boto3 into a writable prefix (non-root pod)
+          subprocess.check_call([sys.executable, "-m", "pip", "install",
+                                 "--target", "/tmp/pylib", "boto3", "-q"])
+          sys.path.insert(0, "/tmp/pylib")
+          import boto3
+
+          bucket = os.environ["sharedBucketName"]
+          bucket_region = os.environ["sharedBucketRegion"]
+          bucket_arn = os.environ["sharedBucketArn"]
+
+          # Point the S3 client at the bucket's home region (global region),
+          # which may differ from the cluster's regional deployment.
+          s3 = boto3.client("s3", region_name=bucket_region)
+
+          timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+          key = f"uploads/{timestamp}.json"
+
+          payload = {
+              "timestamp": timestamp,
+              "bucket_arn": bucket_arn,
+              "bucket_region": bucket_region,
+              "message": "Hello from the GCO cluster-shared bucket example",
+          }
+          body = json.dumps(payload, indent=2).encode("utf-8")
+
+          s3.put_object(
+              Bucket=bucket,
+              Key=key,
+              Body=body,
+              ContentType="application/json",
+          )
+
+          uri = f"s3://{bucket}/{key}"
+          print(f"Uploaded {len(body)} bytes to {uri}")
+          print(f"Bucket region: {bucket_region}")
+          print("Cluster-shared bucket upload completed successfully!")
+        # Inject sharedBucketName / sharedBucketArn / sharedBucketRegion
+        # directly as env vars from the ConfigMap.
+        envFrom:
+        - configMapRef:
+            name: gco-cluster-shared-bucket
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+              - ALL
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      restartPolicy: Never
+  backoffLimit: 2

@@ -15,9 +15,9 @@
 # registry is the domain and repo is the path within that registry.
 #
 # Examples:
-#   parse_image_registry "nvcr.io/nvidia/cuda"     → "nvcr.io|nvidia/cuda"
-#   parse_image_registry "pytorch/pytorch"          → "docker.io|pytorch/pytorch"
-#   parse_image_registry "python"                   → "docker.io|library/python"
+#   parse_image_registry "nvcr.io/nvidia/cuda"        → "nvcr.io|nvidia/cuda"
+#   parse_image_registry "pytorch/pytorch"            → "docker.io|pytorch/pytorch"
+#   parse_image_registry "python"                     → "docker.io|library/python"
 #   parse_image_registry "public.ecr.aws/eks/coredns" → "public.ecr.aws|eks/coredns"
 parse_image_registry() {
   local image="$1"
@@ -169,4 +169,72 @@ except ImportError:
 extract_k8s_version() {
   local cdk="${1:-cdk.json}"
   python3 -c "import json; print(json.load(open('$cdk'))['context']['kubernetes_version'])" 2>/dev/null || echo "1.35"
+}
+
+# extract_dockerfile_pins <dockerfile>
+#
+# Parses ``ARG <NAME>=<VALUE>`` lines from the given Dockerfile and emits
+# ``NAME|VALUE`` for each pin we care about. The allowlist below is
+# intentional — random build-time ARGs (e.g. ``BUILD_DATE``) would add
+# noise to the drift report.
+#
+# The line-anchor (``^ARG``) and single-line Python regex avoid matching
+# ``ARG`` appearing inside a comment or a RUN heredoc. Leading whitespace
+# is permitted so a future ``RUN --mount=…`` or multi-stage FROM line
+# doesn't break the scan silently.
+#
+# Example output for Dockerfile.dev:
+#
+#     NODE_MAJOR|24
+#     CDK_VERSION|2.1120.0
+#     KUBECTL_VERSION|v1.35.4
+#     AWSCLI_VERSION|2.34.42
+#     DOCKER_VERSION|29.4.2
+extract_dockerfile_pins() {
+  local file="${1:-Dockerfile.dev}"
+  [ -f "$file" ] || return 0
+  python3 -c "
+import re, sys
+allowlist = {
+    'NODE_MAJOR',
+    'CDK_VERSION',
+    'KUBECTL_VERSION',
+    'AWSCLI_VERSION',
+    'DOCKER_VERSION',
+}
+with open(sys.argv[1]) as f:
+    for line in f:
+        # Strip trailing inline comments but keep the ARG value itself.
+        stripped = line.split('#', 1)[0]
+        m = re.match(r'^\s*ARG\s+([A-Z_][A-Z0-9_]*)=(\S+)\s*$', stripped)
+        if not m:
+            continue
+        name, value = m.group(1), m.group(2)
+        if name in allowlist:
+            print(f'{name}|{value}')
+" "$file" 2>/dev/null
+}
+
+# extract_emr_versions <file>
+#
+# Extracts the pinned EMR Serverless release label from the constants module.
+# Prints the label (e.g. ``emr-7.13.0``) on a single line. Falls back to
+# reading constants.py directly if the module can't be imported.
+extract_emr_versions() {
+  local file="${1:-gco/stacks/constants.py}"
+  python3 -c "
+import sys
+try:
+    from gco.stacks.constants import EMR_SERVERLESS_RELEASE_LABEL
+    print(EMR_SERVERLESS_RELEASE_LABEL)
+except ImportError:
+    import re, os
+    constants_path = os.path.join(os.path.dirname(sys.argv[1]), 'constants.py') if 'constants.py' not in sys.argv[1] else sys.argv[1]
+    if os.path.exists(constants_path):
+        with open(constants_path) as f:
+            text = f.read()
+        m = re.search(r'EMR_SERVERLESS_RELEASE_LABEL\s*=\s*\"([^\"]+)\"', text)
+        if m:
+            print(m.group(1))
+" "$file" 2>/dev/null
 }

@@ -52,6 +52,7 @@ python diagrams/generate.py --stack api-gateway
 python diagrams/generate.py --stack regional
 python diagrams/generate.py --stack regional-api
 python diagrams/generate.py --stack monitoring
+python diagrams/generate.py --stack analytics
 ```
 
 ## Generated Diagrams
@@ -65,6 +66,7 @@ After running the generator, diagrams are saved to `diagrams/`:
 | `regional-stack.png/svg` | EKS cluster, ALB, SQS, EFS, and services |
 | `regional-api-stack.png/svg` | Regional API Gateway with VPC Lambda (private access) |
 | `monitoring-stack.png/svg` | CloudWatch dashboards, alarms, and SNS |
+| `analytics-stack.png/svg` | SageMaker Studio, EMR Serverless, Cognito, and the presigned-URL Lambda |
 | `full-architecture.png/svg` | Complete infrastructure (compact view) |
 | `full-architecture-detailed.png/svg` | Complete infrastructure (detailed, dark theme) |
 
@@ -110,6 +112,17 @@ After running the generator, diagrams are saved to `diagrams/`:
 - Composite alarms
 - SNS alert topic
 - Log groups
+
+### Analytics Stack
+
+- SageMaker Studio domain (VPC-only, IAM auth)
+- EMR Serverless Spark application
+- Cognito user pool and hosted UI domain
+- Analytics KMS key
+- Private-isolated VPC with SageMaker, ECR, STS, CloudWatch Logs, and EFS endpoints
+- Studio EFS file system for per-user home folders
+- Studio-only S3 bucket plus its access-logs sidecar
+- Presigned-URL Lambda that fronts `/studio/login`
 
 ## Requirements
 

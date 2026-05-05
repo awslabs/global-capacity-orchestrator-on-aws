@@ -144,7 +144,7 @@ gco jobs logs hello-gco -n gco-jobs -r us-east-1
 ### Deploy an Inference Endpoint
 
 ```bash
-gco inference deploy my-llm -i vllm/vllm-openai:v0.20.0 --gpu-count 1
+gco inference deploy my-llm -i vllm/vllm-openai:v0.20.1 --gpu-count 1
 gco inference status my-llm
 gco inference scale my-llm --replicas 3
 ```
@@ -264,6 +264,10 @@ See [Architecture Details](docs/ARCHITECTURE.md) for the full deep dive.
 - **Auto-bootstrap**: CDK bootstrap runs automatically for new regions during deploy
 - **Multi-region monitoring**: CloudWatch dashboards, alarms, and SNS alerts across all regions
 
+### ML & Analytics Environment
+
+- **ML & Analytics Environment**: Optional SageMaker Studio domain + EMR Serverless + Cognito user pool for interactive notebook analytics, with an always-on `Cluster_Shared_Bucket` that all cluster jobs can read and write. Off by default — enable with `gco analytics enable`. See [Analytics Guide](docs/ANALYTICS.md).
+
 ## Documentation
 
 **New to GCO?** Start here:
@@ -283,6 +287,7 @@ See [Architecture Details](docs/ARCHITECTURE.md) for the full deep dive.
 | Use the REST API directly | [API Reference](docs/API.md) |
 | Fix issues | [Troubleshooting](docs/TROUBLESHOOTING.md) |
 | Respond to incidents | [Operational Runbooks](docs/RUNBOOKS.md) |
+| Run interactive notebook analytics | [Analytics Guide](docs/ANALYTICS.md) |
 
 **Customization and development:**
 
@@ -310,6 +315,19 @@ docker build -f Dockerfile.dev -t gco-dev .
 docker run -it --rm -v ~/.aws:/root/.aws:ro -v $(pwd):/workspace -w /workspace gco-dev
 ```
 
+For `gco stacks deploy-all`, `cdk deploy` needs to run Docker to bundle Lambda assets. Mount the host Docker socket so the container's CLI talks to your host daemon (works with Docker Desktop on macOS/Windows, with Docker on Linux, and with Colima on macOS — see `Dockerfile.dev` for Colima-specific socket paths):
+
+```bash
+docker run --rm -it \
+  -v ~/.aws:/root/.aws:ro \
+  -v $(pwd):/workspace \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -w /workspace \
+  gco-dev gco stacks deploy-all -y
+```
+
+This is host-socket pass-through, not true Docker-in-Docker. Anyone with access to the container has root-equivalent access to the host Docker daemon, so keep the container on a trusted host.
+
 ## Project Structure
 
 ```text
@@ -320,7 +338,7 @@ docker run -it --rm -v ~/.aws:/root/.aws:ro -v $(pwd):/workspace -w /workspace g
 │
 ├── cli/                                 # GCO CLI (jobs, stacks, capacity, inference, costs, DAGs)
 ├── diagrams/                            # Auto-generated architecture diagrams
-├── docs/                                # Documentation (architecture, CLI, API, inference, customization)
+├── docs/                                # Documentation (architecture, CLI, API, inference, customization, analytics)
 ├── examples/                            # Example manifests (jobs, inference, Ray, Volcano, Kueue, Slurm, YuniKorn)
 ├── gco/
 │   ├── config/                          # Configuration loader with validation

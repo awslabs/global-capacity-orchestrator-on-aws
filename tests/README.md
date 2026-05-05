@@ -119,6 +119,44 @@ Tests are organized by the component they test:
 | `test_stacks.py` | CLI stack management commands |
 | `test_stacks_extended.py` | Extended stack scenarios |
 
+### Analytics Environment Tests
+
+Tests for the optional `analytics_environment` (SageMaker Studio + EMR
+Serverless + Cognito) and the always-on `Cluster_Shared_Bucket` in
+`GCOGlobalStack`. The analytics stack is only synthesized when
+`analytics_environment.enabled=true` in `cdk.json`; off-by-default
+assertions live in `test_analytics_stack.py`.
+
+| File | Description |
+|------|-------------|
+| `test_analytics_stack.py` | Core CDK template assertions for `GCOAnalyticsStack` — SageMaker Studio domain, EMR Serverless Spark application, Cognito user pool + client + hosted domain, `Analytics_KMS_Key`, private-isolated VPC + nine interface endpoints + S3 gateway endpoint, `Studio_EFS` + dedicated SG, `SageMaker_Execution_Role` grants (including the cross-region `Cluster_Shared_Bucket` policy resolved via `AwsCustomResource`), IAM/cdk-nag compliance |
+| `test_analytics_bucket_isolation_property.py` | Hypothesis property test: across randomized cdk.json overlays the regional job-pod role's S3 policy only references `arn:aws:s3:::gco-cluster-shared-*` ARNs and never touches `gco-analytics-studio-*` |
+| `test_analytics_configmap_property.py` | Hypothesis property test for the biconditional between `analytics_environment.enabled` and the presence of the SageMaker execution role's RW grant on `Cluster_Shared_Bucket` — enabling the toggle must materialize the grant, disabling it must remove both the role and the grant |
+| `test_analytics_roundtrip_property.py` | Hypothesis property test that the two-bit `(enabled, hyperpod_enabled)` toggle state can be recovered from the synthesized CloudFormation templates alone (derive the toggles back from resource presence/absence and assert equality with the input config) |
+| `test_analytics_cluster_shared_configmap_property.py` | Hypothesis property test that the `gco-cluster-shared-bucket` ConfigMap is present in every regional cluster regardless of the `analytics_environment.enabled` toggle — the cluster-shared bucket is always-on |
+| `test_analytics_cmd.py` | CLI tests for `gco analytics enable/disable/status/users/studio login/doctor/iterate` including the R14.6-style toggle round-trip Hypothesis property and a `cdk synth` integration test that exercises the full analytics pipeline from CLI toggle to template |
+| `test_analytics_cmd_branches.py` | Edge-case coverage for the analytics CLI command branches (error paths, missing-config fallbacks, mixed-toggle scenarios) |
+| `test_analytics_user_mgmt.py` | Tests for the stdlib SRP implementation and Cognito auto-discovery helpers in `cli/analytics_user_mgmt.py` (used by `gco analytics studio login`) |
+| `test_analytics_examples_validation.py` | Validates the three new analytics example manifests (notebook-hosted SageMaker job, EMR Serverless Spark job, cluster-shared-bucket read/write job) pass `ManifestProcessor.validate_manifest` against the trusted-registry security config |
+| `test_analytics_lifecycle_script.py` | Tests for `scripts/test_analytics_lifecycle.py` — the pure helpers (`detect_state`, `next_step`, `format_remediation`) and the argparse `main` entry point dispatch |
+| `test_api_gateway_analytics_config.py` | Tests for the `AnalyticsApiConfig` mutator and the `/studio/*` route wiring it attaches to the existing API Gateway when analytics is enabled |
+| `test_cluster_shared_bucket.py` | Tests for the always-on `Cluster_Shared_Bucket` (name, KMS encryption, versioning, public-access-block, `DenyInsecureTransport` policy) + its KMS key + the `/gco/cluster-shared-bucket/{name,arn,region}` SSM parameters written by `GCOGlobalStack` |
+| `test_presigned_url_lambda.py` | Tests for `lambda/analytics-presigned-url/handler.py` — happy path (`CreatePresignedDomainUrl` success), error-token mapping (auth, profile-missing, quota, throttle), and a Hypothesis property test for the response-shape invariants |
+
+#### Analytics Test Helpers
+
+The `tests/_analytics_*.py` modules are shared helpers, not tests. Pytest
+does not pick them up as test files but the analytics tests above import
+them for strategy construction, overlay generation, template parsing,
+and inverse-derivation logic.
+
+| Helper | Purpose |
+|--------|---------|
+| `_analytics_strategies.py` | Hypothesis strategies for randomized `analytics_environment` cdk.json overlays (enabled/disabled, hyperpod on/off, removal-policy choices, cognito prefix overrides) |
+| `_analytics_cdk_overlays.py` | Materializes a strategy draw into a real cdk.json context dict that `ConfigLoader` can consume; kept separate from the strategies so the same overlay shape can be written as a fixture without running Hypothesis |
+| `_analytics_template_inspectors.py` | Small library of template-walk helpers (`find_sagemaker_role`, `find_studio_bucket`, `collect_role_statements`, `extract_cluster_shared_grant`) used across the analytics stack assertions; consolidates the boilerplate that earlier iterations inlined into every test class |
+| `_analytics_derivations.py` | The inverse-direction helpers — given a set of synthesized templates, derive back the `(enabled, hyperpod_enabled)` toggle pair used by `test_analytics_roundtrip_property.py` |
+
 ### CDK Configuration Matrix
 
 The cdk.json configuration matrix — the set of overlays users can pick from (multi-region, FSx on/off, all feature toggles, resource threshold values, helm chart enable/disable, etc.) — lives in `tests/_cdk_config_matrix.CONFIGS` and is the single source of truth shared between two test surfaces:
@@ -246,6 +284,7 @@ actually deploy anything, hit AWS, or spawn long-running subprocesses.
 | `test_bump_version.py` | `scripts/bump_version.py` | SemVer parsing, bump paths (major/minor/patch), dry-run mode, argparse dispatch, keeping `VERSION`, `gco/_version.py`, and `cli/__init__.py` in sync |
 | `test_webhook_delivery_script.py` | `scripts/test_webhook_delivery.py` | `WebhookHandler` do_POST capture and 200 response, silenced `log_message`, `start_local_server` port binding + daemon thread + clean shutdown, `create_mock_job` fixture shape, `main()` argparse branches between local-server and external-URL modes |
 | `test_cdk_synthesis_script.py` | `scripts/test_cdk_synthesis.py` | `CONFIGS` matrix structural integrity (unique names, correct tuple shape, baseline first), `synth_with_config` overlay merging for dict vs scalar values, cdk.json restoration after success/error/exception, return-code classification (real error vs NOTICES-only), TimeoutExpired handling, `main()` aggregation/exit code |
+| `test_dump_nag_findings_script.py` | `scripts/dump_nag_findings.py` | `run_config` threads context overrides through to `_build_app_with_logger`, invokes `app.synth()` while the Docker-asset mock is live, returns `logger.findings` verbatim. `main()` aggregates by `(rule_id, resource_path, finding_id)`, deduplicates across configs, emits per-config and summary counts, exits 0 on clean and 1 otherwise |
 
 ### MCP Server Tests
 
@@ -439,7 +478,7 @@ valid_job_manifest = {
 
 ## Coverage Requirements
 
-The project requires a minimum of 85% test coverage. Current coverage is ~93%.
+The project requires a minimum of 90% test coverage. Current coverage is ~92%.
 
 To check coverage:
 

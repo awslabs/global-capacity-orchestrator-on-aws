@@ -29,7 +29,8 @@ from cdk_nag import (
 from constructs import IConstruct
 
 from gco.config.config_loader import ConfigLoader
-from gco.stacks.api_gateway_global_stack import GCOApiGatewayGlobalStack
+from gco.stacks.analytics_stack import GCOAnalyticsStack
+from gco.stacks.api_gateway_global_stack import AnalyticsApiConfig, GCOApiGatewayGlobalStack
 from gco.stacks.global_stack import GCOGlobalStack
 from gco.stacks.monitoring_stack import GCOMonitoringStack
 from gco.stacks.regional_stack import GCORegionalStack
@@ -153,6 +154,54 @@ def main() -> None:
     # Add dependencies on all regional stacks
     for regional_stack in regional_stacks:
         monitoring_stack.add_dependency(regional_stack)
+
+    # Optionally instantiate the analytics stack when explicitly enabled via
+    # cdk.json. The stack lives in the API gateway region so the
+    # presigned-URL Lambda can be wired into the existing /studio/* API
+    # Gateway routes without a cross-region hop.
+    # When the toggle is off, the stack is skipped entirely so cdk synth
+    # emits no SageMaker, EMR Serverless, or Cognito resources.
+    if config.get_analytics_enabled():
+        # Note: we intentionally do NOT pass ``api_gateway_secret_arn``
+        # here. That kwarg is reserved for future auth wiring and is not
+        # consumed by any CloudFormation resource. Passing the secret
+        # ARN (a cross-stack token) would force an implicit
+        # ``analytics_stack → api_gateway_stack`` dependency, which
+        # would deadlock against the reverse dependency we add below
+        # (api_gateway_stack needs the presigned-URL Lambda ARN).
+        analytics_stack = GCOAnalyticsStack(
+            app,
+            f"{project_name}-analytics",
+            config=config,
+            env=cdk.Environment(region=api_gateway_region),
+            description="Optional ML and analytics environment (SageMaker Studio, EMR Serverless, Cognito)",
+        )
+        analytics_stack.add_dependency(global_stack)
+
+        # Wire the analytics stack's presigned-URL Lambda into the API
+        # Gateway stack via a mutator. The API gateway stack was already
+        # created above (before the analytics stack) because every
+        # regional stack declares a dependency on it; re-ordering the
+        # two globals would ripple through the entire stack graph. The
+        # mutator lets us defer the /studio/* wiring until both stacks
+        # exist without changing the existing dependency chain.
+        #
+        # ``api_gateway_stack.add_dependency(analytics_stack)`` ensures
+        # the analytics stack (and its Lambda) finish deploying before
+        # CloudFormation updates the API gateway stack — the Lambda
+        # ARN is now a cross-stack reference on the API gateway side.
+        analytics_api_config = AnalyticsApiConfig(
+            user_pool_arn=analytics_stack.cognito_pool.user_pool_arn,
+            user_pool_client_id=analytics_stack.cognito_client.user_pool_client_id,
+            presigned_url_lambda=analytics_stack.presigned_url_lambda,
+            studio_domain_name=analytics_stack.studio_domain.domain_name or "",
+            callback_url=(
+                f"https://{api_gateway_stack.api.rest_api_id}."
+                f"execute-api.{api_gateway_region}.amazonaws.com/prod/studio/callback"
+            ),
+        )
+        api_gateway_stack.set_analytics_config(analytics_api_config)
+        api_gateway_stack.add_dependency(analytics_stack)
 
     app.synth()
 

@@ -62,6 +62,7 @@ Modification Guide:
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import aws_cdk.aws_eks_v2 as eks
@@ -96,6 +97,7 @@ from constructs import Construct
 from gco.config.config_loader import ConfigLoader
 from gco.stacks.constants import (
     AURORA_POSTGRES_VERSION,
+    CLUSTER_SHARED_SSM_PARAMETER_PREFIX,
     EKS_ADDON_CLOUDWATCH_OBSERVABILITY,
     EKS_ADDON_EFS_CSI_DRIVER,
     EKS_ADDON_FSX_CSI_DRIVER,
@@ -103,6 +105,42 @@ from gco.stacks.constants import (
     EKS_ADDON_POD_IDENTITY_AGENT,
     LAMBDA_PYTHON_RUNTIME,
 )
+
+
+@dataclass(frozen=True)
+class SharedBucketIdentity:
+    """Identity of the always-on ``Cluster_Shared_Bucket`` owned by ``GCOGlobalStack``.
+
+    Every regional stack resolves this identity from the three SSM parameters
+    ``/gco/cluster-shared-bucket/{name,arn,region}`` published by
+    ``GCOGlobalStack`` in the global region. The three values are used to
+    grant IAM permissions on the bucket to the regional job-pod role and to
+    populate the ``gco-cluster-shared-bucket`` ConfigMap applied to every
+    regional EKS cluster. Frozen so it can be safely shared across helper
+    methods without accidental mutation.
+    """
+
+    name: str
+    arn: str
+    region: str
+
+
+def _compute_kubectl_cluster_shared_replacements(
+    shared: SharedBucketIdentity,
+) -> dict[str, str]:
+    """Build the ``{{CLUSTER_SHARED_BUCKET*}}`` kubectl-applier replacements.
+
+    Pure helper kept at module scope so property and presence tests can
+    inspect the output without synthesizing a full regional stack. The
+    three keys are always populated — there is no feature toggle — because
+    the ``gco-cluster-shared-bucket`` ConfigMap is applied unconditionally
+    on every regional cluster.
+    """
+    return {
+        "{{CLUSTER_SHARED_BUCKET}}": shared.name,
+        "{{CLUSTER_SHARED_BUCKET_ARN}}": shared.arn,
+        "{{CLUSTER_SHARED_BUCKET_REGION}}": shared.region,
+    }
 
 
 class GCORegionalStack(Stack):
@@ -246,6 +284,17 @@ class GCORegionalStack(Stack):
 
         # Create EKS cluster
         self._create_eks_cluster(cluster_config)
+
+        # Resolve the always-on Cluster_Shared_Bucket identity from SSM
+        # (owned by GCOGlobalStack) and attach RW + KMS grants to the
+        # job-pod role. Runs unconditionally — the ConfigMap and IAM
+        # statements are always present on every regional cluster. Must
+        # run after
+        # _create_pod_identity_associations (which created service_account_role)
+        # and before _apply_kubernetes_manifests (which consumes the
+        # replacements in the KubectlApplyManifests CustomResource).
+        self.cluster_shared_identity = self._resolve_cluster_shared_bucket_from_ssm()
+        self._grant_cluster_shared_bucket_to_job_role(self.cluster_shared_identity)
 
         # Create EFS for shared storage
         self._create_efs()
@@ -1457,6 +1506,178 @@ class GCORegionalStack(Stack):
         # FSx CSI driver — only when FSx is enabled (created later in _create_fsx_lustre)
         # The FSx Pod Identity association is added in _create_fsx_lustre instead
 
+    def _resolve_cluster_shared_bucket_from_ssm(self) -> SharedBucketIdentity:
+        """Resolve the ``Cluster_Shared_Bucket`` identity from cross-region SSM.
+
+        ``GCOGlobalStack`` publishes three ``ssm.StringParameter``s in the
+        global region at ``/gco/cluster-shared-bucket/{name,arn,region}``.
+        This method reads them back from the regional stack via
+        ``cr.AwsCustomResource`` with ``service="SSM"``,
+        ``action="getParameter"``, and ``region=<global-region>`` — matching
+        the cross-region read pattern already used in
+        ``_create_ga_registration_lambda`` for the Global Accelerator
+        endpoint group ARN.
+
+        Runs unconditionally in ``__init__`` — no feature toggle, no
+        conditional guard. The returned :class:`SharedBucketIdentity` feeds
+        ``_grant_cluster_shared_bucket_to_job_role`` (IAM) and the
+        ``image_replacements`` dict (ConfigMap) downstream.
+
+        Returns:
+            :class:`SharedBucketIdentity` with ``name``, ``arn``, and
+            ``region`` populated as CDK tokens that resolve at deploy time.
+        """
+        from cdk_nag import NagSuppressions
+
+        global_region = self.config.get_global_region()
+        resolved: dict[str, str] = {}
+
+        for suffix in ("name", "arn", "region"):
+            parameter_name = f"{CLUSTER_SHARED_SSM_PARAMETER_PREFIX}/{suffix}"
+            read_cr = cr.AwsCustomResource(
+                self,
+                f"ReadClusterSharedBucket{suffix.capitalize()}",
+                on_create=cr.AwsSdkCall(
+                    service="SSM",
+                    action="getParameter",
+                    parameters={"Name": parameter_name},
+                    region=global_region,
+                    physical_resource_id=cr.PhysicalResourceId.of(f"cluster-shared-{suffix}"),
+                ),
+                on_update=cr.AwsSdkCall(
+                    service="SSM",
+                    action="getParameter",
+                    parameters={"Name": parameter_name},
+                    region=global_region,
+                    physical_resource_id=cr.PhysicalResourceId.of(f"cluster-shared-{suffix}"),
+                ),
+                # Cross-region SSM GetParameter doesn't support resource-level
+                # scoping cleanly — the principal evaluating the call lives in
+                # this stack's region but the parameter lives in the global
+                # region. ANY_RESOURCE is the AWS-documented escape hatch; the
+                # resulting AwsSolutions-IAM5 nag finding is suppressed in a
+                # scoped add_resource_suppressions call below.
+                policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
+                    resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE
+                ),
+            )
+
+            # Scoped suppression: the CR policy is Resource::* because the
+            # SSM parameter lives in the global region (cross-region calls
+            # don't support resource-level scoping cleanly). The action is
+            # fixed to ssm:GetParameter and the parameter Name is fixed to
+            # a literal string, so the wildcard can only ever read one
+            # parameter.
+            NagSuppressions.add_resource_suppressions(
+                read_cr,
+                [
+                    {
+                        "id": "AwsSolutions-IAM5",
+                        "reason": (
+                            "Cross-region ssm:GetParameter for "
+                            f"{parameter_name} in the global region. The "
+                            "AwsCustomResource SDK-call policy is scoped to "
+                            "a single fixed action (ssm:GetParameter) with "
+                            "a fixed parameter Name — the Resource: * is "
+                            "the CDK-documented escape hatch because the "
+                            "parameter ARN is not known to the calling "
+                            "principal's region. Effective blast radius: "
+                            "one parameter."
+                        ),
+                        "appliesTo": ["Resource::*"],
+                    },
+                ],
+                apply_to_children=True,
+            )
+
+            resolved[suffix] = read_cr.get_response_field("Parameter.Value")
+
+        return SharedBucketIdentity(
+            name=resolved["name"],
+            arn=resolved["arn"],
+            region=resolved["region"],
+        )
+
+    def _grant_cluster_shared_bucket_to_job_role(self, shared: SharedBucketIdentity) -> None:
+        """Attach RW + KMS permissions on ``Cluster_Shared_Bucket`` to the job-pod role.
+
+        Two ``iam.PolicyStatement``s are added to ``self.service_account_role``
+        (the EKS Pod Identity role used by every pod in ``gco-jobs``,
+        ``gco-system``, and ``gco-inference``):
+
+        1. S3 object + bucket-level actions (``GetObject``, ``PutObject``,
+           ``DeleteObject``, ``ListBucket``, ``GetBucketLocation``) scoped
+           to ``<shared.arn>`` and ``<shared.arn>/*`` — the bucket-ARN
+           shape uses the ``gco-cluster-shared-*`` prefix that IAM
+           policies scope against.
+        2. KMS ``Decrypt`` / ``GenerateDataKey`` scoped by the
+           ``kms:ViaService=s3.<shared.region>.amazonaws.com`` condition —
+           ``resources=["*"]`` because the KMS key ARN is not known to this
+           stack (it lives in the global region and is referenced indirectly
+           through the S3 service). The condition is what actually restricts
+           the grant to the cluster-shared bucket's key.
+
+        Runs unconditionally — the grant is
+        present on every regional cluster whether or not analytics is
+        enabled.
+        """
+        from cdk_nag import NagSuppressions
+
+        self.service_account_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:DeleteObject",
+                    "s3:ListBucket",
+                    "s3:GetBucketLocation",
+                ],
+                resources=[shared.arn, f"{shared.arn}/*"],
+            )
+        )
+
+        self.service_account_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["kms:Decrypt", "kms:GenerateDataKey"],
+                resources=["*"],
+                conditions={
+                    "StringEquals": {
+                        "kms:ViaService": f"s3.{shared.region}.amazonaws.com",
+                    }
+                },
+            )
+        )
+
+        # The S3 bucket-ARN resource uses a ``<arn>/*`` object-key wildcard
+        # which cdk-nag flags as a wildcard resource. The ARN itself is the
+        # literal Cluster_Shared_Bucket ARN resolved from SSM — the ``/*``
+        # covers all object keys inside that single bucket, which is the
+        # intended semantic for the RW grant.
+        NagSuppressions.add_resource_suppressions(
+            self.service_account_role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "The Cluster_Shared_Bucket RW grant uses an <arn>/* "
+                        "object-key wildcard on the literal cluster-shared "
+                        "bucket ARN resolved from SSM. The wildcard covers "
+                        "object keys within a single bucket (the always-on "
+                        "gco-cluster-shared-<account>-<region> bucket) — "
+                        "this is the standard shape for a bucket-scoped "
+                        "RW grant and is what the allow-list assertion "
+                        "is written against."
+                    ),
+                    "appliesTo": [
+                        {"regex": r"/^Resource::<ReadClusterSharedBucketArn.*>\/\*$/"},
+                    ],
+                },
+            ],
+            apply_to_children=True,
+        )
+
     def _create_kubectl_lambda(self) -> None:
         """Create Lambda function to apply Kubernetes manifests using Python client.
 
@@ -1667,6 +1888,15 @@ class GCORegionalStack(Stack):
                 mp_config.get("max_request_body_bytes", 1_048_576)
             ),
         }
+
+        # Always-on Cluster_Shared_Bucket replacements. Populated from the
+        # SharedBucketIdentity resolved in __init__ via cross-region SSM
+        # read from GCOGlobalStack. Never gated on the analytics toggle —
+        # the gco-cluster-shared-bucket ConfigMap is applied to every
+        # regional cluster.
+        image_replacements.update(
+            _compute_kubectl_cluster_shared_replacements(self.cluster_shared_identity)
+        )
 
         # Add queue processor replacements if enabled
         qp_config = self.node.try_get_context("queue_processor") or {}

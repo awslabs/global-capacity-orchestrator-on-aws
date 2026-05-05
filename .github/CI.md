@@ -65,7 +65,7 @@ Each file maps to one row in the README badge table.
 |------|------------|----------------|
 | `workflows/unit-tests.yml` | Unit Tests | pytest with coverage (fail under 85%), BATS, CLI smoke, CDK synth + config matrix, lockfile freshness, fresh install, workload import checks |
 | `workflows/integration-tests.yml` | Integration Tests | Per-Dockerfile build + module-import smoke, dev-container smoke, kind E2E with Calico (NetworkPolicy enforcement, RBAC verification, ResourceQuota/LimitRange, PDB validation, cross-namespace traffic blocking, all 3 service deployments), K8s manifest validation, Lambda import validation, cross-module pytest, MCP server pytest |
-| `workflows/security.yml` | Security | bandit, pip-audit, trivy (filesystem + per-image matrix), trufflehog, gitleaks, semgrep, checkov, KICS |
+| `workflows/security.yml` | Security | bandit, pip-audit, trivy (filesystem + per-image matrix), trufflehog, gitleaks, semgrep, checkov, KICS, CodeQL (Python) |
 | `workflows/lint.yml` | Linting | actionlint, black, flake8, hadolint, isort, markdownlint, mypy (strict / stacks / lambda), ruff, shellcheck, yamllint |
 
 ### Satellites
@@ -100,13 +100,13 @@ Shared logic used by multiple jobs. Invoked with `uses: ./.github/actions/<name>
 
 ## CodeQL config
 
-[`codeql/codeql-config.yml`](codeql/codeql-config.yml) is read by GitHub's **Default Setup** for Code Scanning whenever it exists at `.github/codeql/codeql-config.yml`. It does three things:
+[`codeql/codeql-config.yml`](codeql/codeql-config.yml) is read by the Advanced Setup CodeQL job (`security:codeql:python-code-analysis`) in [`workflows/security.yml`](workflows/security.yml), via the `config-file:` input on `github/codeql-action/init@v3`. It does three things:
 
-- **Scopes the scan** to hand-authored Python (`gco/`, `cli/`, `mcp/`, `lambda/`, `scripts/`, `app.py`). Generated output (`cdk.out/`, `lambda/*-build/`), virtualenvs, caches, tests, and the demo folder are excluded.
+- **Scopes the scan** to hand-authored Python runtime code (`gco/`, `cli/`, `mcp/`, `lambda/`, `scripts/`). Generated output (`cdk.out/`, `lambda/*-build/`), virtualenvs, caches, tests, and the demo folder are excluded. `app.py` (the CDK app entry point) is not in scope — it's composition-only glue with no runtime/security surface.
 - **Pins the query pack** to `security-and-quality` so the additional maintainability queries still surface alongside the default security suite.
-- **Filters two rules** that have been reviewed and classified as false positives against this codebase: `py/clear-text-logging-sensitive-data` (we log operational identifiers like ARNs and registry hostnames, not credential values) and `py/incomplete-url-substring-sanitization` (only ever hit by test-file assertions, not access-control code paths). Each exclusion carries an inline comment naming the exact files and the reason — audit them when the codebase shape changes.
+- **Filters three rules** that have been reviewed and classified as false positives against this codebase: `py/clear-text-logging-sensitive-data` (we log operational identifiers like ARNs and registry hostnames, not credential values), `py/incomplete-url-substring-sanitization` (only ever hit by test-file assertions, not access-control code paths), and `py/weak-sensitive-data-hashing` (SRP protocol digest in `cli/analytics_user_mgmt.py`, not a password storage hash — RFC 5054 mandates SHA-256 for the protocol primitive). Each exclusion carries an inline comment in the config naming the exact call sites and the reason — audit them when the codebase shape changes.
 
-No workflow file is checked in for CodeQL itself; the scan runs on GitHub's hosted schedule via Default Setup. If the project ever outgrows that (extra languages, custom query suites, tighter schedules), drop in a `.github/workflows/codeql.yml` and point `uses: github/codeql-action/init@v3` at `config-file: .github/codeql/codeql-config.yml` — the config file already contains everything needed.
+The scan runs as an Advanced Setup workflow rather than Default Setup so the filters and paths are pinned in git instead of hidden in repo Settings. To swap back to Default Setup: comment out the `security-codeql-python-code-analysis` job in `workflows/security.yml` and re-enable Default Setup in repo Settings → Code security → CodeQL. The config file has no effect under Default Setup.
 
 ## README badges
 
@@ -310,7 +310,7 @@ mypy gco/ cli/ mcp/ scripts/ --exclude 'gco/stacks/'
 mypy gco/stacks/ app.py          # requires ".[cdk,typecheck]"
 
 # Unit tests (matches unit:pytest:core)
-pytest tests/ --cov=gco --cov=cli --cov-fail-under=85 \
+pytest tests/ --cov=gco --cov=cli --cov-fail-under=90 \
     --ignore=tests/test_integration.py \
     --ignore=tests/test_nag_compliance.py
 

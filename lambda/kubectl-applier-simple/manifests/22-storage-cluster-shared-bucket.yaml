@@ -1,0 +1,45 @@
+# Cluster-shared bucket ConfigMap — provides the always-on
+# Cluster_Shared_Bucket's name, ARN, and region to pods via
+# configMapKeyRef/envFrom. Owned by GCOGlobalStack (unconditional) and
+# applied to every regional EKS cluster regardless of the
+# analytics_environment.enabled toggle. See docs/CLUSTER_SHARED_BUCKET.md
+# for the full schema and cross-region data-transfer caveat.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gco-cluster-shared-bucket
+  namespace: gco-jobs
+  labels:
+    app: gco
+    project: gco
+data:
+  sharedBucketName: "{{CLUSTER_SHARED_BUCKET}}"
+  sharedBucketArn: "{{CLUSTER_SHARED_BUCKET_ARN}}"
+  sharedBucketRegion: "{{CLUSTER_SHARED_BUCKET_REGION}}"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gco-cluster-shared-bucket
+  namespace: gco-system
+  labels:
+    app: gco
+    project: gco
+data:
+  sharedBucketName: "{{CLUSTER_SHARED_BUCKET}}"
+  sharedBucketArn: "{{CLUSTER_SHARED_BUCKET_ARN}}"
+  sharedBucketRegion: "{{CLUSTER_SHARED_BUCKET_REGION}}"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gco-cluster-shared-bucket
+  namespace: gco-inference
+  labels:
+    app: gco
+    project: gco
+data:
+  sharedBucketName: "{{CLUSTER_SHARED_BUCKET}}"
+  sharedBucketArn: "{{CLUSTER_SHARED_BUCKET_ARN}}"
+  sharedBucketRegion: "{{CLUSTER_SHARED_BUCKET_REGION}}"

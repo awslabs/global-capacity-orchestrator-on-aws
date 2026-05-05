@@ -29,7 +29,7 @@ This stack is **standalone** — it does not depend on or affect the main GCO in
 
 1. **IAM OIDC Identity Provider** — trusts `token.actions.githubusercontent.com` (the GitHub OIDC issuer). Skipped if one already exists in the account.
 2. **IAM Role** — assumable only by GitHub Actions workflows from your repository. The trust policy restricts access to a specific GitHub org/repo.
-3. **IAM Policy** — attached to the role. By default grants read-only permissions needed for the dependency scan workflow (`eks:DescribeAddonVersions`, `rds:DescribeDBEngineVersions`). You can expand this for your own needs.
+3. **IAM Policy** — attached to the role. By default grants read-only permissions needed for the dependency scan workflow (`eks:DescribeAddonVersions`, `elasticmapreduce:ListReleaseLabels`, `rds:DescribeDBEngineVersions`). You can expand this for your own needs.
 
 ## Prerequisites
 
@@ -66,6 +66,7 @@ The default policy in `policy.json` grants minimal read-only permissions for the
       "Effect": "Allow",
       "Action": [
         "eks:DescribeAddonVersions",
+        "elasticmapreduce:ListReleaseLabels",
         "rds:DescribeDBEngineVersions",
         "sts:GetCallerIdentity"
       ],
@@ -78,7 +79,7 @@ The default policy in `policy.json` grants minimal read-only permissions for the
 To add permissions (for example, to allow CI to deploy stacks or run integration tests against live infrastructure):
 
 1. Edit `policy.json` to add the IAM actions you need
-2. Redeploy: `cdk deploy GCOGitHubOIDCStack`
+2. Redeploy: `cd .github/oidc_provider && cdk deploy GCOGitHubOIDCStack` from an environment with AWS credentials for the target account
 
 Common additions:
 

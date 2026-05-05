@@ -17,6 +17,43 @@
 #     -v $(pwd):/workspace \
 #     -w /workspace \
 #     gco-dev gco stacks list
+#
+# Run with Docker-in-Docker for `gco stacks deploy-all`:
+#   `cdk deploy` (which `gco stacks deploy-all` invokes) bundles Lambda
+#   assets by running Docker during synth. The dev container does not ship
+#   a Docker daemon, so we pass through the host's daemon socket:
+#
+#   docker run --rm -it \
+#     -v ~/.aws:/root/.aws:ro \
+#     -v $(pwd):/workspace \
+#     -v /var/run/docker.sock:/var/run/docker.sock \
+#     -w /workspace \
+#     gco-dev gco stacks deploy-all -y
+#
+#   The Docker CLI is installed inside the image (see below) and the
+#   `/var/run/docker.sock` bind mount hands it a transport to the host
+#   daemon. This is "Docker out of Docker" / host-socket pass-through —
+#   NOT true Docker-in-Docker (which would run a daemon inside the
+#   container). We avoid `--privileged` because socket pass-through does
+#   not need it.
+#
+#   Security note: anyone with access to the container gets root-equivalent
+#   access to the host Docker daemon via the mounted socket. Keep the
+#   container on a trusted host and avoid mounting the socket when running
+#   untrusted code.
+#
+#   Host compatibility:
+#     - Linux: the socket lives at /var/run/docker.sock by default.
+#     - Docker Desktop (macOS, Windows): /var/run/docker.sock is already
+#       the canonical path — Docker Desktop surfaces the VM daemon there.
+#     - Colima (macOS alternative): the socket lives at
+#         ~/.colima/default/docker.sock        (older Colima)
+#         ~/.colima/docker.sock                (newer Colima)
+#       Either:
+#         (a) symlink it to /var/run/docker.sock, or
+#         (b) change the bind mount target, e.g.
+#             -v ~/.colima/default/docker.sock:/var/run/docker.sock
+#       See https://github.com/abiosoft/colima for current defaults.
 
 FROM python:3.14.4-slim
 
@@ -31,24 +68,58 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Install Node.js 24 (for CDK)
-RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+# Install Node.js (for CDK) — pinned to current LTS major. Bump
+# intentionally when a new LTS line is validated against the CDK version
+# pinned below.
+ARG NODE_MAJOR=24
+RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && node --version
 
-# Install AWS CDK CLI
-RUN npm install -g aws-cdk@2
+# Install AWS CDK CLI — pinned so the dev container and CI agree on the
+# synth output and bootstrap qualifier semantics. The CDK CLI
+# (``aws-cdk``) and the CDK library (``aws-cdk-lib``) are versioned
+# independently — do not assume the two version strings match. Bump the
+# CLI in lockstep with `npm view aws-cdk version` when rebuilding.
+ARG CDK_VERSION=2.1120.0
+RUN npm install -g "aws-cdk@${CDK_VERSION}" \
+    && cdk --version
 
-# Install kubectl
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+# Install kubectl — pinned to the EKS cluster's minor line (see
+# ``cdk.json::kubernetes_version``). The kubectl + apiserver skew policy
+# allows ±1 minor, so this pin can lag or lead the cluster by one.
+ARG KUBECTL_VERSION=v1.35.4
+RUN curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
     && chmod +x kubectl \
-    && mv kubectl /usr/local/bin/
+    && mv kubectl /usr/local/bin/ \
+    && kubectl version --client=true
 
-# Install AWS CLI v2
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+# Install AWS CLI v2 — pinned to a specific release so reproducibility is
+# preserved across rebuilds. Bump when a new feature or bugfix is needed
+# (see https://github.com/aws/aws-cli/blob/v2/CHANGELOG.rst).
+ARG AWSCLI_VERSION=2.34.42
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWSCLI_VERSION}.zip" -o "awscliv2.zip" \
     && unzip awscliv2.zip \
     && ./aws/install \
-    && rm -rf awscliv2.zip aws
+    && rm -rf awscliv2.zip aws \
+    && aws --version
+
+# Install Docker CLI (client only — no daemon).
+#
+# `cdk deploy` shells out to Docker for Lambda asset bundling. The dev
+# container talks to the host Docker daemon through the bind-mounted
+# socket documented in the header, so only the client binary is needed
+# here. Pinned to a specific version to keep the image reproducible —
+# bump intentionally when testing against a new Docker release.
+# Latest stable at pin time (see https://download.docker.com/linux/static/stable/x86_64/):
+ARG DOCKER_VERSION=29.4.2
+RUN curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz" \
+      -o /tmp/docker.tgz \
+    && tar -xzf /tmp/docker.tgz -C /tmp \
+    && mv /tmp/docker/docker /usr/local/bin/ \
+    && rm -rf /tmp/docker /tmp/docker.tgz \
+    && docker --version
 
 # Set working directory
 WORKDIR /workspace

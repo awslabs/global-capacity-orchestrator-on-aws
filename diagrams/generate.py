@@ -33,6 +33,7 @@ from aws_pdk.cdk_graph_plugin_diagram import (
 )
 
 from gco.config.config_loader import ConfigLoader
+from gco.stacks.analytics_stack import GCOAnalyticsStack
 from gco.stacks.api_gateway_global_stack import GCOApiGatewayGlobalStack
 from gco.stacks.global_stack import GCOGlobalStack
 from gco.stacks.monitoring_stack import GCOMonitoringStack
@@ -361,6 +362,84 @@ def generate_monitoring_stack_diagram(output_dir: Path) -> None:
         _copy_diagrams_from_temp(tmp_path, output_dir, "monitoring")
 
 
+def generate_analytics_stack_diagram(output_dir: Path) -> None:
+    """Generate diagram for the Analytics Stack (SageMaker Studio, EMR, Cognito)."""
+    print("\n📊 Generating Analytics Stack diagram...")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        # Force-enable the analytics toggle via a CDK context override so
+        # ``ConfigLoader.get_analytics_enabled()`` returns True during this
+        # synth. Mirrors the overlay the property tests use in
+        # ``tests/_analytics_cdk_overlays.build_overlay``.
+        app = cdk.App(
+            context={
+                "analytics_environment": {
+                    "enabled": True,
+                    "hyperpod": {"enabled": False},
+                    "cognito": {"domain_prefix": None, "removal_policy": "destroy"},
+                    "efs": {"removal_policy": "destroy"},
+                    "studio": {"user_profile_name_prefix": None},
+                },
+            },
+            outdir=str(tmp_path / "cdk.out"),
+        )
+        config = ConfigLoader(app)
+
+        project_name = config.get_project_name()
+        deployment_regions = config.get_deployment_regions()
+        global_region = deployment_regions["global"]
+        api_gateway_region = deployment_regions["api_gateway"]
+
+        # GCOGlobalStack owns the Cluster_Shared_Bucket SSM parameters that
+        # the analytics stack reads via a cross-region AwsCustomResource, so
+        # the analytics diagram needs the global stack wired up.
+        global_stack = GCOGlobalStack(
+            app,
+            f"{project_name}-global",
+            config=config,
+            env=cdk.Environment(region=global_region),
+        )
+
+        api_gateway_stack = GCOApiGatewayGlobalStack(
+            app,
+            f"{project_name}-api-gateway",
+            global_accelerator_dns=global_stack.accelerator.dns_name,
+            env=cdk.Environment(region=api_gateway_region),
+        )
+        api_gateway_stack.add_dependency(global_stack)
+
+        analytics_stack = GCOAnalyticsStack(
+            app,
+            f"{project_name}-analytics",
+            config=config,
+            env=cdk.Environment(region=api_gateway_region),
+            description="Optional ML and analytics environment (SageMaker Studio, EMR Serverless, Cognito)",
+        )
+        analytics_stack.add_dependency(global_stack)
+
+        graph = CdkGraph(
+            app,
+            plugins=[
+                CdkGraphDiagramPlugin(
+                    defaults={"format": [DiagramFormat.PNG, DiagramFormat.SVG]},
+                    diagrams=[
+                        {
+                            "name": "analytics-stack",
+                            "title": "GCO Analytics Stack - SageMaker Studio + EMR + Cognito",
+                            "filter_plan": {"preset": FilterPreset.COMPACT},
+                        },
+                    ],
+                )
+            ],
+        )
+
+        app.synth()
+        graph.report()
+        _copy_diagrams_from_temp(tmp_path, output_dir, "analytics")
+
+
 def generate_full_architecture_diagram(output_dir: Path) -> None:
     """Generate diagram for the complete architecture."""
     print("\n📊 Generating Full Architecture diagram...")
@@ -464,7 +543,15 @@ def main():
     parser = argparse.ArgumentParser(description="Generate GCO infrastructure diagrams")
     parser.add_argument(
         "--stack",
-        choices=["all", "global", "api-gateway", "regional", "regional-api", "monitoring"],
+        choices=[
+            "all",
+            "global",
+            "api-gateway",
+            "regional",
+            "regional-api",
+            "monitoring",
+            "analytics",
+        ],
         default="all",
         help="Which stack diagram to generate (default: all)",
     )
@@ -489,6 +576,9 @@ def main():
 
     if args.stack in ("all", "monitoring"):
         generate_monitoring_stack_diagram(output_dir)
+
+    if args.stack in ("all", "analytics"):
+        generate_analytics_stack_diagram(output_dir)
 
     if args.stack == "all":
         generate_full_architecture_diagram(output_dir)

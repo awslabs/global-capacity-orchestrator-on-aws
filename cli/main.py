@@ -22,6 +22,7 @@ import click
 
 from . import __version__
 from .commands import (
+    analytics,
     capacity,
     config_cmd,
     costs,
@@ -141,6 +142,7 @@ cli.add_command(costs)
 cli.add_command(stacks)
 cli.add_command(files)
 cli.add_command(config_cmd)
+cli.add_command(analytics)
 
 
 def main() -> None:

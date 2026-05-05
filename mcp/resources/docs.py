@@ -89,7 +89,7 @@ EXAMPLE_METADATA: dict[str, dict[str, str]] = {
         "summary": "vLLM OpenAI-compatible LLM serving with PagedAttention.",
         "gpu": "NVIDIA",
         "opt_in": "",
-        "submission": "gco inference deploy my-llm -i vllm/vllm-openai:v0.20.0 --gpu-count 1",
+        "submission": "gco inference deploy my-llm -i vllm/vllm-openai:v0.20.1 --gpu-count 1",
     },
     "inference-tgi": {
         "category": "Inference Serving",
@@ -146,6 +146,27 @@ EXAMPLE_METADATA: dict[str, dict[str, str]] = {
         "gpu": "no",
         "opt_in": 'Aurora ("aurora_pgvector": {"enabled": true} in cdk.json)',
         "submission": "gco jobs submit-direct examples/aurora-pgvector-job.yaml -r us-east-1",
+    },
+    "cluster-shared-bucket-upload-job": {
+        "category": "Storage & Persistence",
+        "summary": "Uploads a file to the always-on Cluster_Shared_Bucket using the gco-cluster-shared-bucket ConfigMap via envFrom. Works with analytics disabled.",
+        "gpu": "no",
+        "opt_in": "",
+        "submission": "gco jobs submit-direct examples/cluster-shared-bucket-upload-job.yaml -r us-east-1",
+    },
+    "analytics-s3-upload-job": {
+        "category": "Analytics",
+        "summary": "Publishes a dataset snapshot plus schema manifest to Cluster_Shared_Bucket under analytics-data/ so a SageMaker Studio notebook can read it.",
+        "gpu": "no",
+        "opt_in": 'Analytics ("analytics_environment": {"enabled": true} in cdk.json)',
+        "submission": "gco jobs submit-direct examples/analytics-s3-upload-job.yaml -r us-east-1",
+    },
+    "analytics-database-export-job": {
+        "category": "Analytics",
+        "summary": "Exports rows from the regional Aurora pgvector cluster to Cluster_Shared_Bucket as CSV for a SageMaker Studio notebook to analyse.",
+        "gpu": "no",
+        "opt_in": 'Aurora + Analytics ("aurora_pgvector.enabled" and "analytics_environment.enabled" in cdk.json)',
+        "submission": "gco jobs submit-direct examples/analytics-database-export-job.yaml -r us-east-1",
     },
     "volcano-gang-job": {
         "category": "Schedulers",

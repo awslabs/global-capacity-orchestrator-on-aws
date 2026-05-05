@@ -204,7 +204,7 @@ GCO can also deploy long-running inference endpoints across regions. Here's a qu
 ```bash
 # Deploy a vLLM inference endpoint
 gco inference deploy my-llm \
-  -i vllm/vllm-openai:v0.20.0 \
+  -i vllm/vllm-openai:v0.20.1 \
   --gpu-count 1 \
   -e MODEL=meta-llama/Llama-3.1-8B-Instruct \
   -r us-east-1

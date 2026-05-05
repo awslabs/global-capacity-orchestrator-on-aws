@@ -114,6 +114,9 @@ class ConfigLoader:
         # Validate EKS cluster config
         self._validate_eks_cluster_config()
 
+        # Validate analytics environment config (optional block)
+        self._validate_analytics_environment_config()
+
     def _validate_regions(self) -> None:
         """Validate region configuration"""
         regions = self.get_regions()
@@ -324,6 +327,59 @@ class ConfigLoader:
                 raise ConfigValidationError(
                     f"endpoint_access must be one of {valid_access_modes}, "
                     f"got {eks_config['endpoint_access']}"
+                )
+
+    def _validate_analytics_environment_config(self) -> None:
+        """Validate the optional analytics_environment block in cdk.json.
+
+        The block is entirely optional; absence means the feature is disabled
+        and no validation is needed. When present, we validate:
+
+        - ``enabled``: must be a bool if present (defaults to False via merge).
+        - ``hyperpod.enabled``: must be a bool if present (defaults to False).
+        - ``cognito.removal_policy`` and ``efs.removal_policy``: must be the
+          literal strings ``"destroy"`` or ``"retain"`` (case sensitive — they
+          are passed verbatim to CDK's ``RemovalPolicy`` lookup by the
+          consumer).
+        """
+        analytics_ctx = self.app.node.try_get_context("analytics_environment")
+        if not isinstance(analytics_ctx, dict):
+            # Block is absent or malformed — defaults apply, nothing to validate.
+            return
+
+        # Top-level `enabled` must be a bool if provided.
+        if "enabled" in analytics_ctx and not isinstance(analytics_ctx["enabled"], bool):
+            raise ConfigValidationError(
+                f"analytics_environment.enabled must be a bool, got "
+                f"{type(analytics_ctx['enabled']).__name__}: {analytics_ctx['enabled']!r}"
+            )
+
+        # `hyperpod.enabled` must be a bool if the sub-block is a dict and
+        # carries the key.
+        hyperpod_ctx = analytics_ctx.get("hyperpod")
+        if (
+            isinstance(hyperpod_ctx, dict)
+            and "enabled" in hyperpod_ctx
+            and not isinstance(hyperpod_ctx["enabled"], bool)
+        ):
+            raise ConfigValidationError(
+                f"analytics_environment.hyperpod.enabled must be a bool, got "
+                f"{type(hyperpod_ctx['enabled']).__name__}: {hyperpod_ctx['enabled']!r}"
+            )
+
+        valid_removal_policies = {"destroy", "retain"}
+
+        for sub_block in ("cognito", "efs"):
+            sub_ctx = analytics_ctx.get(sub_block)
+            if not isinstance(sub_ctx, dict):
+                continue
+            if "removal_policy" not in sub_ctx:
+                continue
+            removal_policy = sub_ctx["removal_policy"]
+            if removal_policy not in valid_removal_policies:
+                raise ConfigValidationError(
+                    f"analytics_environment.{sub_block}.removal_policy must be one of "
+                    f"{sorted(valid_removal_policies)}, got {removal_policy!r}"
                 )
 
     def get_project_name(self) -> str:
@@ -667,6 +723,68 @@ class ConfigLoader:
         aurora_ctx = self.app.node.try_get_context("aurora_pgvector")
         aurora_config: dict[str, Any] = aurora_ctx if isinstance(aurora_ctx, dict) else {}
         return {**default_config, **aurora_config}
+
+    def get_analytics_config(self) -> dict[str, Any]:
+        """Get optional analytics environment configuration.
+
+        Returns the fully-merged analytics_environment block from cdk.json
+        layered on top of the defaults below. Sub-blocks (``hyperpod``,
+        ``cognito``, ``efs``, ``studio``) are deep-merged so a user who
+        overrides a single nested key (e.g. ``cognito.domain_prefix``) does
+        not inadvertently wipe the sub-block's other defaults — mirroring the
+        nested-merge pattern used by ``get_fsx_lustre_config`` for its
+        ``node_group`` sub-block.
+
+        Returns:
+            Analytics configuration dictionary with the following keys:
+            - enabled: Whether the analytics environment stack is deployed
+              (default: False — the feature is off unless explicitly opted in)
+            - hyperpod: SageMaker HyperPod integration sub-block
+              - enabled: Whether to add the HyperPod IAM grants to
+                SageMaker_Execution_Role (default: False)
+            - cognito: Cognito user-pool sub-block
+              - domain_prefix: UserPoolDomain prefix, or None to let the
+                analytics stack derive one (default: None)
+              - removal_policy: "destroy" (default) or "retain" — controls
+                the Cognito pool's CloudFormation DeletionPolicy
+            - efs: Studio_EFS sub-block
+              - removal_policy: "destroy" (default) or "retain" — controls
+                the Studio EFS file system's CloudFormation DeletionPolicy
+            - studio: SageMaker Studio sub-block
+              - user_profile_name_prefix: Optional prefix for per-user
+                profile names, or None to use the Cognito username verbatim
+                (default: None)
+        """
+        default_config: dict[str, Any] = {
+            "enabled": False,
+            "hyperpod": {"enabled": False},
+            "cognito": {"domain_prefix": None, "removal_policy": "destroy"},
+            "efs": {"removal_policy": "destroy"},
+            "studio": {"user_profile_name_prefix": None},
+        }
+        analytics_ctx = self.app.node.try_get_context("analytics_environment")
+        analytics_config: dict[str, Any] = analytics_ctx if isinstance(analytics_ctx, dict) else {}
+        merged_config: dict[str, Any] = {**default_config, **analytics_config}
+
+        # Deep-merge each nested sub-block so a partial override does not
+        # drop the other defaults in the same sub-block.
+        for sub_block in ("hyperpod", "cognito", "efs", "studio"):
+            override = analytics_config.get(sub_block)
+            if isinstance(override, dict):
+                default_sub = cast(dict[str, Any], default_config[sub_block])
+                merged_config[sub_block] = {**default_sub, **override}
+
+        return merged_config
+
+    def get_analytics_enabled(self) -> bool:
+        """Return whether the analytics environment stack is enabled.
+
+        Thin wrapper around ``get_analytics_config()["enabled"]`` to mirror
+        the existing ``get_valkey_config`` / ``get_aurora_pgvector_config``
+        access pattern without forcing every call site to index into the
+        merged dict.
+        """
+        return bool(self.get_analytics_config()["enabled"])
 
     def get_tags(self) -> dict[str, str]:
         """Get common tags from configuration"""

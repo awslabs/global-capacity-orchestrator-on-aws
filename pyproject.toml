@@ -32,7 +32,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-    "boto3==1.43.1",
+    "boto3==1.43.3",
     "click==8.3.3",
     "requests==2.33.1",
     "pyyaml==6.0.3",
@@ -43,7 +43,7 @@ dependencies = [
     "pydantic==2.13.3",
     "prometheus-client==0.25.0",
     "httpx==0.28.1",
-    "urllib3>=2.6.3",
+    "urllib3==2.6.3",
 ]
 
 [project.optional-dependencies]
@@ -54,7 +54,7 @@ cdk = [
     "constructs==10.6.0",
 ]
 inference-monitor = [
-    "boto3==1.43.1",
+    "boto3==1.43.3",
     "kubernetes==35.0.0",
     "pyyaml==6.0.3",
 ]
@@ -82,6 +82,16 @@ test = [
     "pytest-asyncio==1.3.0",
     "pytest-xdist[psutil]==3.8.0",
     "moto==5.1.22",
+    # moto==5.1.22 lazy-imports its API Gateway backend whenever
+    # ``cloudformation.create_stack`` is called (even if the stack template
+    # contains no API Gateway resources), and that backend requires
+    # ``openapi-spec-validator``. The dependency is declared as "optional"
+    # by moto and is not pulled in by ``moto==5.1.22`` alone, so CI
+    # environments that install only the core moto wheel blow up with
+    # ``ModuleNotFoundError: openapi_spec_validator`` the first time a
+    # test seeds a CloudFormation stack for output discovery. Pinning it
+    # explicitly keeps test environments reproducible.
+    "openapi-spec-validator==0.8.5",
     "hypothesis==6.131.0",
 ]
 security = [

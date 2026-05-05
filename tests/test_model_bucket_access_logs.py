@@ -13,6 +13,9 @@ pure template assertions.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 import aws_cdk as cdk
 from aws_cdk import assertions
 
@@ -54,24 +57,45 @@ def _synth(app: cdk.App, construct_id: str = "test-global-stack") -> assertions.
     return assertions.Template.from_stack(stack)
 
 
-def _find_model_weights_bucket(template: assertions.Template) -> dict:
-    """Return the model weights bucket resource (the one with LoggingConfiguration)."""
+def _find_model_weights_bucket(template: assertions.Template) -> Mapping[str, Any]:
+    """Return the model weights bucket resource.
+
+    Disambiguates from the always-on ``cluster_shared_bucket`` (also has
+    ``LoggingConfiguration``) by filtering on the ``LogFilePrefix`` value
+    ``model-bucket-logs/`` set by ``_create_model_bucket``. The cluster-shared
+    bucket uses the prefix ``cluster-shared/``.
+    """
     buckets = template.find_resources("AWS::S3::Bucket")
-    matches = [b for b in buckets.values() if "LoggingConfiguration" in b.get("Properties", {})]
-    assert (
-        len(matches) == 1
-    ), f"Expected exactly one bucket with LoggingConfiguration, found {len(matches)}"
+    matches = [
+        b
+        for b in buckets.values()
+        if b.get("Properties", {}).get("LoggingConfiguration", {}).get("LogFilePrefix")
+        == "model-bucket-logs/"
+    ]
+    assert len(matches) == 1, f"Expected exactly one model-weights bucket, found {len(matches)}"
     return matches[0]
 
 
-def _find_access_logs_bucket(template: assertions.Template) -> dict:
-    """Return the access-logs bucket resource (the one with LifecycleConfiguration)."""
+def _find_access_logs_bucket(template: assertions.Template) -> Mapping[str, Any]:
+    """Return the model-weights access-logs bucket resource.
+
+    Disambiguates from the ``cluster_shared_access_logs_bucket`` (also has
+    ``LifecycleConfiguration``) by locating the bucket referenced as the
+    ``LoggingConfiguration.DestinationBucketName`` of the model-weights bucket.
+    This is more robust than matching on SSE algorithm because both buckets now
+    carry the same ``ExpireAccessLogs`` lifecycle rule shape.
+    """
+    model_bucket = _find_model_weights_bucket(template)
+    dest_ref = model_bucket["Properties"]["LoggingConfiguration"]["DestinationBucketName"]
+    assert isinstance(dest_ref, dict) and "Ref" in dest_ref, (
+        f"model_bucket LoggingConfiguration.DestinationBucketName should be a Ref, "
+        f"got {dest_ref!r}"
+    )
     buckets = template.find_resources("AWS::S3::Bucket")
-    matches = [b for b in buckets.values() if "LifecycleConfiguration" in b.get("Properties", {})]
     assert (
-        len(matches) == 1
-    ), f"Expected exactly one bucket with LifecycleConfiguration, found {len(matches)}"
-    return matches[0]
+        dest_ref["Ref"] in buckets
+    ), f"model_bucket logs to {dest_ref['Ref']} but no such S3::Bucket exists"
+    return buckets[dest_ref["Ref"]]
 
 
 class TestModelBucketAccessLogs:
