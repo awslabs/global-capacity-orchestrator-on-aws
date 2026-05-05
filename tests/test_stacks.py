@@ -613,8 +613,12 @@ class TestStackManagerOperations:
         from cli.stacks import StackManager
 
         config = MagicMock()
+        config.api_gateway_region = "us-east-2"
 
-        with patch.object(StackManager, "_run_cdk") as mock_run:
+        with (
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=False),
+        ):
             mock_run.return_value = MagicMock(returncode=0)
 
             manager = StackManager(config)
@@ -1961,8 +1965,12 @@ class TestStackManagerDestroyWithOptions:
         from cli.stacks import StackManager
 
         config = MagicMock()
+        config.api_gateway_region = "us-east-2"
 
-        with patch.object(StackManager, "_run_cdk") as mock_run:
+        with (
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=False),
+        ):
             mock_run.return_value = MagicMock(returncode=0)
 
             manager = StackManager(config)

@@ -68,12 +68,13 @@ class TestHandler:
         assert result["Status"] == "SUCCESS"
 
     @patch("analytics_cleanup_handler._delete_sagemaker_security_groups", return_value=[])
+    @patch("analytics_cleanup_handler._delete_sagemaker_managed_efs", return_value=[])
     @patch("analytics_cleanup_handler._delete_access_points", return_value=[])
     @patch("analytics_cleanup_handler._delete_user_profiles", return_value=[])
     @patch("analytics_cleanup_handler._delete_spaces", return_value=[])
     @patch("analytics_cleanup_handler._delete_apps", return_value=[])
     def test_delete_event_calls_cleanup(
-        self, mock_apps, mock_spaces, mock_profiles, mock_aps, mock_sgs
+        self, mock_apps, mock_spaces, mock_profiles, mock_aps, mock_efs, mock_sgs
     ):
         result = handler({"RequestType": "Delete"}, None)
         assert result["Status"] == "SUCCESS"
@@ -81,14 +82,16 @@ class TestHandler:
         mock_spaces.assert_called_once_with("us-east-2", "d-test123")
         mock_profiles.assert_called_once_with("us-east-2", "d-test123")
         mock_aps.assert_called_once_with("us-east-2", "fs-abc123")
+        mock_efs.assert_called_once_with("us-east-2", "d-test123")
 
     @patch("analytics_cleanup_handler._delete_sagemaker_security_groups", return_value=["err0"])
+    @patch("analytics_cleanup_handler._delete_sagemaker_managed_efs", return_value=[])
     @patch("analytics_cleanup_handler._delete_access_points", return_value=["err1"])
     @patch("analytics_cleanup_handler._delete_user_profiles", return_value=["err2"])
     @patch("analytics_cleanup_handler._delete_spaces", return_value=[])
     @patch("analytics_cleanup_handler._delete_apps", return_value=[])
     def test_delete_returns_success_even_on_errors(
-        self, mock_apps, mock_spaces, mock_profiles, mock_aps, mock_sgs
+        self, mock_apps, mock_spaces, mock_profiles, mock_aps, mock_efs, mock_sgs
     ):
         """Cleanup errors must not block stack deletion."""
         result = handler({"RequestType": "Delete"}, None)
@@ -221,3 +224,74 @@ class TestDeleteAccessPoints:
 
         assert len(errors) == 1
         assert "fsap-001" in errors[0]
+
+
+# ---------------------------------------------------------------------------
+# _delete_sagemaker_managed_efs tests
+# ---------------------------------------------------------------------------
+
+_delete_sagemaker_managed_efs = _module._delete_sagemaker_managed_efs
+
+
+class TestDeleteSagemakerManagedEfs:
+    def test_deletes_efs_matching_domain_id(self):
+        mock_efs = MagicMock()
+        mock_efs.describe_file_systems.return_value = {
+            "FileSystems": [
+                {"FileSystemId": "fs-other", "CreationToken": "other-domain"},
+                {"FileSystemId": "fs-target", "CreationToken": "d-test123"},
+            ]
+        }
+        mock_efs.describe_mount_targets.return_value = {
+            "MountTargets": [{"MountTargetId": "fsmt-001"}]
+        }
+        # After deletion, no mount targets remain
+        mock_efs.describe_mount_targets.side_effect = [
+            {"MountTargets": [{"MountTargetId": "fsmt-001"}]},
+            {"MountTargets": []},
+        ]
+
+        with patch("boto3.client", return_value=mock_efs):
+            errors = _delete_sagemaker_managed_efs("us-east-2", "d-test123")
+
+        assert errors == []
+        mock_efs.delete_mount_target.assert_called_once_with(MountTargetId="fsmt-001")
+        mock_efs.delete_file_system.assert_called_once_with(FileSystemId="fs-target")
+
+    def test_no_matching_efs_returns_empty(self):
+        mock_efs = MagicMock()
+        mock_efs.describe_file_systems.return_value = {
+            "FileSystems": [
+                {"FileSystemId": "fs-other", "CreationToken": "other-domain"},
+            ]
+        }
+
+        with patch("boto3.client", return_value=mock_efs):
+            errors = _delete_sagemaker_managed_efs("us-east-2", "d-test123")
+
+        assert errors == []
+        mock_efs.delete_mount_target.assert_not_called()
+        mock_efs.delete_file_system.assert_not_called()
+
+    def test_mount_target_delete_failure_captured(self):
+        from botocore.exceptions import ClientError
+
+        mock_efs = MagicMock()
+        mock_efs.describe_file_systems.return_value = {
+            "FileSystems": [
+                {"FileSystemId": "fs-target", "CreationToken": "d-test123"},
+            ]
+        }
+        mock_efs.describe_mount_targets.return_value = {
+            "MountTargets": [{"MountTargetId": "fsmt-001"}]
+        }
+        mock_efs.delete_mount_target.side_effect = ClientError(
+            {"Error": {"Code": "MountTargetNotFound", "Message": "gone"}},
+            "DeleteMountTarget",
+        )
+
+        with patch("boto3.client", return_value=mock_efs):
+            errors = _delete_sagemaker_managed_efs("us-east-2", "d-test123")
+
+        assert len(errors) == 1
+        assert "fsmt-001" in errors[0]

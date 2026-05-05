@@ -52,6 +52,9 @@ def handler(event: dict, context: object) -> dict:
     # Delete all EFS access points
     errors.extend(_delete_access_points(region, efs_id))
 
+    # Delete SageMaker-managed EFS (created internally by the domain)
+    errors.extend(_delete_sagemaker_managed_efs(region, domain_id))
+
     # Delete SageMaker-managed NFS security groups
     if vpc_id:
         errors.extend(_delete_sagemaker_security_groups(region, domain_id, vpc_id))
@@ -229,6 +232,68 @@ def _delete_sagemaker_security_groups(region: str, domain_id: str, vpc_id: str) 
                 errors.append(msg)
     except ClientError as e:
         msg = f"Failed to list SageMaker security groups: {e}"
+        logger.error(msg)
+        errors.append(msg)
+
+    return errors
+
+
+def _delete_sagemaker_managed_efs(region: str, domain_id: str) -> list[str]:
+    """Delete the SageMaker-managed EFS created internally by the domain.
+
+    SageMaker creates an internal EFS file system with CreationToken set
+    to the domain ID. This EFS has mount targets in the VPC subnets that
+    block subnet deletion. We must delete mount targets first, then the
+    file system.
+    """
+    errors: list[str] = []
+    efs = boto3.client("efs", region_name=region)
+
+    try:
+        # Find EFS with CreationToken matching the domain ID
+        response = efs.describe_file_systems()
+        target_fs = None
+        for fs in response.get("FileSystems", []):
+            if fs.get("CreationToken") == domain_id:
+                target_fs = fs["FileSystemId"]
+                break
+
+        if not target_fs:
+            logger.info("No SageMaker-managed EFS found for domain %s", domain_id)
+            return errors
+
+        logger.info("Found SageMaker-managed EFS: %s", target_fs)
+
+        # Delete all mount targets first
+        mt_response = efs.describe_mount_targets(FileSystemId=target_fs)
+        for mt in mt_response.get("MountTargets", []):
+            mt_id = mt["MountTargetId"]
+            try:
+                efs.delete_mount_target(MountTargetId=mt_id)
+                logger.info("Deleted mount target: %s", mt_id)
+            except ClientError as e:
+                msg = f"Failed to delete mount target {mt_id}: {e}"
+                logger.error(msg)
+                errors.append(msg)
+
+        # Wait for mount targets to be deleted (up to 2 minutes)
+        for _ in range(24):
+            time.sleep(5)
+            remaining = efs.describe_mount_targets(FileSystemId=target_fs)
+            if not remaining.get("MountTargets"):
+                break
+
+        # Delete the file system
+        try:
+            efs.delete_file_system(FileSystemId=target_fs)
+            logger.info("Deleted SageMaker-managed EFS: %s", target_fs)
+        except ClientError as e:
+            msg = f"Failed to delete EFS {target_fs}: {e}"
+            logger.error(msg)
+            errors.append(msg)
+
+    except ClientError as e:
+        msg = f"Failed to find/delete SageMaker-managed EFS: {e}"
         logger.error(msg)
         errors.append(msg)
 
