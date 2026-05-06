@@ -859,11 +859,15 @@ class StackManager:
                 update_analytics_config({"enabled": False})
 
             print("  Updating gco-api-gateway to remove analytics routes...")
-            success = self.deploy(
-                stack_name="gco-api-gateway",
-                require_approval=False,
-                exclusively=True,
-            )
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as tmp_out:
+                success = self.deploy(
+                    stack_name="gco-api-gateway",
+                    require_approval=False,
+                    exclusively=True,
+                    output_dir=tmp_out,
+                )
             if not success:
                 logger.warning("Failed to redeploy gco-api-gateway before analytics destroy")
 
