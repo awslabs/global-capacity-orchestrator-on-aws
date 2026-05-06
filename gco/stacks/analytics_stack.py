@@ -342,17 +342,8 @@ class GCOAnalyticsStack(Stack):
         # SageMaker calls DescribeMountTargets during user-profile
         # provisioning to validate the EFS mount configuration. These are
         # control-plane API calls (not data-plane via mount target), so
-        # they must NOT have the AccessedViaMountTarget condition.
-        self.studio_efs.add_to_resource_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                principals=[iam.AnyPrincipal()],
-                actions=[
-                    "elasticfilesystem:DescribeMountTargets",
-                    "elasticfilesystem:DescribeFileSystems",
-                ],
-            )
-        )
+        # they cannot be placed in an EFS resource policy. The IAM role
+        # policy (Resource:*) on the execution role handles authorization.
 
     # ==================================================================
     # SageMaker execution role + grants
@@ -764,28 +755,6 @@ class GCOAnalyticsStack(Stack):
                 "REGION": self.region,
                 "VPC_ID": self.vpc.vpc_id,
             },
-        )
-
-        # Grant the cleanup Lambda access on the EFS resource policy.
-        # When an EFS has a resource policy, both IAM AND the resource
-        # policy must allow the action (intersection model). Without this
-        # grant, the cleanup Lambda gets AccessDeniedException on
-        # DescribeAccessPoints/DescribeFileSystems even though its IAM
-        # role has Resource:*.
-        assert cleanup_fn.role is not None
-        self.studio_efs.add_to_resource_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                principals=[cleanup_fn.role],
-                actions=[
-                    "elasticfilesystem:DescribeAccessPoints",
-                    "elasticfilesystem:DescribeFileSystems",
-                    "elasticfilesystem:DescribeMountTargets",
-                    "elasticfilesystem:DeleteAccessPoint",
-                    "elasticfilesystem:DeleteMountTarget",
-                    "elasticfilesystem:DeleteFileSystem",
-                ],
-            )
         )
 
         cleanup_fn.add_to_role_policy(
