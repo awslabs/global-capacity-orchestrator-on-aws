@@ -2159,50 +2159,6 @@ gco analytics doctor
 gco analytics doctor
 ```
 
-#### `gco analytics iterate`
-
-Thin wrapper over `scripts/test_analytics_lifecycle.py` that drives
-the analytics deploy → test → destroy → verify-clean iteration loop.
-Exits with the underlying script's return code. Never touches
-`gco-global`, `gco-api-gateway`, `gco-<region>`, or `gco-monitoring` —
-the loop is scoped strictly to `gco-analytics`.
-
-```bash
-gco analytics iterate PHASE [OPTIONS]
-```
-
-**Arguments:**
-
-- `PHASE` - One of `status`, `deploy`, `test`, `destroy`,
-  `verify-clean`, or `all`.
-
-**Options:**
-
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--region` | `-r` | AWS region (default: `deployment_regions.api_gateway` from `cdk.json`). |
-| `--dry-run` | | Print the planned action without executing it. |
-| `--json` | | Emit machine-readable JSON instead of human-readable text. |
-
-**Example:**
-
-```bash
-# Check current state without changing anything
-gco analytics iterate status --dry-run --json
-
-# Individual phases
-gco analytics iterate deploy
-gco analytics iterate test
-gco analytics iterate destroy
-gco analytics iterate verify-clean
-
-# Full cycle
-gco analytics iterate all
-
-# Target a specific region
-gco analytics iterate deploy -r us-east-2
-```
-
 ---
 
 ## Configuration
