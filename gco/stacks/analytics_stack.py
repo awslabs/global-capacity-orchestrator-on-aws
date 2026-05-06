@@ -525,17 +525,21 @@ class GCOAnalyticsStack(Stack):
                 )
             )
 
-        # EFS resource policy — allows the execution role, SageMaker service,
-        # and any account principal (for the cleanup Lambda whose role is
-        # created later) to perform data-plane and DescribeMountTargets
-        # actions. Security is enforced by the VPC security group (NFS
-        # traffic only from within the VPC) and IAM policies on each role.
+        # EFS resource policy — must include DescribeMountTargets without
+        # the AccessedViaMountTarget condition because SageMaker calls it
+        # during user-profile provisioning. Using AnyPrincipal (AWS:*)
+        # ensures all account roles (execution role, cleanup Lambda, and
+        # the SageMaker service) are covered. Security is enforced by the
+        # VPC security group (NFS traffic only from within the VPC) and
+        # IAM policies on each role — the resource policy is permissive
+        # by design to avoid the intersection-model blocking control-plane
+        # calls.
         # Note: DescribeAccessPoints/DescribeFileSystems CANNOT be in EFS
         # resource policies (EFS rejects them). Those rely on IAM only.
         self.studio_efs.add_to_resource_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
-                principals=[iam.AccountRootPrincipal()],
+                principals=[iam.AnyPrincipal()],
                 actions=[
                     "elasticfilesystem:ClientMount",
                     "elasticfilesystem:ClientWrite",
