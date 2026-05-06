@@ -795,11 +795,15 @@ class GCOAnalyticsStack(Stack):
             on_event_handler=cleanup_fn,
         )
 
-        CustomResource(
+        cleanup_resource = CustomResource(
             self,
             "DomainCleanup",
             service_token=cleanup_provider.service_token,
         )
+
+        # Store reference so _create_presigned_url_lambda can add a
+        # dependency after it creates the presigned-URL Lambda.
+        self._cleanup_resource = cleanup_resource
 
         # Nag suppression for the cleanup Lambda — Resource::* is required
         # because ListUserProfiles/DeleteUserProfile and
@@ -1206,6 +1210,13 @@ class GCOAnalyticsStack(Stack):
             ],
             apply_to_children=True,
         )
+
+        # The cleanup custom resource must fire AFTER the presigned-URL
+        # Lambda is deleted during stack destruction. Otherwise the Lambda
+        # can recreate user profiles (via in-flight login requests) between
+        # cleanup and domain deletion. Adding the dependency here (after
+        # the Lambda is created) ensures correct deletion ordering.
+        self._cleanup_resource.node.add_dependency(self.presigned_url_lambda)
 
     # ==================================================================
     # Nag suppressions
