@@ -151,8 +151,8 @@ def _detect_container_runtime_uncached() -> str | None:
             )
             if result.returncode == 0:
                 return "docker"
-        except subprocess.TimeoutExpired, Exception:
-            pass
+        except Exception as e:
+            logger.debug("docker info check failed: %s", e)
 
     # Try finch as fallback
     if shutil.which("finch"):
@@ -164,8 +164,8 @@ def _detect_container_runtime_uncached() -> str | None:
             )
             if result.returncode == 0:
                 return "finch"
-        except subprocess.TimeoutExpired, Exception:
-            pass
+        except Exception as e:
+            logger.debug("finch info check failed: %s", e)
 
     # Try podman as last resort
     if shutil.which("podman"):
@@ -177,8 +177,8 @@ def _detect_container_runtime_uncached() -> str | None:
             )
             if result.returncode == 0:
                 return "podman"
-        except subprocess.TimeoutExpired, Exception:
-            pass
+        except Exception as e:
+            logger.debug("podman info check failed: %s", e)
 
     return None
 

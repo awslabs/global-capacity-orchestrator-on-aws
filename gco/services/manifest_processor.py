@@ -49,7 +49,7 @@ from gco.models import (
     ManifestSubmissionResponse,
     ResourceStatus,
 )
-from gco.services.structured_logging import configure_structured_logging
+from gco.services.structured_logging import configure_structured_logging, sanitize_log_value
 
 # NOTE: No logging.basicConfig() here. This module is imported by the CLI
 # (cli/jobs.py, cli/commands/*_cmd.py) as a library for YAML loading helpers.
@@ -974,7 +974,11 @@ class ManifestProcessor:
         try:
             return self.dynamic_client.resources.get(api_version=api_version, kind=kind)
         except ResourceNotFoundError as e:
-            logger.error(f"Resource type not found: {api_version}/{kind}")
+            logger.error(
+                "Resource type not found: %s/%s",
+                sanitize_log_value(api_version),
+                sanitize_log_value(kind),
+            )
             raise ValueError(f"Unknown resource type: {api_version}/{kind}") from e
 
     async def _create_resource(self, manifest_data: dict[str, Any]) -> bool:
@@ -1134,7 +1138,9 @@ class ManifestProcessor:
 
                     jobs.append(job_dict)
             except ApiException as e:
-                logger.warning(f"Failed to list jobs in namespace {ns}: {e.reason}")
+                logger.warning(
+                    "Failed to list jobs in namespace %s: %s", sanitize_log_value(ns), e.reason
+                )
                 continue
 
         return jobs

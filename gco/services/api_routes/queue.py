@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, Response
 
 from gco.models import ManifestSubmissionRequest
 from gco.services.api_shared import QueuedJobRequest, _check_processor
+from gco.services.structured_logging import sanitize_log_value
 from gco.services.template_store import JobStatus as JobStoreStatus
 
 if TYPE_CHECKING:
@@ -99,7 +100,7 @@ async def get_queued_job(job_id: str) -> Response:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get job {job_id}: {e}")
+        logger.error("Failed to get job %s: %s", sanitize_log_value(job_id), e)
         raise HTTPException(status_code=500, detail=f"Failed to get job: {e!s}") from e
 
 
@@ -126,7 +127,7 @@ async def cancel_queued_job(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to cancel job {job_id}: {e}")
+        logger.error("Failed to cancel job %s: %s", sanitize_log_value(job_id), e)
         raise HTTPException(status_code=500, detail=f"Failed to cancel job: {e!s}") from e
 
 

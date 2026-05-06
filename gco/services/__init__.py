@@ -17,6 +17,24 @@ Imports are lazy to allow individual services to run in minimal
 Docker images without pulling in all dependencies.
 """
 
+from typing import TYPE_CHECKING
+
+# Re-export names for static analysis (type checkers, CodeQL) while keeping
+# the actual imports lazy via __getattr__ below. This keeps the package
+# importable without pulling in every service's dependencies.
+if TYPE_CHECKING:
+    from .auth_middleware import AuthenticationMiddleware
+    from .health_monitor import HealthMonitor, create_health_monitor_from_env
+    from .manifest_processor import ManifestProcessor, create_manifest_processor_from_env
+    from .metrics_publisher import (
+        HealthMonitorMetrics,
+        ManifestProcessorMetrics,
+        MetricsPublisher,
+        create_health_monitor_metrics,
+        create_manifest_processor_metrics,
+    )
+    from .webhook_dispatcher import WebhookDispatcher, create_webhook_dispatcher_from_env
+
 
 def __getattr__(name: str) -> object:
     """Lazy import to avoid pulling in all dependencies at package import time."""

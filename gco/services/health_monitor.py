@@ -178,7 +178,6 @@ class HealthMonitor:
 
             # Calculate usage from metrics
             for item in node_metrics.get("items", []):
-                node_name = item["metadata"]["name"]
                 cpu_usage = item["usage"]["cpu"]
 
                 # Convert CPU usage to millicores

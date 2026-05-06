@@ -143,11 +143,12 @@ with _contextlib.suppress(ImportError):
 
 # Also make reserve_capacity available after module reload (tests use
 # importlib.reload with GCO_ENABLE_CAPACITY_PURCHASE=true)
-import importlib as _importlib  # noqa: E402
 import os as _os  # noqa: E402
 
 if _os.environ.get("GCO_ENABLE_CAPACITY_PURCHASE", "").lower() == "true":
-    import tools.capacity as _cap_mod
+    import importlib as _importlib  # noqa: E402
+
+    from tools import capacity as _cap_mod  # noqa: E402
 
     _importlib.reload(_cap_mod)
     if hasattr(_cap_mod, "reserve_capacity"):
@@ -166,6 +167,76 @@ from resources.ci import (  # noqa: E402, F401
 from resources.docs import DOCS_DIR, EXAMPLES_DIR  # noqa: E402, F401
 from resources.infra import DOCKERFILES_DIR, HELM_CHARTS_FILE  # noqa: E402, F401
 from resources.k8s import MANIFESTS_DIR  # noqa: E402, F401
+
+# Declare every name that is intentionally re-exported for tests and
+# downstream consumers. This silences unused-import warnings from static
+# analyzers that don't recognise the per-line ruff/flake8 markers above.
+__all__ = [
+    "DOCKERFILES_DIR",
+    "DOCS_DIR",
+    "EXAMPLES_DIR",
+    "GITHUB_ACTIONS_DIR",
+    "GITHUB_CODEQL_DIR",
+    "GITHUB_DIR",
+    "GITHUB_ISSUE_TEMPLATE_DIR",
+    "GITHUB_KIND_DIR",
+    "GITHUB_SCRIPTS_DIR",
+    "GITHUB_WORKFLOWS_DIR",
+    "HELM_CHARTS_FILE",
+    "MANIFESTS_DIR",
+    "_MCP_SERVER_VERSION",
+    "_PROJECT_VERSION",
+    "_sanitize_arguments",
+    "ai_recommend",
+    "assume_mcp_role",
+    "audit_logged",
+    "audit_logger",
+    "canary_deploy",
+    "capacity_status",
+    "chat_inference",
+    "check_capacity",
+    "cluster_health",
+    "cost_by_region",
+    "cost_forecast",
+    "cost_summary",
+    "cost_trend",
+    "delete_inference",
+    "delete_job",
+    "deploy_inference",
+    "emit_startup_log",
+    "fsx_status",
+    "get_job",
+    "get_job_events",
+    "get_job_logs",
+    "get_model_uri",
+    "get_project_version",
+    "inference_health",
+    "inference_status",
+    "invoke_inference",
+    "list_endpoint_models",
+    "list_file_systems",
+    "list_inference_endpoints",
+    "list_jobs",
+    "list_models",
+    "list_reservations",
+    "list_stacks",
+    "list_storage_contents",
+    "mcp",
+    "promote_canary",
+    "queue_status",
+    "recommend_region",
+    "reservation_check",
+    "rollback_canary",
+    "scale_inference",
+    "setup_cluster_access",
+    "spot_prices",
+    "stack_status",
+    "start_inference",
+    "stop_inference",
+    "submit_job_api",
+    "submit_job_sqs",
+    "update_inference_image",
+]
 
 # --- Startup ---
 

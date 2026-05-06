@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import statistics
 from dataclasses import dataclass
@@ -278,9 +277,10 @@ class MultiRegionCapacityChecker:
             # Capacity Block trend — compares near-term vs far-term offering
             # density to detect whether AWS is adding or consuming capacity
             # in this region for the requested instance type.
-            cb_trend = 0.0
-            with contextlib.suppress(Exception):
+            try:
                 cb_trend = capacity_checker.get_capacity_block_trend(instance_type, region)
+            except Exception:
+                cb_trend = 0.0
 
             weighted_score = compute_weighted_score(
                 spot_placement_score=spot_score,

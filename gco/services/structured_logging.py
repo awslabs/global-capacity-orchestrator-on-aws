@@ -134,3 +134,24 @@ def configure_structured_logging(
         )
 
     root_logger.addHandler(handler)
+
+
+def sanitize_log_value(value: Any) -> str:
+    """
+    Sanitize a value for safe inclusion in log messages.
+
+    Escapes CR/LF and other control characters that could be used for log
+    injection (log forging), where an attacker embeds newlines in user input
+    to spoof log entries.
+
+    Always call this on untrusted inputs (HTTP path/query params, job IDs,
+    namespaces, etc.) before passing them to ``logger.info/warning/error``.
+
+    Args:
+        value: Any value; will be coerced to ``str``.
+
+    Returns:
+        A string with control characters escaped (e.g. ``\\n`` becomes the
+        literal two-character sequence backslash-n).
+    """
+    return str(value).encode("unicode_escape").decode("ascii")

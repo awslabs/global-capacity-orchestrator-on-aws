@@ -550,6 +550,7 @@ def inference_invoke(
         full_path = f"{ingress_path}{api_path}"
 
         # Build the request body
+        body_str: str | None = None
         if data:
             body_str = data
         elif prompt:

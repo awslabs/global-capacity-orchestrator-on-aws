@@ -524,8 +524,8 @@ def apply_manifest(m: dict[str, Any]) -> str:
                     body=client.V1DeleteOptions(propagation_policy="Background"),
                 )
                 time.sleep(2)
-        except (NotFoundError, ApiException):
-            pass
+        except (NotFoundError, ApiException) as e:
+            log.debug("Pre-create lookup for Job %s/%s failed: %s", namespace, name, e)
 
     # Create-or-update pattern: try create first, fall back to patch on 409 (conflict).
     # This is idempotent — safe to retry without side effects.
