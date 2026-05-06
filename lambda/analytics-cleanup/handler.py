@@ -241,21 +241,44 @@ def _delete_sagemaker_security_groups(region: str, domain_id: str, vpc_id: str) 
 def _delete_sagemaker_managed_efs(region: str, domain_id: str) -> list[str]:
     """Delete the SageMaker-managed EFS created internally by the domain.
 
-    SageMaker creates an internal EFS file system with CreationToken set
-    to the domain ID. This EFS has mount targets in the VPC subnets that
-    block subnet deletion. We must delete mount targets first, then the
-    file system.
+    SageMaker creates an internal EFS file system when a domain is created.
+    It may use the domain ID as the CreationToken, or tag the file system
+    with ``ManagedByAmazonSageMakerResource``. We search by both methods
+    to ensure we find it regardless of SageMaker's internal behavior.
+
+    This EFS has mount targets in the VPC subnets that block subnet
+    deletion. We must delete mount targets first, then the file system.
     """
     errors: list[str] = []
     efs = boto3.client("efs", region_name=region)
 
     try:
-        # Find EFS with CreationToken matching the domain ID
-        response = efs.describe_file_systems()
+        # Paginate describe_file_systems to find the SageMaker-managed one.
         target_fs = None
-        for fs in response.get("FileSystems", []):
-            if fs.get("CreationToken") == domain_id:
-                target_fs = fs["FileSystemId"]
+        marker: str | None = None
+        while True:
+            kwargs: dict = {}
+            if marker:
+                kwargs["Marker"] = marker
+            response = efs.describe_file_systems(**kwargs)
+            for fs in response.get("FileSystems", []):
+                # Match by CreationToken (SageMaker often uses domain ID).
+                if fs.get("CreationToken") == domain_id:
+                    target_fs = fs["FileSystemId"]
+                    break
+                # Match by tag — SageMaker tags managed EFS with the domain ARN.
+                for tag in fs.get("Tags", []):
+                    if tag.get(
+                        "Key"
+                    ) == "ManagedByAmazonSageMakerResource" and domain_id in tag.get("Value", ""):
+                        target_fs = fs["FileSystemId"]
+                        break
+                if target_fs:
+                    break
+            if target_fs:
+                break
+            marker = response.get("NextMarker")
+            if not marker:
                 break
 
         if not target_fs:
