@@ -729,6 +729,11 @@ class StackManager:
             cmd.append("--all")
         elif stack_name:
             cmd.append(stack_name)
+            # --exclusively prevents CDK from cascading the destroy to
+            # dependent stacks (e.g. destroying gco-analytics should not
+            # also destroy gco-api-gateway just because it references the
+            # presigned-URL Lambda ARN).
+            cmd.append("--exclusively")
 
         if force:
             cmd.append("--force")
