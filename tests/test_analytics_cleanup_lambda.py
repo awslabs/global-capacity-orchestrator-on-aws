@@ -236,14 +236,11 @@ _delete_sagemaker_managed_efs = _module._delete_sagemaker_managed_efs
 class TestDeleteSagemakerManagedEfs:
     def test_deletes_efs_matching_domain_id(self):
         mock_efs = MagicMock()
+        # CreationToken filter returns only the matching file system.
         mock_efs.describe_file_systems.return_value = {
             "FileSystems": [
-                {"FileSystemId": "fs-other", "CreationToken": "other-domain"},
                 {"FileSystemId": "fs-target", "CreationToken": "d-test123"},
             ]
-        }
-        mock_efs.describe_mount_targets.return_value = {
-            "MountTargets": [{"MountTargetId": "fsmt-001"}]
         }
         # After deletion, no mount targets remain
         mock_efs.describe_mount_targets.side_effect = [
@@ -255,16 +252,13 @@ class TestDeleteSagemakerManagedEfs:
             errors = _delete_sagemaker_managed_efs("us-east-2", "d-test123")
 
         assert errors == []
+        mock_efs.describe_file_systems.assert_called_once_with(CreationToken="d-test123")
         mock_efs.delete_mount_target.assert_called_once_with(MountTargetId="fsmt-001")
         mock_efs.delete_file_system.assert_called_once_with(FileSystemId="fs-target")
 
     def test_no_matching_efs_returns_empty(self):
         mock_efs = MagicMock()
-        mock_efs.describe_file_systems.return_value = {
-            "FileSystems": [
-                {"FileSystemId": "fs-other", "CreationToken": "other-domain"},
-            ]
-        }
+        mock_efs.describe_file_systems.return_value = {"FileSystems": []}
 
         with patch("boto3.client", return_value=mock_efs):
             errors = _delete_sagemaker_managed_efs("us-east-2", "d-test123")
