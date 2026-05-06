@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if health_check_task:
         health_check_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            _ = await health_check_task
+            await health_check_task
     if webhook_dispatcher:
         await webhook_dispatcher.stop()
         logger.info("Webhook dispatcher stopped")
