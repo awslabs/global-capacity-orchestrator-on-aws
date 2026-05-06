@@ -545,6 +545,7 @@ class GCOAnalyticsStack(Stack):
                     "elasticfilesystem:ClientWrite",
                     "elasticfilesystem:ClientRootAccess",
                     "elasticfilesystem:DescribeMountTargets",
+                    "elasticfilesystem:DescribeFileSystems",
                     "elasticfilesystem:DeleteAccessPoint",
                     "elasticfilesystem:DeleteMountTarget",
                     "elasticfilesystem:DeleteFileSystem",

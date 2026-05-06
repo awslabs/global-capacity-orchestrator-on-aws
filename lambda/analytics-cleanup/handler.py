@@ -35,7 +35,6 @@ def handler(event: dict, context: object) -> dict:
 
     region = os.environ["REGION"]
     domain_id = os.environ["DOMAIN_ID"]
-    efs_id = os.environ["EFS_ID"]
     vpc_id = os.environ.get("VPC_ID", "")
 
     errors: list[str] = []
@@ -49,8 +48,10 @@ def handler(event: dict, context: object) -> dict:
     # Delete all user profiles from the domain
     errors.extend(_delete_user_profiles(region, domain_id))
 
-    # Delete all EFS access points
-    errors.extend(_delete_access_points(region, efs_id))
+    # Note: EFS access points on the CDK-managed EFS are deleted
+    # automatically by CloudFormation when the EFS resource is removed.
+    # We don't call _delete_access_points here because DescribeAccessPoints
+    # is blocked by the EFS resource policy intersection model.
 
     # Delete SageMaker-managed EFS (created internally by the domain)
     errors.extend(_delete_sagemaker_managed_efs(region, domain_id))
@@ -263,50 +264,27 @@ def _delete_sagemaker_security_groups(region: str, domain_id: str, vpc_id: str) 
 def _delete_sagemaker_managed_efs(region: str, domain_id: str) -> list[str]:
     """Delete the SageMaker-managed EFS created internally by the domain.
 
-    SageMaker creates an internal EFS file system when a domain is created.
-    It may use the domain ID as the CreationToken, or tag the file system
-    with ``ManagedByAmazonSageMakerResource``. We search by both methods
-    to ensure we find it regardless of SageMaker's internal behavior.
+    SageMaker creates an internal EFS file system with CreationToken set
+    to the domain ID. We use the CreationToken filter parameter (not a
+    list-all call) to find it directly — this avoids DescribeFileSystems
+    without a filter, which is blocked by the EFS resource policy
+    intersection model.
 
     This EFS has mount targets in the VPC subnets that block subnet
-    deletion. We must delete mount targets first, then the file system.
+    deletion. We delete mount targets first, wait, then delete the FS.
     """
     errors: list[str] = []
     efs = boto3.client("efs", region_name=region)
 
     try:
-        # Paginate describe_file_systems to find the SageMaker-managed one.
-        target_fs = None
-        marker: str | None = None
-        while True:
-            kwargs: dict = {}
-            if marker:
-                kwargs["Marker"] = marker
-            response = efs.describe_file_systems(**kwargs)
-            for fs in response.get("FileSystems", []):
-                # Match by CreationToken (SageMaker often uses domain ID).
-                if fs.get("CreationToken") == domain_id:
-                    target_fs = fs["FileSystemId"]
-                    break
-                # Match by tag — SageMaker tags managed EFS with the domain ARN.
-                for tag in fs.get("Tags", []):
-                    if tag.get(
-                        "Key"
-                    ) == "ManagedByAmazonSageMakerResource" and domain_id in tag.get("Value", ""):
-                        target_fs = fs["FileSystemId"]
-                        break
-                if target_fs:
-                    break
-            if target_fs:
-                break
-            marker = response.get("NextMarker")
-            if not marker:
-                break
-
-        if not target_fs:
+        # CreationToken filter finds the specific file system directly.
+        response = efs.describe_file_systems(CreationToken=domain_id)
+        file_systems = response.get("FileSystems", [])
+        if not file_systems:
             logger.info("No SageMaker-managed EFS found for domain %s", domain_id)
             return errors
 
+        target_fs = file_systems[0]["FileSystemId"]
         logger.info("Found SageMaker-managed EFS: %s", target_fs)
 
         # Delete all mount targets first
