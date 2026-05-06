@@ -34,11 +34,10 @@ bucket's reference.
 - [(g) Submitting HyperPod jobs when the sub-toggle is enabled](#g-submitting-hyperpod-jobs-when-the-sub-toggle-is-enabled)
 - [(h) Opening the environment in Kiro](#h-opening-the-environment-in-kiro)
 - [(i) Running the example cluster jobs and reading their output from a notebook](#i-running-the-example-cluster-jobs-and-reading-their-output-from-a-notebook)
-- [(j) The deploy/destroy test loop](#j-the-deploydestroy-test-loop)
-- [(k) Two-bucket access model](#k-two-bucket-access-model)
-- [(l) EFS persistent-home-folder behavior](#l-efs-persistent-home-folder-behavior)
-- [(m) The `gco-cluster-shared-bucket` ConfigMap schema](#m-the-gco-cluster-shared-bucket-configmap-schema)
-- [(n) Cross-region data-transfer caveat](#n-cross-region-data-transfer-caveat)
+- [(j) Two-bucket access model](#j-two-bucket-access-model)
+- [(k) EFS persistent-home-folder behavior](#k-efs-persistent-home-folder-behavior)
+- [(l) The `gco-cluster-shared-bucket` ConfigMap schema](#l-the-gco-cluster-shared-bucket-configmap-schema)
+- [(m) Cross-region data-transfer caveat](#m-cross-region-data-transfer-caveat)
 
 ## Cost
 
@@ -440,7 +439,7 @@ out of the box without additional IAM configuration.
 ### Optional: wiring GCO's MCP server into Amazon Q inside Studio
 
 If you want to talk to the GCO MCP server from Amazon Q's chat
-interface inside Studio, add an entry to `~/.aws/amazonq/mcp.json`:
+interface inside Studio, add an entry to `~/.aws/amazonq/default.json`:
 
 ```json
 {
@@ -694,76 +693,7 @@ See section (n) and
 [`docs/CLUSTER_SHARED_BUCKET.md`](CLUSTER_SHARED_BUCKET.md#cross-region-egress)
 for the full discussion.
 
-## (j) The deploy/destroy test loop
-
-The feature ships with an iteration-loop script that drives the full
-`enable → deploy → test → destroy → verify-clean` cycle against the
-`gco-analytics` stack. This is the tool the maintainers use to
-iterate on `gco-analytics` without touching `gco-global`,
-`gco-api-gateway`, or any regional stack.
-
-The script lives at `scripts/test_analytics_lifecycle.py` and the
-`gco analytics iterate` subcommand is a thin wrapper over it.
-
-Dry-run the current state:
-
-```bash
-gco analytics iterate status --dry-run --json
-```
-
-`status` inspects CloudFormation + `cdk.json` and reports what the
-script would do next. `--dry-run` adds an explicit planned-action
-line without executing. `--json` emits a machine-readable JSON object
-so you can pipe the output into other tools.
-
-Run the full cycle:
-
-```bash
-gco analytics iterate all
-```
-
-This runs:
-
-1. `deploy` — `cdk deploy gco-analytics`.
-2. `test` — smoke test the `/studio/login` route end-to-end.
-3. `destroy` — `cdk destroy gco-analytics`.
-4. `verify-clean` — list IAM roles, S3 buckets, KMS keys, EFS file
-   systems, and Cognito pools and assert no analytics resources are
-   left retained.
-
-Individual phases:
-
-```bash
-gco analytics iterate deploy
-gco analytics iterate test
-gco analytics iterate destroy
-gco analytics iterate verify-clean
-```
-
-Each phase is idempotent — re-running `iterate deploy` on an already-
-deployed stack is a no-op, and re-running `iterate destroy` on an
-already-destroyed stack exits 0. This is by design, so the loop is
-safe to run in CI.
-
-Target a specific region:
-
-```bash
-gco analytics iterate deploy -r us-east-2
-```
-
-Defaults to `deployment_regions.api_gateway` from `cdk.json`. The
-`-r` override is rarely needed — the analytics stack always deploys
-into the API-gateway region — but it's available for edge cases
-(for example, when testing against a secondary account in a
-different region).
-
-The script **never** runs `cdk destroy --all`, `gco stacks
-destroy-all`, or any command that would destroy the baseline GCO
-stacks (`gco-global`, `gco-api-gateway`, `gco-<region>`, or
-`gco-monitoring`). It is scoped strictly to `gco-analytics` — by
-policy.
-
-## (k) Two-bucket access model
+## (j) Two-bucket access model
 
 The analytics environment introduces a clear split between two S3
 buckets. Understanding which bucket to write to is the main
@@ -797,7 +727,7 @@ regional job-pod IAM statements reference
 `arn:aws:s3:::gco-cluster-shared-*` and never
 `arn:aws:s3:::gco-analytics-studio-*`.
 
-## (l) EFS persistent-home-folder behavior
+## (k) EFS persistent-home-folder behavior
 
 Each Studio user gets a per-user home folder on `Studio_EFS`,
 accessed via a per-user EFS access point created by the presigned-
@@ -881,7 +811,7 @@ Cognito pools support the same retain opt-in via
 analogous cleanup steps (`aws cognito-idp delete-user-pool-domain`
 before `aws cognito-idp delete-user-pool`).
 
-## (m) The `gco-cluster-shared-bucket` ConfigMap schema
+## (l) The `gco-cluster-shared-bucket` ConfigMap schema
 
 The always-on `gco-cluster-shared-bucket` ConfigMap is the
 cluster-side interface for `Cluster_Shared_Bucket`. It is applied
@@ -937,7 +867,7 @@ is the single source of truth for this ConfigMap — the schema,
 `envFrom` pattern, and ownership semantics are all documented there.
 This section is a pointer, not a replacement.
 
-## (n) Cross-region data-transfer caveat
+## (m) Cross-region data-transfer caveat
 
 `Cluster_Shared_Bucket` lives in the global region (default
 `us-east-2`). Cluster pods writing to it from other regions incur
