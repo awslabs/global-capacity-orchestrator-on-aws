@@ -778,30 +778,42 @@ class GCOAnalyticsStack(Stack):
             },
         )
 
-        cleanup_fn.add_to_role_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                actions=[
-                    "sagemaker:ListApps",
-                    "sagemaker:DeleteApp",
-                    "sagemaker:ListSpaces",
-                    "sagemaker:DeleteSpace",
-                    "sagemaker:ListUserProfiles",
-                    "sagemaker:DeleteUserProfile",
-                    "efs:DescribeAccessPoints",
-                    "efs:DeleteAccessPoint",
-                    "efs:DescribeFileSystems",
-                    "efs:DescribeMountTargets",
-                    "efs:DeleteMountTarget",
-                    "efs:DeleteFileSystem",
-                    "ec2:DescribeSecurityGroups",
-                    "ec2:DeleteSecurityGroup",
-                    "ec2:RevokeSecurityGroupIngress",
-                    "ec2:RevokeSecurityGroupEgress",
-                ],
-                resources=["*"],
-            )
+        # Use a customer-managed policy instead of an inline policy.
+        # Inline policies (created by add_to_role_policy) are separate
+        # CloudFormation resources that can be deleted before the custom
+        # resource fires during stack deletion. A managed policy attached
+        # via the role's managedPolicies property is part of the role
+        # resource itself and persists until the role is deleted.
+        cleanup_policy = iam.ManagedPolicy(
+            self,
+            "CleanupFunctionPolicy",
+            statements=[
+                iam.PolicyStatement(
+                    effect=iam.Effect.ALLOW,
+                    actions=[
+                        "sagemaker:ListApps",
+                        "sagemaker:DeleteApp",
+                        "sagemaker:ListSpaces",
+                        "sagemaker:DeleteSpace",
+                        "sagemaker:ListUserProfiles",
+                        "sagemaker:DeleteUserProfile",
+                        "efs:DescribeAccessPoints",
+                        "efs:DeleteAccessPoint",
+                        "efs:DescribeFileSystems",
+                        "efs:DescribeMountTargets",
+                        "efs:DeleteMountTarget",
+                        "efs:DeleteFileSystem",
+                        "ec2:DescribeSecurityGroups",
+                        "ec2:DeleteSecurityGroup",
+                        "ec2:RevokeSecurityGroupIngress",
+                        "ec2:RevokeSecurityGroupEgress",
+                    ],
+                    resources=["*"],
+                )
+            ],
         )
+        assert cleanup_fn.role is not None
+        cleanup_fn.role.add_managed_policy(cleanup_policy)
 
         cleanup_provider = cr_provider.Provider(
             self,
@@ -814,6 +826,11 @@ class GCOAnalyticsStack(Stack):
             "DomainCleanup",
             service_token=cleanup_provider.service_token,
         )
+
+        # The managed policy must not be deleted until after the cleanup
+        # custom resource completes. Adding a dependency ensures
+        # CloudFormation keeps the policy alive during the Lambda execution.
+        cleanup_resource.node.add_dependency(cleanup_policy)
 
         # Store reference so _create_presigned_url_lambda can add a
         # dependency after it creates the presigned-URL Lambda.
