@@ -285,27 +285,23 @@ def _delete_efs_resource_policy(region: str, efs_id: str) -> None:
 def _delete_sagemaker_managed_efs(region: str, domain_id: str) -> list[str]:
     """Delete the SageMaker-managed EFS created internally by the domain.
 
-    SageMaker creates an internal EFS file system with CreationToken set
-    to the domain ID. We use the CreationToken filter parameter (not a
-    list-all call) to find it directly — this avoids DescribeFileSystems
-    without a filter, which is blocked by the EFS resource policy
-    intersection model.
-
-    This EFS has mount targets in the VPC subnets that block subnet
-    deletion. We delete mount targets first, wait, then delete the FS.
+    Uses sagemaker:DescribeDomain to get the HomeEfsFileSystemId directly,
+    avoiding DescribeFileSystems which is blocked by the EFS resource
+    policy intersection model. The domain still exists when this Lambda
+    runs (it's deleted after the custom resource completes).
     """
     errors: list[str] = []
+    sm = boto3.client("sagemaker", region_name=region)
     efs = boto3.client("efs", region_name=region)
 
     try:
-        # CreationToken filter finds the specific file system directly.
-        response = efs.describe_file_systems(CreationToken=domain_id)
-        file_systems = response.get("FileSystems", [])
-        if not file_systems:
-            logger.info("No SageMaker-managed EFS found for domain %s", domain_id)
+        # Get the EFS ID from the domain itself — no DescribeFileSystems needed.
+        domain_info = sm.describe_domain(DomainId=domain_id)
+        target_fs = domain_info.get("HomeEfsFileSystemId")
+        if not target_fs:
+            logger.info("No HomeEfsFileSystemId found for domain %s", domain_id)
             return errors
 
-        target_fs = file_systems[0]["FileSystemId"]
         logger.info("Found SageMaker-managed EFS: %s", target_fs)
 
         # Delete all mount targets first

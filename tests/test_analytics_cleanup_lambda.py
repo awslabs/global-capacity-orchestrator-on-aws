@@ -235,12 +235,11 @@ _delete_sagemaker_managed_efs = _module._delete_sagemaker_managed_efs
 
 class TestDeleteSagemakerManagedEfs:
     def test_deletes_efs_matching_domain_id(self):
+        mock_sm = MagicMock()
         mock_efs = MagicMock()
-        # CreationToken filter returns only the matching file system.
-        mock_efs.describe_file_systems.return_value = {
-            "FileSystems": [
-                {"FileSystemId": "fs-target", "CreationToken": "d-test123"},
-            ]
+        # DescribeDomain returns the HomeEfsFileSystemId.
+        mock_sm.describe_domain.return_value = {
+            "HomeEfsFileSystemId": "fs-target",
         }
         # After deletion, no mount targets remain
         mock_efs.describe_mount_targets.side_effect = [
@@ -248,19 +247,30 @@ class TestDeleteSagemakerManagedEfs:
             {"MountTargets": []},
         ]
 
-        with patch("boto3.client", return_value=mock_efs):
+        def client_factory(service, **kwargs):
+            if service == "sagemaker":
+                return mock_sm
+            return mock_efs
+
+        with patch("boto3.client", side_effect=client_factory):
             errors = _delete_sagemaker_managed_efs("us-east-2", "d-test123")
 
         assert errors == []
-        mock_efs.describe_file_systems.assert_called_once_with(CreationToken="d-test123")
+        mock_sm.describe_domain.assert_called_once_with(DomainId="d-test123")
         mock_efs.delete_mount_target.assert_called_once_with(MountTargetId="fsmt-001")
         mock_efs.delete_file_system.assert_called_once_with(FileSystemId="fs-target")
 
     def test_no_matching_efs_returns_empty(self):
+        mock_sm = MagicMock()
         mock_efs = MagicMock()
-        mock_efs.describe_file_systems.return_value = {"FileSystems": []}
+        mock_sm.describe_domain.return_value = {}
 
-        with patch("boto3.client", return_value=mock_efs):
+        def client_factory(service, **kwargs):
+            if service == "sagemaker":
+                return mock_sm
+            return mock_efs
+
+        with patch("boto3.client", side_effect=client_factory):
             errors = _delete_sagemaker_managed_efs("us-east-2", "d-test123")
 
         assert errors == []

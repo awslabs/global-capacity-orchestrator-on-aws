@@ -799,6 +799,7 @@ class GCOAnalyticsStack(Stack):
                         "sagemaker:DeleteSpace",
                         "sagemaker:ListUserProfiles",
                         "sagemaker:DeleteUserProfile",
+                        "sagemaker:DescribeDomain",
                         "efs:DescribeAccessPoints",
                         "efs:DeleteAccessPoint",
                         "efs:DescribeFileSystems",
