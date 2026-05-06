@@ -549,6 +549,7 @@ class GCOAnalyticsStack(Stack):
                     "elasticfilesystem:DeleteAccessPoint",
                     "elasticfilesystem:DeleteMountTarget",
                     "elasticfilesystem:DeleteFileSystem",
+                    "elasticfilesystem:DeleteFileSystemPolicy",
                 ],
             )
         )
