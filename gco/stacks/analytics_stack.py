@@ -339,11 +339,26 @@ class GCOAnalyticsStack(Stack):
             security_group=self.studio_efs_security_group,
         )
 
-        # SageMaker calls DescribeMountTargets during user-profile
-        # provisioning to validate the EFS mount configuration. These are
-        # control-plane API calls (not data-plane via mount target), so
-        # they cannot be placed in an EFS resource policy. The IAM role
-        # policy (Resource:*) on the execution role handles authorization.
+        # SageMaker validates EFS mount targets during user-profile
+        # provisioning. Despite DescribeMountTargets being a control-plane
+        # API, EFS enforces the resource policy intersection model for it
+        # when a resource policy exists. We add it here without the
+        # AccessedViaMountTarget condition so the execution role can call it.
+        # Note: DescribeAccessPoints and DescribeFileSystems cannot be added
+        # to resource policies (EFS rejects them as "cannot be applied to a
+        # specific resource").
+        self.studio_efs.add_to_resource_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                principals=[iam.AnyPrincipal()],
+                actions=[
+                    "elasticfilesystem:ClientMount",
+                    "elasticfilesystem:ClientWrite",
+                    "elasticfilesystem:ClientRootAccess",
+                    "elasticfilesystem:DescribeMountTargets",
+                ],
+            )
+        )
 
     # ==================================================================
     # SageMaker execution role + grants
