@@ -209,6 +209,10 @@ def _delete_sagemaker_security_groups(region: str, domain_id: str, vpc_id: str) 
     ``security-group-for-inbound-nfs-<domain-id>`` when the domain uses
     a custom EFS. These are tagged "[DO NOT DELETE]" but must be removed
     for the VPC to be deletable.
+
+    The two SGs cross-reference each other (outbound rules on one point
+    to the other), creating a circular dependency. We must revoke all
+    ingress/egress rules before deleting.
     """
     errors: list[str] = []
     ec2 = boto3.client("ec2", region_name=region)
@@ -220,7 +224,25 @@ def _delete_sagemaker_security_groups(region: str, domain_id: str, vpc_id: str) 
                 {"Name": "group-name", "Values": [f"*{domain_id}*"]},
             ]
         )
-        for sg in response.get("SecurityGroups", []):
+        sgs = response.get("SecurityGroups", [])
+
+        # First pass: revoke all rules to break cross-references.
+        for sg in sgs:
+            sg_id = sg["GroupId"]
+            try:
+                if sg.get("IpPermissions"):
+                    ec2.revoke_security_group_ingress(
+                        GroupId=sg_id, IpPermissions=sg["IpPermissions"]
+                    )
+                if sg.get("IpPermissionsEgress"):
+                    ec2.revoke_security_group_egress(
+                        GroupId=sg_id, IpPermissions=sg["IpPermissionsEgress"]
+                    )
+            except ClientError as e:
+                logger.warning("Failed to revoke rules on %s: %s", sg_id, e)
+
+        # Second pass: delete the security groups.
+        for sg in sgs:
             sg_id = sg["GroupId"]
             sg_name = sg.get("GroupName", "")
             try:
