@@ -339,27 +339,6 @@ class GCOAnalyticsStack(Stack):
             security_group=self.studio_efs_security_group,
         )
 
-        # SageMaker validates EFS mount targets during user-profile
-        # provisioning. Despite DescribeMountTargets being a control-plane
-        # API, EFS enforces the resource policy intersection model for it
-        # when a resource policy exists. We add it here without the
-        # AccessedViaMountTarget condition so the execution role can call it.
-        # Note: DescribeAccessPoints and DescribeFileSystems cannot be added
-        # to resource policies (EFS rejects them as "cannot be applied to a
-        # specific resource").
-        self.studio_efs.add_to_resource_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                principals=[iam.AnyPrincipal()],
-                actions=[
-                    "elasticfilesystem:ClientMount",
-                    "elasticfilesystem:ClientWrite",
-                    "elasticfilesystem:ClientRootAccess",
-                    "elasticfilesystem:DescribeMountTargets",
-                ],
-            )
-        )
-
     # ==================================================================
     # SageMaker execution role + grants
     # ==================================================================
@@ -545,6 +524,27 @@ class GCOAnalyticsStack(Stack):
                     resources=["*"],
                 )
             )
+
+        # EFS resource policy — scoped to the execution role and SageMaker
+        # service principal. SageMaker validates EFS mount targets during
+        # user-profile provisioning; without DescribeMountTargets in the
+        # resource policy, the intersection model blocks the call even
+        # though the IAM role allows it on Resource:*.
+        self.studio_efs.add_to_resource_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                principals=[
+                    self.sagemaker_execution_role,
+                    iam.ServicePrincipal("sagemaker.amazonaws.com"),
+                ],
+                actions=[
+                    "elasticfilesystem:ClientMount",
+                    "elasticfilesystem:ClientWrite",
+                    "elasticfilesystem:ClientRootAccess",
+                    "elasticfilesystem:DescribeMountTargets",
+                ],
+            )
+        )
 
     def _grant_sagemaker_role_on_cluster_shared_bucket(self) -> None:
         """Attach RW + KMS on ``Cluster_Shared_Bucket`` to ``SageMaker_Execution_Role``.
