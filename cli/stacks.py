@@ -723,6 +723,13 @@ class StackManager:
         ):
             toggle_restored = self._ensure_analytics_enabled_for_destroy()
 
+        # The analytics stack exports values (e.g. Cognito pool ARN) that
+        # gco-api-gateway imports. CloudFormation blocks deletion of stacks
+        # with consumed exports. To break the dependency, redeploy the API
+        # gateway with analytics disabled first, then destroy analytics.
+        if stack_name and not all_stacks and "analytics" in stack_name:
+            self._remove_api_gateway_analytics_dependency()
+
         cmd = ["destroy"]
 
         if all_stacks:
@@ -818,6 +825,43 @@ class StackManager:
         except Exception as exc:
             logger.warning(
                 "Failed to restore analytics toggle to disabled after destroy: %s",
+                exc,
+                exc_info=True,
+            )
+
+    def _remove_api_gateway_analytics_dependency(self) -> None:
+        """Redeploy gco-api-gateway with analytics disabled to drop cross-stack imports.
+
+        The analytics stack exports values (Cognito pool ARN, presigned-URL
+        Lambda ARN) that gco-api-gateway imports for the /studio/* routes.
+        CloudFormation blocks deletion of stacks with consumed exports. By
+        disabling analytics and redeploying the API gateway, the /studio/*
+        routes are removed and the imports are dropped, unblocking the
+        analytics stack deletion.
+        """
+        try:
+            # Temporarily disable analytics so CDK drops the /studio/* routes.
+            current = get_analytics_config()
+            was_enabled = current.get("enabled", False)
+            if was_enabled:
+                update_analytics_config({"enabled": False})
+
+            print("  Updating gco-api-gateway to remove analytics routes...")
+            success = self.deploy(
+                stack_name="gco-api-gateway",
+                require_approval=False,
+                exclusively=True,
+            )
+            if not success:
+                logger.warning("Failed to redeploy gco-api-gateway before analytics destroy")
+
+            # Re-enable analytics so CDK can synthesize the analytics stack
+            # for the destroy operation (custom resources need to fire).
+            if was_enabled:
+                update_analytics_config({"enabled": True})
+        except Exception as exc:
+            logger.warning(
+                "Failed to remove API gateway analytics dependency: %s",
                 exc,
                 exc_info=True,
             )
