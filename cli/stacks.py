@@ -689,6 +689,18 @@ class StackManager:
         if not success and stack_name:
             self._diagnose_deploy_failure(stack_name)
 
+        # After deploying gco-analytics, automatically redeploy
+        # gco-api-gateway to wire in the /studio/* routes (the API gateway
+        # imports the Cognito pool ARN and presigned-URL Lambda ARN from
+        # the analytics stack).
+        if success and stack_name and "analytics" in stack_name and not all_stacks:
+            print("  Updating gco-api-gateway with analytics routes...")
+            self.deploy(
+                stack_name="gco-api-gateway",
+                require_approval=require_approval,
+                exclusively=True,
+            )
+
         return success
 
     def destroy(

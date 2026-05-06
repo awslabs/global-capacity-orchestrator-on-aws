@@ -525,23 +525,25 @@ class GCOAnalyticsStack(Stack):
                 )
             )
 
-        # EFS resource policy — scoped to the execution role and SageMaker
-        # service principal. SageMaker validates EFS mount targets during
-        # user-profile provisioning; without DescribeMountTargets in the
-        # resource policy, the intersection model blocks the call even
-        # though the IAM role allows it on Resource:*.
+        # EFS resource policy — allows the execution role, SageMaker service,
+        # and any account principal (for the cleanup Lambda whose role is
+        # created later) to perform data-plane and DescribeMountTargets
+        # actions. Security is enforced by the VPC security group (NFS
+        # traffic only from within the VPC) and IAM policies on each role.
+        # Note: DescribeAccessPoints/DescribeFileSystems CANNOT be in EFS
+        # resource policies (EFS rejects them). Those rely on IAM only.
         self.studio_efs.add_to_resource_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
-                principals=[
-                    self.sagemaker_execution_role,
-                    iam.ServicePrincipal("sagemaker.amazonaws.com"),
-                ],
+                principals=[iam.AccountRootPrincipal()],
                 actions=[
                     "elasticfilesystem:ClientMount",
                     "elasticfilesystem:ClientWrite",
                     "elasticfilesystem:ClientRootAccess",
                     "elasticfilesystem:DescribeMountTargets",
+                    "elasticfilesystem:DeleteAccessPoint",
+                    "elasticfilesystem:DeleteMountTarget",
+                    "elasticfilesystem:DeleteFileSystem",
                 ],
             )
         )
@@ -790,6 +792,8 @@ class GCOAnalyticsStack(Stack):
                     "efs:DeleteFileSystem",
                     "ec2:DescribeSecurityGroups",
                     "ec2:DeleteSecurityGroup",
+                    "ec2:RevokeSecurityGroupIngress",
+                    "ec2:RevokeSecurityGroupEgress",
                 ],
                 resources=["*"],
             )
