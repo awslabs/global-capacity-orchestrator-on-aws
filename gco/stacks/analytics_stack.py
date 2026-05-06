@@ -804,6 +804,7 @@ class GCOAnalyticsStack(Stack):
                         "efs:DescribeMountTargets",
                         "efs:DeleteMountTarget",
                         "efs:DeleteFileSystem",
+                        "efs:DeleteFileSystemPolicy",
                         "ec2:DescribeSecurityGroups",
                         "ec2:DeleteSecurityGroup",
                         "ec2:RevokeSecurityGroupIngress",

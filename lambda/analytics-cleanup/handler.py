@@ -35,6 +35,7 @@ def handler(event: dict, context: object) -> dict:
 
     region = os.environ["REGION"]
     domain_id = os.environ["DOMAIN_ID"]
+    efs_id = os.environ.get("EFS_ID", "")
     vpc_id = os.environ.get("VPC_ID", "")
 
     errors: list[str] = []
@@ -48,10 +49,12 @@ def handler(event: dict, context: object) -> dict:
     # Delete all user profiles from the domain
     errors.extend(_delete_user_profiles(region, domain_id))
 
-    # Note: EFS access points on the CDK-managed EFS are deleted
-    # automatically by CloudFormation when the EFS resource is removed.
-    # We don't call _delete_access_points here because DescribeAccessPoints
-    # is blocked by the EFS resource policy intersection model.
+    # Remove the EFS resource policy on the CDK-managed EFS. The resource
+    # policy triggers the intersection authorization model which blocks
+    # DescribeFileSystems calls even with IAM Resource:* permissions.
+    # Deleting it allows subsequent EFS API calls to succeed.
+    if efs_id:
+        _delete_efs_resource_policy(region, efs_id)
 
     # Delete SageMaker-managed EFS (created internally by the domain)
     errors.extend(_delete_sagemaker_managed_efs(region, domain_id))
@@ -259,6 +262,24 @@ def _delete_sagemaker_security_groups(region: str, domain_id: str, vpc_id: str) 
         errors.append(msg)
 
     return errors
+
+
+def _delete_efs_resource_policy(region: str, efs_id: str) -> None:
+    """Delete the resource policy on the CDK-managed EFS.
+
+    The EFS resource policy triggers the intersection authorization model
+    which blocks DescribeFileSystems/DescribeAccessPoints calls even when
+    the caller has IAM Resource:* permissions. Removing the policy before
+    other EFS operations ensures they succeed.
+    """
+    efs_client = boto3.client("efs", region_name=region)
+    try:
+        efs_client.delete_file_system_policy(FileSystemId=efs_id)
+        logger.info("Deleted EFS resource policy on %s", efs_id)
+    except ClientError as e:
+        # PolicyNotFound is fine — means there's no policy to delete.
+        if "PolicyNotFound" not in str(e):
+            logger.warning("Failed to delete EFS resource policy on %s: %s", efs_id, e)
 
 
 def _delete_sagemaker_managed_efs(region: str, domain_id: str) -> list[str]:
