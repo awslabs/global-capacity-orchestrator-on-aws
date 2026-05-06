@@ -49,12 +49,14 @@ def handler(event: dict, context: object) -> dict:
     # Delete all user profiles from the domain
     errors.extend(_delete_user_profiles(region, domain_id))
 
-    # Remove the EFS resource policy on the CDK-managed EFS. The resource
-    # policy triggers the intersection authorization model which blocks
-    # DescribeFileSystems calls even with IAM Resource:* permissions.
-    # Deleting it allows subsequent EFS API calls to succeed.
+    # Remove EFS resource policies that trigger the intersection
+    # authorization model. Both the CDK-managed EFS and the SageMaker-
+    # managed EFS have resource policies that block DescribeMountTargets.
     if efs_id:
         _delete_efs_resource_policy(region, efs_id)
+    sm_efs_id = _get_sagemaker_home_efs_id(region, domain_id)
+    if sm_efs_id:
+        _delete_efs_resource_policy(region, sm_efs_id)
 
     # Delete SageMaker-managed EFS (created internally by the domain)
     errors.extend(_delete_sagemaker_managed_efs(region, domain_id))
@@ -262,6 +264,17 @@ def _delete_sagemaker_security_groups(region: str, domain_id: str, vpc_id: str) 
         errors.append(msg)
 
     return errors
+
+
+def _get_sagemaker_home_efs_id(region: str, domain_id: str) -> str:
+    """Get the HomeEfsFileSystemId from the SageMaker domain."""
+    sm = boto3.client("sagemaker", region_name=region)
+    try:
+        resp = sm.describe_domain(DomainId=domain_id)
+        return resp.get("HomeEfsFileSystemId", "")
+    except ClientError as e:
+        logger.warning("Failed to get HomeEfsFileSystemId for %s: %s", domain_id, e)
+        return ""
 
 
 def _delete_efs_resource_policy(region: str, efs_id: str) -> None:
