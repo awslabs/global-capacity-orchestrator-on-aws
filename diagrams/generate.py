@@ -94,25 +94,18 @@ def generate_api_gateway_stack_diagram(output_dir: Path) -> None:
 
         project_name = config.get_project_name()
         deployment_regions = config.get_deployment_regions()
-        global_region = deployment_regions["global"]
         api_gateway_region = deployment_regions["api_gateway"]
 
-        # Need global stack for dependency
-        global_stack = GCOGlobalStack(
-            app,
-            f"{project_name}-global",
-            config=config,
-            env=cdk.Environment(region=global_region),
-        )
-
-        api_gateway_stack = GCOApiGatewayGlobalStack(
+        # Placeholder for the Global Accelerator DNS so the stack can synth
+        # without instantiating GCOGlobalStack (which would pull the global
+        # stack into this per-stack diagram).
+        GCOApiGatewayGlobalStack(
             app,
             f"{project_name}-api-gateway",
-            global_accelerator_dns=global_stack.accelerator.dns_name,
+            global_accelerator_dns="placeholder.awsglobalaccelerator.com",
             env=cdk.Environment(region=api_gateway_region),
             description="Global API Gateway with IAM authentication",
         )
-        api_gateway_stack.add_dependency(global_stack)
 
         graph = CdkGraph(
             app,
@@ -146,39 +139,21 @@ def generate_regional_stack_diagram(output_dir: Path) -> None:
 
         project_name = config.get_project_name()
         deployment_regions = config.get_deployment_regions()
-        global_region = deployment_regions["global"]
-        api_gateway_region = deployment_regions["api_gateway"]
         regional_regions = deployment_regions["regional"]
 
-        # Need dependencies
-        global_stack = GCOGlobalStack(
-            app,
-            f"{project_name}-global",
-            config=config,
-            env=cdk.Environment(region=global_region),
-        )
-
-        api_gateway_stack = GCOApiGatewayGlobalStack(
-            app,
-            f"{project_name}-api-gateway",
-            global_accelerator_dns=global_stack.accelerator.dns_name,
-            env=cdk.Environment(region=api_gateway_region),
-        )
-        api_gateway_stack.add_dependency(global_stack)
-
-        # Create regional stack for first region
+        # Create regional stack for first region. Placeholder ARN stands in
+        # for the cross-stack auth secret so the dependency stacks don't
+        # need to be instantiated for this per-stack diagram.
         region = regional_regions[0]
-        regional_stack = GCORegionalStack(
+        GCORegionalStack(
             app,
             f"{project_name}-{region}",
             config=config,
             region=region,
-            auth_secret_arn=api_gateway_stack.secret.secret_arn,
+            auth_secret_arn=f"arn:aws:secretsmanager:{region}:123456789012:secret:placeholder",
             env=cdk.Environment(region=region),
             description=f"Regional resources for {region} - EKS, ALB, Services",
         )
-        regional_stack.add_dependency(global_stack)
-        regional_stack.add_dependency(api_gateway_stack)
 
         graph = CdkGraph(
             app,
@@ -212,54 +187,35 @@ def generate_regional_api_stack_diagram(output_dir: Path) -> None:
 
         project_name = config.get_project_name()
         deployment_regions = config.get_deployment_regions()
-        global_region = deployment_regions["global"]
-        api_gateway_region = deployment_regions["api_gateway"]
         regional_regions = deployment_regions["regional"]
 
-        # Need dependencies
-        global_stack = GCOGlobalStack(
-            app,
-            f"{project_name}-global",
-            config=config,
-            env=cdk.Environment(region=global_region),
-        )
-
-        api_gateway_stack = GCOApiGatewayGlobalStack(
-            app,
-            f"{project_name}-api-gateway",
-            global_accelerator_dns=global_stack.accelerator.dns_name,
-            env=cdk.Environment(region=api_gateway_region),
-        )
-        api_gateway_stack.add_dependency(global_stack)
-
-        # Create regional stack for first region
+        # The regional API gateway stack needs a real VPC construct, so we
+        # instantiate the regional stack (with a placeholder auth ARN) and
+        # skip the global + api-gateway dependencies.
         region = regional_regions[0]
         regional_stack = GCORegionalStack(
             app,
             f"{project_name}-{region}",
             config=config,
             region=region,
-            auth_secret_arn=api_gateway_stack.secret.secret_arn,
+            auth_secret_arn=f"arn:aws:secretsmanager:{region}:123456789012:secret:placeholder",
             env=cdk.Environment(region=region),
             description=f"Regional resources for {region}",
         )
-        regional_stack.add_dependency(global_stack)
-        regional_stack.add_dependency(api_gateway_stack)
 
-        # Create regional API gateway stack
-        # Note: ALB DNS name is a placeholder since it's created by EKS ingress controller
-        regional_api_stack = GCORegionalApiGatewayStack(
+        # Create regional API gateway stack. ALB DNS is a placeholder since
+        # it's created by the EKS ingress controller at runtime.
+        GCORegionalApiGatewayStack(
             app,
             f"{project_name}-regional-api-{region}",
             config=config,
             region=region,
             vpc=regional_stack.vpc,
-            alb_dns_name=f"internal-{project_name}-{region}.elb.amazonaws.com",  # Placeholder
-            auth_secret_arn=api_gateway_stack.secret.secret_arn,
+            alb_dns_name=f"internal-{project_name}-{region}.elb.amazonaws.com",
+            auth_secret_arn=f"arn:aws:secretsmanager:{region}:123456789012:secret:placeholder",
             env=cdk.Environment(region=region),
             description=f"Regional API Gateway for {region} (private access)",
         )
-        regional_api_stack.add_dependency(regional_stack)
 
         graph = CdkGraph(
             app,
@@ -389,35 +345,20 @@ def generate_analytics_stack_diagram(output_dir: Path) -> None:
 
         project_name = config.get_project_name()
         deployment_regions = config.get_deployment_regions()
-        global_region = deployment_regions["global"]
         api_gateway_region = deployment_regions["api_gateway"]
 
-        # GCOGlobalStack owns the Cluster_Shared_Bucket SSM parameters that
-        # the analytics stack reads via a cross-region AwsCustomResource, so
-        # the analytics diagram needs the global stack wired up.
-        global_stack = GCOGlobalStack(
-            app,
-            f"{project_name}-global",
-            config=config,
-            env=cdk.Environment(region=global_region),
-        )
-
-        api_gateway_stack = GCOApiGatewayGlobalStack(
-            app,
-            f"{project_name}-api-gateway",
-            global_accelerator_dns=global_stack.accelerator.dns_name,
-            env=cdk.Environment(region=api_gateway_region),
-        )
-        api_gateway_stack.add_dependency(global_stack)
-
-        analytics_stack = GCOAnalyticsStack(
+        # The analytics stack reads Cluster_Shared_Bucket SSM parameters via
+        # cross-region ``AwsCustomResource`` lookups, but it does not take
+        # the global or api-gateway stacks as constructor arguments. So for
+        # the per-stack diagram we skip those dependencies entirely and the
+        # resulting graph contains only the analytics stack.
+        GCOAnalyticsStack(
             app,
             f"{project_name}-analytics",
             config=config,
             env=cdk.Environment(region=api_gateway_region),
             description="Optional ML and analytics environment (SageMaker Studio, EMR Serverless, Cognito)",
         )
-        analytics_stack.add_dependency(global_stack)
 
         graph = CdkGraph(
             app,
