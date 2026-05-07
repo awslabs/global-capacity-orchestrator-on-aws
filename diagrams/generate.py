@@ -6,6 +6,16 @@ This script synthesizes the CDK app and generates architecture diagrams
 for each stack type (global, api-gateway, regional, regional-api, monitoring) as well
 as a combined full architecture diagram.
 
+Per-stack diagrams synthesize just the target stack in isolation by
+passing placeholder strings for cross-stack inputs (ARNs, DNS names,
+etc.) rather than instantiating the dependency stacks. Two exceptions:
+
+* ``regional-api`` consumes the regional stack's VPC construct directly,
+  so both stacks appear in that diagram.
+* ``monitoring`` reads live attributes from the global, api-gateway, and
+  regional stacks (table names, cluster IDs, Lambda names), so all four
+  stacks appear in that diagram.
+
 Usage:
     python diagrams/generate.py              # Generate all diagrams
     python diagrams/generate.py --stack all  # Generate all diagrams

@@ -64,8 +64,8 @@ After running the generator, diagrams are saved to `diagrams/`:
 | `global-stack.png/svg` | Global Accelerator and endpoint groups |
 | `api-gateway-stack.png/svg` | API Gateway with IAM authentication |
 | `regional-stack.png/svg` | EKS cluster, ALB, SQS, EFS, and services |
-| `regional-api-stack.png/svg` | Regional API Gateway with VPC Lambda (private access) |
-| `monitoring-stack.png/svg` | CloudWatch dashboards, alarms, and SNS |
+| `regional-api-stack.png/svg` | Regional API Gateway with VPC Lambda (private access). Also shows the regional stack because the regional API gateway consumes the regional VPC construct directly, so both stacks must be synthesized together. |
+| `monitoring-stack.png/svg` | CloudWatch dashboards, alarms, and SNS. Also shows the global, API gateway, and regional stacks because the monitoring stack reads live attributes from each of them (table names, cluster IDs, Lambda names), so all four stacks must be synthesized together. |
 | `analytics-stack.png/svg` | SageMaker Studio, EMR Serverless, Cognito, and the presigned-URL Lambda |
 | `full-architecture.png/svg` | Complete infrastructure (compact view) |
 | `full-architecture-detailed.png/svg` | Complete infrastructure (detailed, dark theme) |
