@@ -1,9 +1,14 @@
 """Analytics stack cleanup handler.
 
 Runs as a CloudFormation custom resource on stack deletion. Removes all
-SageMaker user profiles from the Studio domain and all EFS access points
-from the Studio file system so CloudFormation can delete the domain and
-EFS cleanly.
+SageMaker apps, spaces and user profiles from the Studio domain (waiting
+for each to fully drain) and all EFS access points from the Studio file
+system so CloudFormation can delete the domain and EFS cleanly.
+
+If draining apps/spaces/user-profiles fails, the handler raises — this
+fails the custom resource and stops CloudFormation before it tries (and
+fails) to delete the domain. EFS/security-group cleanup errors are
+logged but non-fatal.
 
 Environment variables:
     DOMAIN_ID: SageMaker Studio domain ID
@@ -39,15 +44,28 @@ def handler(event: dict, context: object) -> dict:
     vpc_id = os.environ.get("VPC_ID", "")
 
     errors: list[str] = []
+    # Errors from deleting apps/spaces/user-profiles block the domain
+    # delete — if we return SUCCESS with these still present, CloudFormation
+    # will immediately fail on ``AWS::SageMaker::Domain`` with a
+    # ``Unable to delete Domain ... because UserProfile(s) are associated
+    # with it`` error. We track these separately so we can fail the custom
+    # resource and give the operator a useful log pointer instead.
+    critical_errors: list[str] = []
 
     # Delete all apps (must be deleted before spaces/profiles)
-    errors.extend(_delete_apps(region, domain_id))
+    app_errors = _delete_apps(region, domain_id)
+    errors.extend(app_errors)
+    critical_errors.extend(app_errors)
 
     # Delete all spaces
-    errors.extend(_delete_spaces(region, domain_id))
+    space_errors = _delete_spaces(region, domain_id)
+    errors.extend(space_errors)
+    critical_errors.extend(space_errors)
 
     # Delete all user profiles from the domain
-    errors.extend(_delete_user_profiles(region, domain_id))
+    profile_errors = _delete_user_profiles(region, domain_id)
+    errors.extend(profile_errors)
+    critical_errors.extend(profile_errors)
 
     # Remove EFS resource policies that trigger the intersection
     # authorization model. Both the CDK-managed EFS and the SageMaker-
@@ -70,8 +88,19 @@ def handler(event: dict, context: object) -> dict:
     else:
         logger.info("Cleanup completed successfully")
 
-    # Always return SUCCESS so CloudFormation can proceed with deletion.
-    # Failing here would block the entire stack destroy.
+    # If apps/spaces/user-profiles still have unresolved errors, fail the
+    # custom resource. CloudFormation will stop before attempting to
+    # delete the domain, surface the error to the operator, and the stack
+    # stays in a retriable state. EFS/security-group errors are logged
+    # but non-fatal — they don't block the domain delete and are cleaned
+    # up best-effort on the next attempt.
+    if critical_errors:
+        raise RuntimeError(
+            "Analytics cleanup failed to fully drain the SageMaker domain "
+            f"({len(critical_errors)} error(s)). See CloudWatch Logs for "
+            f"details: {critical_errors}"
+        )
+
     return {"Status": "SUCCESS", "PhysicalResourceId": physical_id}
 
 
@@ -129,7 +158,13 @@ def _delete_apps(region: str, domain_id: str) -> list[str]:
 
 
 def _delete_spaces(region: str, domain_id: str) -> list[str]:
-    """Delete all spaces in the domain. Spaces must be deleted before profiles."""
+    """Delete all spaces in the domain and wait for them to be gone.
+
+    Spaces must be fully removed before user profiles can be deleted, and
+    user profiles must be fully removed before the domain can be deleted.
+    ``delete_space`` is asynchronous, so after issuing the deletes we poll
+    ``list_spaces`` until it returns empty (or a timeout elapses).
+    """
     errors: list[str] = []
     sm = boto3.client("sagemaker", region_name=region)
 
@@ -138,6 +173,10 @@ def _delete_spaces(region: str, domain_id: str) -> list[str]:
         for page in paginator.paginate(DomainIdEquals=domain_id):
             for space in page.get("Spaces", []):
                 space_name = space["SpaceName"]
+                # Skip spaces already being deleted; the wait loop below
+                # will still account for them.
+                if space.get("Status") == "Deleting":
+                    continue
                 try:
                     sm.delete_space(DomainId=domain_id, SpaceName=space_name)
                     logger.info("Deleted space: %s", space_name)
@@ -147,6 +186,21 @@ def _delete_spaces(region: str, domain_id: str) -> list[str]:
                         msg = f"Failed to delete space {space_name}: {e}"
                         logger.error(msg)
                         errors.append(msg)
+
+        # Wait for spaces to finish deleting (up to 3 minutes).
+        for _ in range(36):
+            remaining: list[str] = []
+            for page in paginator.paginate(DomainIdEquals=domain_id):
+                for space in page.get("Spaces", []):
+                    remaining.append(space["SpaceName"])
+            if not remaining:
+                break
+            logger.info("Waiting for %d space(s) to delete: %s", len(remaining), remaining)
+            time.sleep(5)
+        else:
+            msg = f"Timed out waiting for spaces to delete in {domain_id}: {remaining}"
+            logger.error(msg)
+            errors.append(msg)
     except ClientError as e:
         msg = f"Failed to list spaces: {e}"
         logger.error(msg)
@@ -156,7 +210,15 @@ def _delete_spaces(region: str, domain_id: str) -> list[str]:
 
 
 def _delete_user_profiles(region: str, domain_id: str) -> list[str]:
-    """Delete all user profiles in the domain. Returns a list of error messages."""
+    """Delete all user profiles in the domain and wait for them to be gone.
+
+    ``delete_user_profile`` is asynchronous — it puts the profile into
+    ``Deleting`` state and returns immediately. If we don't wait for the
+    list to drain, CloudFormation will race ahead to delete the domain
+    and fail with ``Unable to delete Domain ... because UserProfile(s)
+    are associated with it``. This function polls ``list_user_profiles``
+    until it's empty (or a timeout elapses).
+    """
     errors: list[str] = []
     sm = boto3.client("sagemaker", region_name=region)
 
@@ -165,6 +227,10 @@ def _delete_user_profiles(region: str, domain_id: str) -> list[str]:
         for page in paginator.paginate(DomainIdEquals=domain_id):
             for profile in page.get("UserProfiles", []):
                 name = profile["UserProfileName"]
+                # Skip profiles already being deleted; the wait loop below
+                # will still account for them.
+                if profile.get("Status") == "Deleting":
+                    continue
                 try:
                     sm.delete_user_profile(DomainId=domain_id, UserProfileName=name)
                     logger.info("Deleted user profile: %s", name)
@@ -174,6 +240,31 @@ def _delete_user_profiles(region: str, domain_id: str) -> list[str]:
                     msg = f"Failed to delete profile {name}: {e}"
                     logger.error(msg)
                     errors.append(msg)
+
+        # Wait for profiles to finish deleting (up to 3 minutes). Without
+        # this, CloudFormation will race ahead to delete the domain while
+        # profiles are still in ``Deleting`` state and fail the stack.
+        remaining: list[str] = []
+        for _ in range(36):
+            remaining = []
+            for page in paginator.paginate(DomainIdEquals=domain_id):
+                for profile in page.get("UserProfiles", []):
+                    remaining.append(profile["UserProfileName"])
+            if not remaining:
+                break
+            logger.info(
+                "Waiting for %d user profile(s) to delete: %s",
+                len(remaining),
+                remaining,
+            )
+            time.sleep(5)
+        else:
+            msg = (
+                f"Timed out waiting for user profiles to delete in "
+                f"{domain_id}: {remaining}"
+            )
+            logger.error(msg)
+            errors.append(msg)
     except ClientError as e:
         msg = f"Failed to list user profiles: {e}"
         logger.error(msg)
