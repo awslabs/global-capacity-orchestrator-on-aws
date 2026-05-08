@@ -402,3 +402,143 @@ class TestDeleteSagemakerManagedEfs:
 
         assert len(errors) == 1
         assert "fsmt-001" in errors[0]
+
+
+# ---------------------------------------------------------------------------
+# _delete_sagemaker_security_groups tests
+# ---------------------------------------------------------------------------
+
+_delete_sagemaker_security_groups = _module._delete_sagemaker_security_groups
+
+
+class TestDeleteSagemakerSecurityGroups:
+    """Cover the DependencyViolation retry behaviour for the NFS SGs."""
+
+    def _sg(self, group_id, group_name, ingress=None, egress=None):
+        return {
+            "GroupId": group_id,
+            "GroupName": group_name,
+            "IpPermissions": ingress or [],
+            "IpPermissionsEgress": egress or [],
+        }
+
+    def test_deletes_both_sgs_on_first_attempt(self):
+        mock_ec2 = MagicMock()
+        mock_ec2.describe_security_groups.return_value = {
+            "SecurityGroups": [
+                self._sg("sg-in", "security-group-for-inbound-nfs-d-test"),
+                self._sg("sg-out", "security-group-for-outbound-nfs-d-test"),
+            ]
+        }
+
+        with patch("boto3.client", return_value=mock_ec2):
+            errors = _delete_sagemaker_security_groups("us-east-2", "d-test", "vpc-xyz")
+
+        assert errors == []
+        assert mock_ec2.delete_security_group.call_count == 2
+
+    def test_retries_on_dependency_violation_then_succeeds(self, monkeypatch):
+        """The outbound SG typically fails once with DependencyViolation
+        and clears within one backoff interval."""
+        from botocore.exceptions import ClientError
+
+        mock_ec2 = MagicMock()
+        mock_ec2.describe_security_groups.return_value = {
+            "SecurityGroups": [
+                self._sg("sg-out", "security-group-for-outbound-nfs-d-test"),
+            ]
+        }
+        # First call: DependencyViolation. Second call: succeeds.
+        dep_violation = ClientError(
+            {
+                "Error": {
+                    "Code": "DependencyViolation",
+                    "Message": "has a dependent object",
+                }
+            },
+            "DeleteSecurityGroup",
+        )
+        mock_ec2.delete_security_group.side_effect = [dep_violation, None]
+
+        with patch("boto3.client", return_value=mock_ec2):
+            errors = _delete_sagemaker_security_groups("us-east-2", "d-test", "vpc-xyz")
+
+        assert errors == []
+        assert mock_ec2.delete_security_group.call_count == 2
+
+    def test_reports_error_after_exhausting_retries(self):
+        """If DependencyViolation persists across every attempt, emit
+        an actionable error so the caller can decide how to handle it."""
+        from botocore.exceptions import ClientError
+
+        mock_ec2 = MagicMock()
+        mock_ec2.describe_security_groups.return_value = {
+            "SecurityGroups": [
+                self._sg("sg-out", "security-group-for-outbound-nfs-d-test"),
+            ]
+        }
+        mock_ec2.delete_security_group.side_effect = ClientError(
+            {
+                "Error": {
+                    "Code": "DependencyViolation",
+                    "Message": "has a dependent object",
+                }
+            },
+            "DeleteSecurityGroup",
+        )
+
+        with patch("boto3.client", return_value=mock_ec2):
+            errors = _delete_sagemaker_security_groups("us-east-2", "d-test", "vpc-xyz")
+
+        assert len(errors) == 1
+        assert "sg-out" in errors[0]
+        assert "DependencyViolation did not clear" in errors[0]
+        # Every attempt was used.
+        assert mock_ec2.delete_security_group.call_count == _module.SG_DELETE_MAX_ATTEMPTS
+
+    def test_treats_already_deleted_as_success(self):
+        """An ``InvalidGroup.NotFound`` response means some other actor
+        (e.g. an operator recovering a prior failed destroy) has already
+        deleted the SG. Treat it as success, not an error."""
+        from botocore.exceptions import ClientError
+
+        mock_ec2 = MagicMock()
+        mock_ec2.describe_security_groups.return_value = {
+            "SecurityGroups": [
+                self._sg("sg-in", "security-group-for-inbound-nfs-d-test"),
+            ]
+        }
+        mock_ec2.delete_security_group.side_effect = ClientError(
+            {"Error": {"Code": "InvalidGroup.NotFound", "Message": "gone"}},
+            "DeleteSecurityGroup",
+        )
+
+        with patch("boto3.client", return_value=mock_ec2):
+            errors = _delete_sagemaker_security_groups("us-east-2", "d-test", "vpc-xyz")
+
+        assert errors == []
+
+    def test_other_client_errors_are_surfaced_immediately(self):
+        """Errors other than ``DependencyViolation`` / ``InvalidGroup.NotFound``
+        surface on the first attempt without retrying — these are not
+        transient and retries would waste Lambda time."""
+        from botocore.exceptions import ClientError
+
+        mock_ec2 = MagicMock()
+        mock_ec2.describe_security_groups.return_value = {
+            "SecurityGroups": [
+                self._sg("sg-in", "security-group-for-inbound-nfs-d-test"),
+            ]
+        }
+        mock_ec2.delete_security_group.side_effect = ClientError(
+            {"Error": {"Code": "UnauthorizedOperation", "Message": "denied"}},
+            "DeleteSecurityGroup",
+        )
+
+        with patch("boto3.client", return_value=mock_ec2):
+            errors = _delete_sagemaker_security_groups("us-east-2", "d-test", "vpc-xyz")
+
+        assert len(errors) == 1
+        assert "sg-in" in errors[0]
+        # Only one attempt — no retry for non-DependencyViolation errors.
+        assert mock_ec2.delete_security_group.call_count == 1

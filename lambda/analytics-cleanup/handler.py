@@ -76,6 +76,17 @@ USER_PROFILE_DELETE_WAIT_SECONDS = 180
 # the ENIs are detached.
 MOUNT_TARGET_DELETE_WAIT_SECONDS = 120
 
+# SageMaker-managed NFS security group retry behaviour. Right after
+# ``DeleteDomain``, SageMaker's control plane briefly holds an internal
+# reference on one of the two NFS SGs (typically the outbound one),
+# causing ``delete_security_group`` to fail with ``DependencyViolation``
+# for ~30-60 seconds before clearing. We retry that many times, pausing
+# between attempts; if the reference is still there on the final try we
+# promote the failure to a critical error so CloudFormation stops
+# before the VPC delete hits the same dependency and fails the stack.
+SG_DELETE_MAX_ATTEMPTS = 4
+SG_DELETE_RETRY_BACKOFF_SECONDS = 15
+
 
 def _poll_iterations(total_wait_seconds: int) -> int:
     """Return the number of iterations for a drain loop with
@@ -361,6 +372,14 @@ def _delete_sagemaker_security_groups(region: str, domain_id: str, vpc_id: str) 
     The two SGs cross-reference each other (outbound rules on one point
     to the other), creating a circular dependency. We must revoke all
     ingress/egress rules before deleting.
+
+    Right after ``DeleteDomain``, SageMaker's control plane briefly
+    retains an internal reference on one of the NFS SGs — typically the
+    outbound one — causing ``delete_security_group`` to fail with
+    ``DependencyViolation``. The reference reliably clears within 30-60s.
+    We retry the delete ``SG_DELETE_MAX_ATTEMPTS`` times with
+    ``SG_DELETE_RETRY_BACKOFF_SECONDS`` between attempts, and only
+    surface an error if the SG is still undeletable after the final try.
     """
     errors: list[str] = []
     ec2 = boto3.client("ec2", region_name=region)
@@ -389,15 +408,51 @@ def _delete_sagemaker_security_groups(region: str, domain_id: str, vpc_id: str) 
             except ClientError as e:
                 logger.warning("Failed to revoke rules on %s: %s", sg_id, e)
 
-        # Second pass: delete the security groups.
-        for sg in sgs:
-            sg_id = sg["GroupId"]
-            sg_name = sg.get("GroupName", "")
-            try:
-                ec2.delete_security_group(GroupId=sg_id)
-                logger.info("Deleted SageMaker security group: %s (%s)", sg_id, sg_name)
-            except ClientError as e:
-                msg = f"Failed to delete security group {sg_id}: {e}"
+        # Second pass: delete the security groups, retrying on
+        # ``DependencyViolation`` for ones where SageMaker still holds
+        # a transient reference post-DeleteDomain.
+        pending = [(sg["GroupId"], sg.get("GroupName", "")) for sg in sgs]
+        for attempt in range(1, SG_DELETE_MAX_ATTEMPTS + 1):
+            still_pending: list[tuple[str, str]] = []
+            for sg_id, sg_name in pending:
+                try:
+                    ec2.delete_security_group(GroupId=sg_id)
+                    logger.info("Deleted SageMaker security group: %s (%s)", sg_id, sg_name)
+                except ClientError as e:
+                    code = e.response.get("Error", {}).get("Code", "")
+                    # ``InvalidGroup.NotFound`` means some other actor
+                    # already deleted it — treat as success.
+                    if code == "InvalidGroup.NotFound":
+                        logger.info("SG %s (%s) already deleted", sg_id, sg_name)
+                        continue
+                    if code == "DependencyViolation":
+                        logger.warning(
+                            "SG %s (%s) has a dependent object (attempt %d/%d); will retry",
+                            sg_id,
+                            sg_name,
+                            attempt,
+                            SG_DELETE_MAX_ATTEMPTS,
+                        )
+                        still_pending.append((sg_id, sg_name))
+                        continue
+                    msg = f"Failed to delete security group {sg_id}: {e}"
+                    logger.error(msg)
+                    errors.append(msg)
+            if not still_pending:
+                break
+            pending = still_pending
+            if attempt < SG_DELETE_MAX_ATTEMPTS:
+                time.sleep(SG_DELETE_RETRY_BACKOFF_SECONDS)
+        else:
+            # Exhausted retries with SGs still undeletable.
+            for sg_id, sg_name in pending:
+                msg = (
+                    f"Failed to delete security group {sg_id} ({sg_name}) "
+                    f"after {SG_DELETE_MAX_ATTEMPTS} attempts: "
+                    "DependencyViolation did not clear. CloudFormation "
+                    "will fail to delete the VPC; manually delete the "
+                    "SG after its dependent object releases."
+                )
                 logger.error(msg)
                 errors.append(msg)
     except ClientError as e:
