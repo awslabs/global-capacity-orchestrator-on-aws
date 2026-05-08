@@ -29,6 +29,60 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+# ---------------------------------------------------------------------------
+# Tunables
+# ---------------------------------------------------------------------------
+#
+# These constants govern how aggressively we poll SageMaker/EFS while waiting
+# for asynchronous delete operations to drain. The defaults are sized for the
+# worst case we've observed in production (a domain with a handful of users,
+# one JupyterLab app each). If you see timeouts in CloudWatch, raise the
+# ``*_WAIT_SECONDS`` values — and correspondingly bump ``timeout=`` on the
+# ``CleanupFunction`` in ``gco/stacks/analytics_stack.py`` so the Lambda
+# doesn't exceed its own execution timeout.
+#
+# Lower the values if you want the custom resource to fail fast during
+# local testing, but remember that CloudFormation will then hit the domain
+# delete before the async drains finish and fail with
+# ``Unable to delete Domain ... because UserProfile(s) are associated``.
+
+# Interval between list-and-check iterations of every drain wait loop.
+# Small enough to keep typical stacks responsive, large enough to avoid
+# throttling SageMaker/EFS control-plane APIs.
+DRAIN_POLL_INTERVAL_SECONDS = 5
+
+# Brief pause after issuing ``delete_space`` / ``delete_user_profile`` to
+# avoid ThrottlingException when a domain has dozens of resources.
+DELETE_PACE_SECONDS = 1
+
+# Maximum time to wait for SageMaker apps to reach ``Deleted``/``Failed``.
+# Apps typically go terminal within 30-60 seconds; 2 minutes leaves plenty
+# of headroom without risking a Lambda timeout.
+APP_DELETE_WAIT_SECONDS = 120
+
+# Maximum time to wait for SageMaker spaces to disappear from ``list_spaces``.
+# Spaces drain faster than user profiles but may be gated by app deletion.
+SPACE_DELETE_WAIT_SECONDS = 180
+
+# Maximum time to wait for SageMaker user profiles to disappear from
+# ``list_user_profiles``. This is the critical wait — if CloudFormation
+# reaches ``DeleteDomain`` with any profiles still lingering, the whole
+# stack fails with a UserProfile-in-use error and has to be manually
+# unstuck.
+USER_PROFILE_DELETE_WAIT_SECONDS = 180
+
+# Maximum time to wait for SageMaker-managed EFS mount targets to drain.
+# Mount target deletion is usually sub-30s but can stall briefly while
+# the ENIs are detached.
+MOUNT_TARGET_DELETE_WAIT_SECONDS = 120
+
+
+def _poll_iterations(total_wait_seconds: int) -> int:
+    """Return the number of iterations for a drain loop with
+    ``DRAIN_POLL_INTERVAL_SECONDS`` between polls."""
+    return max(1, total_wait_seconds // DRAIN_POLL_INTERVAL_SECONDS)
+
+
 def handler(event: dict, context: object) -> dict:
     """CloudFormation custom resource handler."""
     request_type = event.get("RequestType", "")
@@ -137,9 +191,9 @@ def _delete_apps(region: str, domain_id: str) -> list[str]:
                         logger.error(msg)
                         errors.append(msg)
 
-        # Wait for apps to finish deleting (up to 2 minutes)
-        for _ in range(24):
-            time.sleep(5)
+        # Wait for apps to finish deleting.
+        for _ in range(_poll_iterations(APP_DELETE_WAIT_SECONDS)):
+            time.sleep(DRAIN_POLL_INTERVAL_SECONDS)
             active = []
             for page in paginator.paginate(DomainIdEquals=domain_id):
                 for app in page.get("Apps", []):
@@ -180,15 +234,15 @@ def _delete_spaces(region: str, domain_id: str) -> list[str]:
                 try:
                     sm.delete_space(DomainId=domain_id, SpaceName=space_name)
                     logger.info("Deleted space: %s", space_name)
-                    time.sleep(1)
+                    time.sleep(DELETE_PACE_SECONDS)
                 except ClientError as e:
                     if "does not exist" not in str(e):
                         msg = f"Failed to delete space {space_name}: {e}"
                         logger.error(msg)
                         errors.append(msg)
 
-        # Wait for spaces to finish deleting (up to 3 minutes).
-        for _ in range(36):
+        # Wait for spaces to finish deleting.
+        for _ in range(_poll_iterations(SPACE_DELETE_WAIT_SECONDS)):
             remaining: list[str] = []
             for page in paginator.paginate(DomainIdEquals=domain_id):
                 for space in page.get("Spaces", []):
@@ -196,7 +250,7 @@ def _delete_spaces(region: str, domain_id: str) -> list[str]:
             if not remaining:
                 break
             logger.info("Waiting for %d space(s) to delete: %s", len(remaining), remaining)
-            time.sleep(5)
+            time.sleep(DRAIN_POLL_INTERVAL_SECONDS)
         else:
             msg = f"Timed out waiting for spaces to delete in {domain_id}: {remaining}"
             logger.error(msg)
@@ -235,17 +289,17 @@ def _delete_user_profiles(region: str, domain_id: str) -> list[str]:
                     sm.delete_user_profile(DomainId=domain_id, UserProfileName=name)
                     logger.info("Deleted user profile: %s", name)
                     # Brief pause to avoid throttling
-                    time.sleep(1)
+                    time.sleep(DELETE_PACE_SECONDS)
                 except ClientError as e:
                     msg = f"Failed to delete profile {name}: {e}"
                     logger.error(msg)
                     errors.append(msg)
 
-        # Wait for profiles to finish deleting (up to 3 minutes). Without
-        # this, CloudFormation will race ahead to delete the domain while
-        # profiles are still in ``Deleting`` state and fail the stack.
+        # Wait for profiles to finish deleting. Without this, CloudFormation
+        # will race ahead to delete the domain while profiles are still in
+        # ``Deleting`` state and fail the stack.
         remaining: list[str] = []
-        for _ in range(36):
+        for _ in range(_poll_iterations(USER_PROFILE_DELETE_WAIT_SECONDS)):
             remaining = []
             for page in paginator.paginate(DomainIdEquals=domain_id):
                 for profile in page.get("UserProfiles", []):
@@ -257,7 +311,7 @@ def _delete_user_profiles(region: str, domain_id: str) -> list[str]:
                 len(remaining),
                 remaining,
             )
-            time.sleep(5)
+            time.sleep(DRAIN_POLL_INTERVAL_SECONDS)
         else:
             msg = (
                 f"Timed out waiting for user profiles to delete in "
@@ -420,9 +474,9 @@ def _delete_sagemaker_managed_efs(region: str, domain_id: str) -> list[str]:
                 logger.error(msg)
                 errors.append(msg)
 
-        # Wait for mount targets to be deleted (up to 2 minutes)
-        for _ in range(24):
-            time.sleep(5)
+        # Wait for mount targets to be deleted.
+        for _ in range(_poll_iterations(MOUNT_TARGET_DELETE_WAIT_SECONDS)):
+            time.sleep(DRAIN_POLL_INTERVAL_SECONDS)
             remaining = efs.describe_mount_targets(FileSystemId=target_fs)
             if not remaining.get("MountTargets"):
                 break

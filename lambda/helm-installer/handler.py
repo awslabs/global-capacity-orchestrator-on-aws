@@ -40,6 +40,24 @@ logger.setLevel(logging.INFO)
 SUCCESS = "SUCCESS"
 FAILED = "FAILED"
 
+
+# ---------------------------------------------------------------------------
+# Tunables
+# ---------------------------------------------------------------------------
+
+# Maximum number of install/upgrade attempts for each chart. Some charts
+# (e.g. cert-manager, NVIDIA operators) depend on admission webhooks or
+# CRDs that briefly flap during cluster bring-up, and a single retry often
+# clears those transient failures. Raise this if you see persistent retry
+# exhaustion in the logs; lower it for faster feedback in local testing.
+HELM_INSTALL_MAX_RETRIES = 3
+
+# Seconds to wait between failed chart attempts. Sized to give the EKS
+# control plane time to stabilise (webhook endpoints coming up, API
+# server throttling clearing) without dragging CloudFormation custom
+# resource completion beyond its 15-minute timeout.
+HELM_INSTALL_RETRY_DELAY_SECONDS = 30
+
 # Load default chart configurations
 CHARTS_CONFIG_PATH = Path(__file__).parent / "charts.yaml"
 
@@ -582,9 +600,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> None:
 
         if request_type in ("Create", "Update"):
             # Install/upgrade enabled charts with retry for transient failures
-            # (e.g., webhook not ready yet, API server temporarily unavailable)
-            max_retries = 3
-            retry_delay = 30  # seconds
+            # (e.g., webhook not ready yet, API server temporarily unavailable).
+            # Tunables at the top of this module.
+            max_retries = HELM_INSTALL_MAX_RETRIES
+            retry_delay = HELM_INSTALL_RETRY_DELAY_SECONDS
 
             # First pass: uninstall disabled charts that were previously installed
             for chart_name, config in charts_config.items():

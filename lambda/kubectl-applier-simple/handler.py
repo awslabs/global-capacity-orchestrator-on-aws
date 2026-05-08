@@ -57,6 +57,25 @@ SUCCESS = "SUCCESS"
 FAILED = "FAILED"
 
 
+# ---------------------------------------------------------------------------
+# Tunables
+# ---------------------------------------------------------------------------
+
+# Maximum time to wait for a PersistentVolume or PersistentVolumeClaim to
+# disappear after we issue a delete. Needed when we're recreating a PV
+# whose ``volumeHandle`` changed (FSx/EFS ID rotated) or reconciling a
+# Lost PVC whose backing PV was just recreated. If you see this wait
+# consistently timing out, check for stuck finalizers (the handler
+# already clears the standard ``pv-protection`` / ``pvc-protection``
+# finalizers) or for an AWS control-plane issue on the underlying
+# volume. Raising the value is safe — it only blocks the re-create path,
+# not steady-state applies.
+PV_PVC_DELETE_WAIT_SECONDS = 30
+
+# Interval between PV/PVC existence polls during the delete wait.
+PV_PVC_DELETE_POLL_INTERVAL_SECONDS = 1
+
+
 def get_eks_client() -> Any:
     """Get EKS client with lazy initialization."""
     global _eks_client
@@ -630,10 +649,15 @@ def apply_manifests(
                                     # Wait for the PV to actually disappear
                                     import time as _time
 
-                                    for _wait in range(30):
+                                    _pv_iterations = max(
+                                        1,
+                                        PV_PVC_DELETE_WAIT_SECONDS
+                                        // PV_PVC_DELETE_POLL_INTERVAL_SECONDS,
+                                    )
+                                    for _wait in range(_pv_iterations):
                                         try:
                                             v1.read_persistent_volume(name)
-                                            _time.sleep(1)
+                                            _time.sleep(PV_PVC_DELETE_POLL_INTERVAL_SECONDS)
                                         except ApiException as read_e:
                                             if read_e.status == 404:
                                                 break
@@ -661,12 +685,17 @@ def apply_manifests(
                                     v1.delete_namespaced_persistent_volume_claim(name, namespace)
                                     import time as _time
 
-                                    for _wait in range(30):
+                                    _pvc_iterations = max(
+                                        1,
+                                        PV_PVC_DELETE_WAIT_SECONDS
+                                        // PV_PVC_DELETE_POLL_INTERVAL_SECONDS,
+                                    )
+                                    for _wait in range(_pvc_iterations):
                                         try:
                                             v1.read_namespaced_persistent_volume_claim(
                                                 name, namespace
                                             )
-                                            _time.sleep(1)
+                                            _time.sleep(PV_PVC_DELETE_POLL_INTERVAL_SECONDS)
                                         except ApiException as read_e:
                                             if read_e.status == 404:
                                                 break
