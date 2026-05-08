@@ -353,6 +353,9 @@ class GCOAnalyticsStack(Stack):
         * RW on ``Studio_Only_Bucket`` + KMS on ``Analytics_KMS_Key``
         * Read-only ``execute-api:Invoke`` on GCO API Gateway ``/api/v1/*`` GET routes
         * ``sqs:SendMessage`` on regional job queues (wildcard ARN pattern)
+        * ``ssm:GetParameter`` on the ``Cluster_Shared_Bucket`` metadata
+          parameters in the global region — lets notebooks look up the
+          bucket name/arn/region at runtime without a per-user export step
         * EFS mount actions on ``Studio_EFS`` (specific AP arn is added by
           the presigned-URL Lambda at runtime; the role-level grant here is
           scoped to the EFS ARN)
@@ -371,7 +374,8 @@ class GCOAnalyticsStack(Stack):
                 "SageMaker_Execution_Role - assumed by notebooks in the Studio "
                 "domain. Grants RW on Studio_Only_Bucket and (via a separate "
                 "cross-region policy) Cluster_Shared_Bucket, plus read-only GCO "
-                "API access and SQS job submission."
+                "API access, SQS job submission, and cross-region ssm:GetParameter "
+                "on the Cluster_Shared_Bucket metadata parameters."
             ),
         )
 
@@ -420,6 +424,25 @@ class GCOAnalyticsStack(Stack):
                 actions=["sqs:SendMessage"],
                 resources=[
                     f"arn:aws:sqs:*:{self.account}:{project_name}-jobs-*",
+                ],
+            )
+        )
+
+        # ssm:GetParameter on the Cluster_Shared_Bucket metadata params. The
+        # three parameters (name/arn/region) live in the global region where
+        # GCOGlobalStack is deployed, not in the analytics region. Scoping
+        # to the CLUSTER_SHARED_SSM_PARAMETER_PREFIX tree under the global
+        # region means a notebook can fetch the bucket name at runtime via
+        #   boto3.client('ssm', region_name='<global-region>').get_parameter(
+        #       Name='/gco/cluster-shared-bucket/name')['Parameter']['Value']
+        # without any JupyterLab-terminal export step.
+        global_region = self.config.get_global_region()
+        self.sagemaker_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["ssm:GetParameter", "ssm:GetParameters"],
+                resources=[
+                    f"arn:aws:ssm:{global_region}:{self.account}:parameter{CLUSTER_SHARED_SSM_PARAMETER_PREFIX}/*",
                 ],
             )
         )

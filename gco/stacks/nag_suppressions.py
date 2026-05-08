@@ -798,6 +798,13 @@ def add_sagemaker_suppressions(
         # the project's ``<project>-jobs-*`` pattern. The SQS queue ARNs
         # are owned by the regional stacks and not directly importable.
         "Resource::arn:aws:sqs:*:<AWS::AccountId>:gco-jobs-*",
+        # SageMaker execution role — ``ssm:GetParameter`` on the
+        # Cluster_Shared_Bucket metadata parameters under
+        # ``/gco/cluster-shared-bucket/*`` in the global region. The path
+        # wildcard covers exactly three literal parameter names
+        # (name / arn / region) defined by ``GCOGlobalStack``; the rest of
+        # the ARN is fully scoped (global region + account).
+        f"Resource::arn:aws:ssm:{gbl_region}:<AWS::AccountId>:parameter/gco/cluster-shared-bucket/*",
         # SageMaker execution role — execute-api on any REST API id under
         # /prod/GET/api/v1/* in the api-gateway region. The concrete
         # region value is templated in so the nag match works regardless
@@ -861,8 +868,14 @@ def add_sagemaker_suppressions(
                     "Studio_Only_Bucket ARN, (5) KMS action wildcards "
                     "(``kms:GenerateDataKey*``, ``kms:ReEncrypt*``) produced by "
                     "``kms_key.grant_encrypt_decrypt(role)`` on the literal "
-                    "Analytics_KMS_Key ARN, and (6) ``<StudioOnlyBucket.Arn>/*`` "
-                    "object-key wildcard on the single literal bucket. Each "
+                    "Analytics_KMS_Key ARN, (6) ``<StudioOnlyBucket.Arn>/*`` "
+                    "object-key wildcard on the single literal bucket, and "
+                    "(7) ``ssm:GetParameter`` on "
+                    "``/gco/cluster-shared-bucket/*`` in the global region "
+                    "(covers exactly three literal parameter names — "
+                    "name/arn/region — defined by ``GCOGlobalStack``; lets "
+                    "Studio notebooks resolve the shared-bucket metadata at "
+                    "runtime without a per-user export step). Each "
                     "wildcard is scoped on a narrow literal pattern."
                 ),
                 applies_to=applies_to,

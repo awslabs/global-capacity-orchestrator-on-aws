@@ -662,27 +662,26 @@ gco jobs logs analytics-s3-upload -r us-east-1 -n gco-jobs
 
 ```python
 import boto3
-import os
 import pandas
 
 # The Studio execution role has RW on Cluster_Shared_Bucket whenever
-# analytics is enabled. The bucket name comes from a notebook-local
-# environment variable you set once from a JupyterLab terminal:
-#   export sharedBucketName=gco-cluster-shared-<account>-<global-region>
-# (or hard-code it if you prefer — the value is stable across deploys).
+# analytics is enabled, plus ssm:GetParameter on the
+# /gco/cluster-shared-bucket/* tree in the global region (default us-east-2),
+# so the bucket name can be resolved at runtime with zero setup.
 
-s3 = boto3.client("s3")
-obj = s3.get_object(
-    Bucket=os.environ["sharedBucketName"],
-    Key="analytics-data/dataset.csv",
-)
+ssm = boto3.client("ssm", region_name="us-east-2")
+bucket = ssm.get_parameter(Name="/gco/cluster-shared-bucket/name")["Parameter"]["Value"]
+region = ssm.get_parameter(Name="/gco/cluster-shared-bucket/region")["Parameter"]["Value"]
+
+s3 = boto3.client("s3", region_name=region)
+obj = s3.get_object(Bucket=bucket, Key="analytics-data/dataset.csv")
 df = pandas.read_csv(obj["Body"])
 df.head()
 ```
 
-Alternatively, surface `sharedBucketName` to the notebook via the
-Studio environment variables pane, or build a tiny helper that reads
-from a project-local config.
+The SSM parameters (`/gco/cluster-shared-bucket/{name,arn,region}`) are
+the canonical source of truth — they're populated by `GCOGlobalStack`
+and never go stale across deploys.
 
 **Step 4 — cross-region consideration**: the bucket lives in the
 global region (default `us-east-2`). If your Studio domain is also

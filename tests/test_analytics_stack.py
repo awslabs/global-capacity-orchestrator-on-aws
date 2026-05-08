@@ -863,6 +863,49 @@ class TestSageMakerExecutionRole:
             f"attached statements={statements!r}"
         )
 
+    def test_role_has_ssm_getparameter_on_cluster_shared_bucket_prefix(self) -> None:
+        """``ssm:GetParameter`` on the ``Cluster_Shared_Bucket`` metadata
+        parameters in the global region.
+
+        Lets a Studio notebook resolve the shared bucket name/arn/region
+        at runtime without a per-user JupyterLab terminal export step.
+        The parameters live under
+        ``CLUSTER_SHARED_SSM_PARAMETER_PREFIX = /gco/cluster-shared-bucket``
+        in the global region where ``GCOGlobalStack`` is deployed.
+        """
+        from gco.stacks.constants import CLUSTER_SHARED_SSM_PARAMETER_PREFIX
+
+        template = _synth_analytics()
+        role_lid, _ = self._find_sagemaker_role(template)
+        statements = self._collect_role_statements(template, role_lid)
+
+        matches = []
+        for stmt in statements:
+            if stmt.get("Effect") != "Allow":
+                continue
+            actions = stmt.get("Action")
+            action_set = set(actions) if isinstance(actions, list) else {actions}
+            if "ssm:GetParameter" not in action_set:
+                continue
+            resources = stmt.get("Resource") or []
+            if not isinstance(resources, list):
+                resources = [resources]
+            for res in resources:
+                # Expected shape:
+                #   arn:aws:ssm:<global-region>:<account>:parameter/gco/cluster-shared-bucket/*
+                if isinstance(res, str) and (
+                    ":ssm:" in res
+                    and f"parameter{CLUSTER_SHARED_SSM_PARAMETER_PREFIX}/*" in res
+                ):
+                    matches.append(stmt)
+                    break
+
+        assert matches, (
+            "expected an Allow statement granting ssm:GetParameter on "
+            f"parameter{CLUSTER_SHARED_SSM_PARAMETER_PREFIX}/* in the "
+            f"global region; attached statements={statements!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Cognito user pool
