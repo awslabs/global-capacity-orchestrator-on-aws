@@ -894,8 +894,7 @@ class TestSageMakerExecutionRole:
                 # Expected shape:
                 #   arn:aws:ssm:<global-region>:<account>:parameter/gco/cluster-shared-bucket/*
                 if isinstance(res, str) and (
-                    ":ssm:" in res
-                    and f"parameter{CLUSTER_SHARED_SSM_PARAMETER_PREFIX}/*" in res
+                    ":ssm:" in res and f"parameter{CLUSTER_SHARED_SSM_PARAMETER_PREFIX}/*" in res
                 ):
                     matches.append(stmt)
                     break

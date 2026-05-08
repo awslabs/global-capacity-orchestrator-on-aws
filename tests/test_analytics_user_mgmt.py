@@ -234,9 +234,7 @@ class TestUserMgmtHelpers:
         cognito = boto3.client("cognito-idp", region_name="us-east-2")
         pool = cognito.create_user_pool(PoolName="gco-studio")
         pool_id = pool["UserPool"]["Id"]
-        cognito.admin_create_user(
-            UserPoolId=pool_id, Username="alice", MessageAction="SUPPRESS"
-        )
+        cognito.admin_create_user(UserPoolId=pool_id, Username="alice", MessageAction="SUPPRESS")
 
         aum.admin_set_user_password(
             pool_id=pool_id,

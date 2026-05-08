@@ -308,9 +308,7 @@ class TestUsers:
             user = cognito.admin_get_user(UserPoolId=pool_id, Username="carol")
             assert user["UserStatus"] == "CONFIRMED"
 
-    def test_users_add_rejects_password_and_generate_together(
-        self, aws_creds_env, tmp_cdk_json
-    ):
+    def test_users_add_rejects_password_and_generate_together(self, aws_creds_env, tmp_cdk_json):
         """``--password`` and ``--generate-password`` are mutually exclusive."""
         from cli.main import cli
 

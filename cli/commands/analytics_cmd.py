@@ -257,9 +257,7 @@ def users_add(
             sys.exit(1)
 
         if generate_password:
-            formatter.print_info(
-                f"Generated password (printed exactly once): {final_password}"
-            )
+            formatter.print_info(f"Generated password (printed exactly once): {final_password}")
         else:
             formatter.print_info(f"Password set (permanent) for {username}")
         return
