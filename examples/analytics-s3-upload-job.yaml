@@ -26,7 +26,13 @@
 #   gco jobs submit-direct examples/analytics-s3-upload-job.yaml -r us-east-1
 #
 # Notes:
-#   - Studio reader snippet (paste into a notebook cell after this job runs):
+#   - Studio reader snippet. Studio kernels don't mount the
+#     gco-cluster-shared-bucket ConfigMap (that's a pod-side env), and the
+#     SageMaker execution role doesn't have ssm:GetParameter, so export the
+#     bucket name once from a JupyterLab terminal (the value is stable
+#     across deploys):
+#       export sharedBucketName=gco-cluster-shared-<account>-<global-region>
+#     Then paste this into a notebook cell:
 #       import boto3, os, pandas
 #       df = pandas.read_csv(
 #           boto3.client('s3').get_object(
@@ -120,6 +126,8 @@ spec:
 
           # Print the copy-pasteable notebook snippet.
           print("\nStudio notebook snippet:")
+          print("  # Export once from a JupyterLab terminal (value is stable):")
+          print(f"  #   export sharedBucketName={bucket}")
           print("  import boto3, os, pandas")
           print("  df = pandas.read_csv(")
           print("      boto3.client('s3').get_object(")
