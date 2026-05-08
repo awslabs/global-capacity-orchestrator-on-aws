@@ -35,6 +35,14 @@ from typing import Any, cast
 
 import boto3
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``lambda_handler`` -> ``diagrams/code_diagrams/lambda/drift-detection/handler.lambda_handler.html``
+#     (PNG: ``diagrams/code_diagrams/lambda/drift-detection/handler.lambda_handler.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 

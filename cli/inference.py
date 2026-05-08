@@ -14,6 +14,16 @@ from typing import TYPE_CHECKING, Any
 from .aws_client import get_aws_client
 from .config import GCOConfig, get_config
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``InferenceManager.deploy`` -> ``diagrams/code_diagrams/cli/inference.InferenceManager_deploy.html``
+#     (PNG: ``diagrams/code_diagrams/cli/inference.InferenceManager_deploy.png``)
+#   * ``InferenceManager.canary_deploy`` -> ``diagrams/code_diagrams/cli/inference.InferenceManager_canary_deploy.html``
+#     (PNG: ``diagrams/code_diagrams/cli/inference.InferenceManager_canary_deploy.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
+
 if TYPE_CHECKING:
     from gco.services.inference_store import InferenceEndpointStore
 

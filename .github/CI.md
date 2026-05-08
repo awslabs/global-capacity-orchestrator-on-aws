@@ -157,7 +157,7 @@ Ecosystems tracked:
 
 | Surface | Source | Notes |
 |---------|--------|-------|
-| Python packages | `pip list --outdated` against the editable install of the current repo | Compares installed pins against the latest on PyPI |
+| Python packages | `pip list --outdated` against the editable install of the current repo, filtered to packages we pin *directly* in `pyproject.toml` | Transitive-only drift is excluded because those versions are controlled by upstream pins (`jsii`, `aws-cdk-lib`, `botocore`, `fastmcp`, …) and bumping them ourselves either no-ops or breaks the resolver. The filter is driven by `extract_direct_python_deps` in `lib_dependency_scan.sh`. |
 | Docker image tags | `image: …:<tag>` references in `.github/workflows/*.yml`, `lambda/kubectl-applier-simple/manifests/`, `examples/`, and `lambda/helm-installer/charts.yaml` | Queries the original registry (Docker Hub, Quay, GHCR, GCR, ECR Public, registry.k8s.io) via `skopeo`; only semver tags |
 | Helm charts | `lambda/helm-installer/charts.yaml` | Uses `helm show chart` for OCI charts and `helm search repo` for traditional repos |
 | EKS add-ons | `addon_name`/`addon_version` pairs extracted from `gco/stacks/constants.py` | Requires AWS credentials (via OIDC). The script pre-flights `sts get-caller-identity`; without valid creds the add-on section is explicitly **skipped** and the report notes why — everything else still runs |

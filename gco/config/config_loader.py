@@ -367,6 +367,19 @@ class ConfigLoader:
                 f"{type(hyperpod_ctx['enabled']).__name__}: {hyperpod_ctx['enabled']!r}"
             )
 
+        # `canvas.enabled` must be a bool if the sub-block is a dict and
+        # carries the key. Mirrors the hyperpod validation above.
+        canvas_ctx = analytics_ctx.get("canvas")
+        if (
+            isinstance(canvas_ctx, dict)
+            and "enabled" in canvas_ctx
+            and not isinstance(canvas_ctx["enabled"], bool)
+        ):
+            raise ConfigValidationError(
+                f"analytics_environment.canvas.enabled must be a bool, got "
+                f"{type(canvas_ctx['enabled']).__name__}: {canvas_ctx['enabled']!r}"
+            )
+
         valid_removal_policies = {"destroy", "retain"}
 
         for sub_block in ("cognito", "efs"):
@@ -742,6 +755,10 @@ class ConfigLoader:
             - hyperpod: SageMaker HyperPod integration sub-block
               - enabled: Whether to add the HyperPod IAM grants to
                 SageMaker_Execution_Role (default: False)
+            - canvas: SageMaker Canvas integration sub-block
+              - enabled: Whether to enable the SageMaker Canvas app on
+                the Studio domain and attach ``AmazonSageMakerCanvasFullAccess``
+                to the SageMaker_Execution_Role (default: False)
             - cognito: Cognito user-pool sub-block
               - domain_prefix: UserPoolDomain prefix, or None to let the
                 analytics stack derive one (default: None)
@@ -758,6 +775,7 @@ class ConfigLoader:
         default_config: dict[str, Any] = {
             "enabled": False,
             "hyperpod": {"enabled": False},
+            "canvas": {"enabled": False},
             "cognito": {"domain_prefix": None, "removal_policy": "destroy"},
             "efs": {"removal_policy": "destroy"},
             "studio": {"user_profile_name_prefix": None},
@@ -768,7 +786,7 @@ class ConfigLoader:
 
         # Deep-merge each nested sub-block so a partial override does not
         # drop the other defaults in the same sub-block.
-        for sub_block in ("hyperpod", "cognito", "efs", "studio"):
+        for sub_block in ("hyperpod", "canvas", "cognito", "efs", "studio"):
             override = analytics_config.get(sub_block)
             if isinstance(override, dict):
                 default_sub = cast(dict[str, Any], default_config[sub_block])

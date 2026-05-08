@@ -91,6 +91,8 @@ cffi==2.0.0
     # via cryptography
 cfgv==3.5.0
     # via pre-commit
+chardet==7.4.3
+    # via pyflowchart
 charset-normalizer==3.4.7
     # via requests
 click==8.3.3
@@ -160,6 +162,8 @@ flake8-comprehensions==3.16.0
     # via
     #   gco-cli
     #   gco-cli (pyproject.toml)
+greenlet==3.5.0
+    # via playwright
 griffelib==2.0.2
     # via fastmcp
 h11==0.16.0
@@ -318,6 +322,10 @@ platformdirs==4.9.6
     #   fastmcp
     #   python-discovery
     #   virtualenv
+playwright==1.59.0
+    # via
+    #   gco-cli
+    #   gco-cli (pyproject.toml)
 pluggy==1.6.0
     # via
     #   pytest
@@ -368,8 +376,14 @@ pydantic-settings==2.14.0
     #   mcp
     #   openapi-schema-validator
     #   openapi-spec-validator
+pyee==13.0.1
+    # via playwright
 pyflakes==3.4.0
     # via flake8
+pyflowchart==0.6.0
+    # via
+    #   gco-cli
+    #   gco-cli (pyproject.toml)
 pygments==2.20.0
     # via
     #   pytest
@@ -520,6 +534,7 @@ typing-extensions==4.15.0
     #   py-key-value-aio
     #   pydantic
     #   pydantic-core
+    #   pyee
     #   typing-inspection
 typing-inspection==0.4.2
     # via

@@ -25,9 +25,16 @@ import time
 import boto3
 from botocore.exceptions import ClientError
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``handler`` -> ``diagrams/code_diagrams/lambda/analytics-cleanup/handler.handler.html``
+#     (PNG: ``diagrams/code_diagrams/lambda/analytics-cleanup/handler.handler.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
 
 # ---------------------------------------------------------------------------
 # Tunables

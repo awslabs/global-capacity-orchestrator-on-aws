@@ -323,6 +323,26 @@ CONFIGS.extend(
             },
         ),
         (
+            "analytics-enabled-canvas",
+            {
+                "analytics_environment": {
+                    "enabled": True,
+                    "hyperpod": {"enabled": False},
+                    "canvas": {"enabled": True},
+                }
+            },
+        ),
+        (
+            "analytics-enabled-hyperpod-canvas",
+            {
+                "analytics_environment": {
+                    "enabled": True,
+                    "hyperpod": {"enabled": True},
+                    "canvas": {"enabled": True},
+                }
+            },
+        ),
+        (
             "analytics-efs-retain",
             {
                 "analytics_environment": {
@@ -409,7 +429,15 @@ _NAG_CONFIG_NAMES = {
     "three-regions",
     "aurora-pgvector-enabled",
     "analytics-enabled",
-    "analytics-enabled-hyperpod",
+    # ``analytics-enabled-hyperpod-canvas`` exercises *both* analytics
+    # sub-toggles in a single synth — it subsumes the coverage that
+    # dedicated ``analytics-enabled-hyperpod`` and
+    # ``analytics-enabled-canvas`` entries would give us individually.
+    # Keeping only the combined variant in the nag matrix saves two
+    # full-app synths (~2 min apiece on CI) without losing IAM surface
+    # coverage, because both sub-toggles layer on top of the baseline
+    # ``analytics-enabled`` IAM surface independently.
+    "analytics-enabled-hyperpod-canvas",
 }
 
 NAG_CONFIGS: list[tuple[str, dict[str, Any]]] = [

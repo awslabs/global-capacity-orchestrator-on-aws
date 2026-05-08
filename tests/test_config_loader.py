@@ -997,6 +997,40 @@ class TestAnalyticsEnvironmentConfig:
         ):
             ConfigLoader(app)
 
+    def test_invalid_canvas_enabled_type_raises(self, valid_context):
+        """Non-bool analytics_environment.canvas.enabled → raises ConfigValidationError."""
+        valid_context["analytics_environment"] = {"canvas": {"enabled": "yes"}}
+        app = MockApp(valid_context)
+        with pytest.raises(
+            ConfigValidationError,
+            match="analytics_environment.canvas.enabled must be a bool",
+        ):
+            ConfigLoader(app)
+
+    def test_canvas_defaults_to_disabled_when_block_omitted(self, valid_context):
+        """Omitting the canvas sub-block leaves canvas.enabled=false after merge."""
+        valid_context["analytics_environment"] = {"enabled": True}
+        app = MockApp(valid_context)
+        cfg = ConfigLoader(app).get_analytics_config()
+        assert cfg["canvas"] == {"enabled": False}, (
+            "Missing canvas sub-block should merge to the default "
+            f"{{'enabled': False}}, got {cfg['canvas']!r}"
+        )
+
+    def test_canvas_enabled_preserved_on_partial_override(self, valid_context):
+        """Setting canvas.enabled=true does not drop sibling sub-blocks."""
+        valid_context["analytics_environment"] = {
+            "enabled": True,
+            "canvas": {"enabled": True},
+        }
+        app = MockApp(valid_context)
+        cfg = ConfigLoader(app).get_analytics_config()
+        assert cfg["canvas"] == {"enabled": True}
+        # Sibling defaults must survive — the deep-merge logic is easy
+        # to regress when a new sub-block is added.
+        assert cfg["hyperpod"] == {"enabled": False}
+        assert cfg["efs"] == {"removal_policy": "destroy"}
+
     def test_invalid_cognito_removal_policy_raises(self, valid_context):
         """cognito.removal_policy not in {destroy, retain} → raises ConfigValidationError."""
         valid_context["analytics_environment"] = {

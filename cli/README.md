@@ -67,3 +67,18 @@ pipx install -e .       # CLI-only usage
 ## Reference
 
 See [CLI Reference](../docs/CLI.md) for the full command documentation.
+
+## Control-Flow Diagrams
+
+Auto-generated flowcharts for the most branchy CLI entry points live
+under [`diagrams/code_diagrams/cli/`](../diagrams/code_diagrams/README.md).
+
+| Function | Flowchart |
+|----------|-----------|
+| `JobManager.submit_job` (direct `kubectl apply` path) | [HTML](../diagrams/code_diagrams/cli/jobs.JobManager_submit_job.html) · [PNG](../diagrams/code_diagrams/cli/jobs.JobManager_submit_job.png) |
+| `JobManager.submit_job_sqs` (SQS-backed submission) | [HTML](../diagrams/code_diagrams/cli/jobs.JobManager_submit_job_sqs.html) · [PNG](../diagrams/code_diagrams/cli/jobs.JobManager_submit_job_sqs.png) |
+| `srp_authenticate` (Cognito SRP auth for Studio login) | [HTML](../diagrams/code_diagrams/cli/analytics_user_mgmt.srp_authenticate.html) · [PNG](../diagrams/code_diagrams/cli/analytics_user_mgmt.srp_authenticate.png) |
+| `fetch_studio_url` (`/studio/login` presigned-URL poll) | [HTML](../diagrams/code_diagrams/cli/analytics_user_mgmt.fetch_studio_url.html) · [PNG](../diagrams/code_diagrams/cli/analytics_user_mgmt.fetch_studio_url.png) |
+
+Regenerate with `python diagrams/code_diagrams/generate.py` after
+editing any of the charted functions' control flow.

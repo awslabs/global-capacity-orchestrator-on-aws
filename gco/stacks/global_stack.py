@@ -44,6 +44,13 @@ from gco.stacks.constants import (
     CLUSTER_SHARED_SSM_PARAMETER_PREFIX,
 )
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``GCOGlobalStack.__init__`` -> ``diagrams/code_diagrams/gco/stacks/global_stack.GCOGlobalStack___init__.html``
+#     (PNG: ``diagrams/code_diagrams/gco/stacks/global_stack.GCOGlobalStack___init__.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
 
 class GCOGlobalStack(Stack):
     """

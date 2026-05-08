@@ -52,6 +52,14 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``lambda_handler`` -> ``diagrams/code_diagrams/lambda/analytics-presigned-url/handler.lambda_handler.html``
+#     (PNG: ``diagrams/code_diagrams/lambda/analytics-presigned-url/handler.lambda_handler.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
+
 # ---------------------------------------------------------------------------
 # Module-level logger + boto3 clients
 # ---------------------------------------------------------------------------
@@ -89,7 +97,6 @@ _ERR_GENERIC = "PresignedUrlGenerationFailed"
 # the uid/gid out of the system-user range reserved for the base image.
 _POSIX_ID_MODULUS = 2147483629
 _POSIX_ID_OFFSET = 100000
-
 
 # ==========================================================================
 # Pure helpers (unit-testable without mocking)

@@ -9,6 +9,62 @@
 #   source .github/scripts/lib_dependency_scan.sh
 # =============================================================================
 
+# extract_direct_python_deps [pyproject_path]
+#
+# Reads the ``project.dependencies`` list and every list under
+# ``project.optional-dependencies`` from ``pyproject.toml`` and prints
+# one normalized package name per line (lowercased, ``_`` → ``-`` per
+# PEP 503). These are the packages we pin *directly* — everything else
+# is a transitive dependency whose version is controlled by something
+# we pin, and bumping it ourselves either does nothing (pip resolves
+# back to the same version) or breaks the resolver.
+#
+# Used by the python-drift path in ``dependency-scan.sh`` to filter
+# ``pip list --outdated`` down to names the operator can actually act
+# on, so the monthly report doesn't flag (for example) ``cattrs`` as
+# "outdated" when it's a jsii transitive we have no input on.
+#
+# Falls back silently to an empty list (prints nothing) if the file
+# isn't present or can't be parsed — the caller treats an empty list
+# as "no filter applied" rather than "no direct deps" so the scan
+# never silently hides genuine drift if the TOML parse breaks.
+#
+# Requires Python 3.11+ for ``tomllib`` (stdlib). The deps-scan
+# workflow already runs on 3.14.
+extract_direct_python_deps() {
+  local pyproject="${1:-pyproject.toml}"
+  [ -f "$pyproject" ] || return 0
+  python3 -c "
+import re, sys, tomllib
+try:
+    with open(sys.argv[1], 'rb') as f:
+        data = tomllib.load(f)
+except Exception:
+    sys.exit(0)
+
+project = data.get('project', {}) or {}
+deps = list(project.get('dependencies', []) or [])
+for group in (project.get('optional-dependencies', {}) or {}).values():
+    deps.extend(group or [])
+
+# Drop the project self-reference (``gco-cli[dev]`` etc.) before
+# normalising — pip doesn't report it in ``list --outdated`` anyway
+# but we also don't want to match on it.
+seen = set()
+for spec in deps:
+    if not isinstance(spec, str):
+        continue
+    name = re.split(r'[\\[=!<>;~ ]', spec, 1)[0].strip()
+    if not name or name.lower() == 'gco-cli':
+        continue
+    # PEP 503 normalisation: lowercase, ``_`` + ``.`` → ``-``.
+    name = re.sub(r'[-_.]+', '-', name).lower()
+    if name not in seen:
+        seen.add(name)
+        print(name)
+" "$pyproject" 2>/dev/null
+}
+
 # parse_image_registry <image>
 #
 # Given a Docker image name (without tag), prints "registry|repo" where

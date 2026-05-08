@@ -32,3 +32,5 @@ Screenshots of the GCO analytics environment running in SageMaker Studio.
 | [sagemaker_studio_jupyterlab_landing_page.png](sagemaker_studio_jupyterlab_landing_page.png) | JupyterLab landing page with file browser and launcher |
 | [sagemaker_studio_cloning_gco_in_jupyter.png](sagemaker_studio_cloning_gco_in_jupyter.png) | Cloning the GCO repository from a JupyterLab terminal |
 | [sagemaker_studio_emr_serverless.png](sagemaker_studio_emr_serverless.png) | EMR Serverless application visible from the Studio Data panel |
+| [sagemaker_studio_canvas_data_wrangler.png](sagemaker_studio_canvas_data_wrangler.png) | SageMaker Canvas Data Wrangler — no-code dataset import and feature engineering (shown when the `canvas` sub-toggle is enabled) |
+| [sagemaker_studio_mlflow.png](sagemaker_studio_mlflow.png) | SageMaker Studio MLflow experiment-tracking view after logging a run from a notebook |

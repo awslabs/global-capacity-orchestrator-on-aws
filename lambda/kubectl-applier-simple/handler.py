@@ -44,6 +44,14 @@ import yaml
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``lambda_handler`` -> ``diagrams/code_diagrams/lambda/kubectl-applier-simple/handler.lambda_handler.html``
+#     (PNG: ``diagrams/code_diagrams/lambda/kubectl-applier-simple/handler.lambda_handler.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
+
 # Configure logging for CloudWatch
 # In Lambda, the root logger is already configured, so we need to set the level explicitly
 logger = logging.getLogger()
@@ -55,7 +63,6 @@ _eks_client = None
 # CloudFormation response status constants
 SUCCESS = "SUCCESS"
 FAILED = "FAILED"
-
 
 # ---------------------------------------------------------------------------
 # Tunables

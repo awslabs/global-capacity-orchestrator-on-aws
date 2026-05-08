@@ -32,6 +32,8 @@ bucket's reference.
 - [(e) Optional user-driven install of GCO CLI and MCP server](#e-optional-user-driven-install-of-gco-cli-and-mcp-server)
 - [(f) Using the GCO CLI once installed inside JupyterLab](#f-using-the-gco-cli-once-installed-inside-jupyterlab)
 - [(g) Submitting HyperPod jobs when the sub-toggle is enabled](#g-submitting-hyperpod-jobs-when-the-sub-toggle-is-enabled)
+- [(g2) Launching SageMaker Canvas when the sub-toggle is enabled](#g2-launching-sagemaker-canvas-when-the-sub-toggle-is-enabled)
+- [(g3) Tracking experiments with managed MLflow](#g3-tracking-experiments-with-managed-mlflow)
 - [(h) Opening the environment in Kiro](#h-opening-the-environment-in-kiro)
 - [(i) Running the example cluster jobs and reading their output from a notebook](#i-running-the-example-cluster-jobs-and-reading-their-output-from-a-notebook)
 - [(j) Two-bucket access model](#j-two-bucket-access-model)
@@ -87,7 +89,9 @@ A cleanup Lambda (`lambda/analytics-cleanup/`) runs automatically as a
 CloudFormation custom resource during stack deletion. It removes all
 SageMaker user profiles and EFS access points that were created at
 runtime by the presigned-URL Lambda — resources CloudFormation doesn't
-know about because they weren't in the original template.
+know about because they weren't in the original template. Control flow:
+[interactive HTML](../diagrams/code_diagrams/lambda/analytics-cleanup/handler.handler.html) ·
+[PNG](../diagrams/code_diagrams/lambda/analytics-cleanup/handler.handler.png).
 
 ## Default image
 
@@ -118,9 +122,9 @@ vendored wheel instead.
 <details>
 <summary>📊 Analytics stack architecture diagram (click to expand)</summary>
 
-![Analytics Stack Architecture](../diagrams/analytics-stack.png)
+![Analytics Stack Architecture](../diagrams/infra_diagrams/analytics-stack.png)
 
-*Auto-generated from the CDK app via AWS PDK cdk-graph. Regenerate with `python diagrams/generate.py --stack analytics`.*
+*Auto-generated from the CDK app via AWS PDK cdk-graph. Regenerate with `python diagrams/infra_diagrams/generate.py --stack analytics`.*
 
 </details>
 
@@ -138,6 +142,63 @@ deployed, the following resources appear in the API-gateway region
   panel:
 
   ![EMR Serverless in Studio](../images/sagemaker_studio_emr_serverless.png)
+
+  Studio notebooks can submit Spark jobs to this application without
+  any additional IAM plumbing. The SageMaker execution role carries
+  the full submission surface
+  (`emr-serverless:StartJobRun`, `GetJobRun`, `ListJobRuns`,
+  `CancelJobRun`, `GetDashboardForJobRun`, `AccessLivyEndpoints`,
+  plus the lifecycle actions on `Application`) so three paths work
+  out of the box:
+
+  1. **Studio's "Run on EMR Serverless" tile** — click-to-run from
+     the Data panel; Studio auto-discovers the application in the
+     same account/region and wires the presigned Livy endpoint for
+     you. No code change to the notebook required.
+  2. **SparkMagic `%%spark` kernel** — the built-in PySpark kernel
+     uses `AccessLivyEndpoints` to open a remote Spark session on
+     the EMR Serverless app and executes cells against it.
+  3. **Native `boto3`** — for scripted pipelines, call
+     `boto3.client("emr-serverless").start_job_run(...)` with the
+     application id (published as a CfnOutput on `gco-analytics`)
+     and `executionRoleArn=` set to the role the Studio kernel is
+     already assuming. Job inputs can come from either
+     `Cluster_Shared_Bucket` (cross-region read via the SageMaker
+     role's grant) or `Studio_Only_Bucket`, and outputs can write
+     back to either — no extra per-user IAM configuration needed.
+
+  Because the application is idle between jobs you pay zero EMR
+  Serverless cost when no jobs are running; charges start at the
+  first `StartJobRun` and stop when the pre-initialized capacity
+  times out. See the [EMR Serverless pricing
+  page](https://aws.amazon.com/emr/serverless/pricing/) for the
+  current per-vCPU and per-GB rates.
+
+- **SageMaker-managed MLflow + MLflow Apps** — the SageMaker
+  execution role is attached to the AWS-managed
+  `AmazonSageMakerFullAccess` policy (always on when
+  `analytics_environment.enabled=true`), plus an inline
+  `sagemaker-mlflow:*` statement scoped to the api-gateway region.
+  The managed policy covers both MLflow surfaces in Studio —
+  the classic **MLflow Tracking Servers** (`sagemaker:*Mlflow*`
+  control-plane actions) and the newer **MLflow Apps**
+  (`sagemaker:CreateMlflowApp` / `ListMlflowApps` /
+  `DescribeMlflowApp`) — along with the SageMaker Model Registry
+  (`sagemaker:*ModelPackage*`) that MLflow's `register_model`
+  round-trips through. The inline `sagemaker-mlflow:*` statement
+  covers the data-plane namespace the MLflow SDK's SigV4 plug-in
+  talks to (`log_metric`, `log_artifact`, `register_model`, etc.)
+  — that service prefix is not in the managed policy. Notebook
+  users can spin up a tracking server, log experiments, and
+  register models directly from a Studio cell; Canvas's "Register
+  model" flow writes to the same Model Registry. GCO does not
+  pre-create the tracking server or app itself — the first
+  `sagemaker.client.create_mlflow_tracking_server(...)` or
+  `create_mlflow_app(...)` call (typically from `%%sh` or `boto3`
+  inside a notebook) brings one up; the server / app is billed
+  per hour it's running. See [section (g3)](#g3-tracking-experiments-with-managed-mlflow)
+  for the end-to-end notebook workflow.
+
 - **Cognito user pool** with a strong password policy (12+ chars,
   digits/symbols/uppercase required), SRP auth flow, and a hosted
   `UserPoolDomain` at prefix `gco-studio-<account>`.
@@ -156,14 +217,21 @@ deployed, the following resources appear in the API-gateway region
   `AmazonSageMaker-gco-analytics-exec-<region>` (SageMaker requires
   the prefix). Granted RW on `Studio_Only_Bucket` and
   `Cluster_Shared_Bucket`, plus invoke rights on the GCO API for
-  job/inference submission. When the `hyperpod` sub-toggle is on,
-  the role additionally gets
+  job/inference submission, plus the SageMaker-managed MLflow +
+  Model Registry API surface (tracking-server lifecycle, MLflow
+  experiments/runs/metrics/artifacts/models, and Model Registry
+  read/write). When the `hyperpod` sub-toggle is on, the role
+  additionally gets
   `sagemaker:CreateTrainingJob|DescribeTrainingJob|StopTrainingJob`
-  and `sagemaker:ClusterInstance*`.
+  and `sagemaker:ClusterInstance*`. When the `canvas` sub-toggle is
+  on, the role additionally gets the AWS-managed
+  `AmazonSageMakerCanvasFullAccess` policy (see section (g2)).
 - **Presigned-URL Lambda** — the backend for the `/studio/login`
   API Gateway route. Calls
   `CreatePresignedDomainUrl` and creates per-user profiles on first
-  login.
+  login. Full control-flow diagram:
+  [interactive HTML](../diagrams/code_diagrams/lambda/analytics-presigned-url/handler.lambda_handler.html) ·
+  [PNG](../diagrams/code_diagrams/lambda/analytics-presigned-url/handler.lambda_handler.png).
 - **API Gateway `/studio/*` routes** — grafted onto the existing
   `gco-api-gateway` via an `analytics_config` constructor parameter
   (no second API Gateway). The `/studio/login` route uses Cognito
@@ -200,11 +268,31 @@ The `--hyperpod` flag additionally sets
 training-job permissions to the SageMaker execution role. See
 section (g) for what that unlocks.
 
+With SageMaker Canvas:
+
+```bash
+gco analytics enable --canvas
+gco stacks deploy gco-analytics
+```
+
+The `--canvas` flag additionally sets
+`analytics_environment.canvas.enabled=true`, which attaches the
+AWS-managed `AmazonSageMakerCanvasFullAccess` policy to the SageMaker
+execution role. The policy is sufficient for Canvas to surface on the
+Studio landing page — SageMaker auto-detects the entitlement when a
+user opens Studio and lights up the Canvas tile. See section (g2)
+for the walkthrough.
+
+`--hyperpod` and `--canvas` are independent — pass both to enable
+both sub-toggles at once.
+
 Skip the confirmation prompt with `-y`:
 
 ```bash
 gco analytics enable -y
 gco analytics enable --hyperpod -y
+gco analytics enable --canvas -y
+gco analytics enable --hyperpod --canvas -y
 ```
 
 Run the pre-flight checks before deploying:
@@ -250,8 +338,9 @@ gco analytics disable
 gco stacks destroy gco-analytics
 ```
 
-`disable` leaves the `hyperpod`, `cognito`, and `efs` sub-blocks
-untouched so a subsequent `enable` preserves your preferences.
+`disable` leaves the `hyperpod`, `canvas`, `cognito`, and `efs`
+sub-blocks untouched so a subsequent `enable` preserves your
+preferences.
 
 ## (c) Managing Cognito users via the CLI
 
@@ -577,6 +666,161 @@ python3 -c "import json; d=json.load(open('cdk.json')); d['context']['analytics_
 gco stacks deploy gco-analytics
 ```
 
+## (g2) Launching SageMaker Canvas when the sub-toggle is enabled
+
+When `analytics_environment.canvas.enabled=true` (flipped via
+`gco analytics enable --canvas`), the analytics stack attaches the
+AWS-managed `AmazonSageMakerCanvasFullAccess` policy to
+`SageMaker_Execution_Role`. This is the managed policy that AWS
+publishes specifically for Canvas — it grants the full Canvas
+permission surface (Bedrock for generative AI, Forecast for time
+series, Rekognition for image classification, Athena for SQL
+sources, S3 writes for datasets, and so on). Using the managed
+policy means we pick up new Canvas capabilities automatically as
+AWS ships them. The corresponding `AwsSolutions-IAM4` nag finding
+carries a scoped suppression that explains the trade-off.
+
+Studio users open Canvas from the Studio landing page once the stack
+is deployed — no CLI-side setup is required on the user's behalf.
+SageMaker auto-detects the Canvas entitlement on the execution role
+and lights up the Canvas tile; the first click provisions a per-user
+Canvas backend, subsequent launches reuse it.
+
+Once inside Canvas, the Data Wrangler tab is the typical
+starting point — notebook-free dataset import, transformation,
+and feature-engineering on top of the `Studio_Only_Bucket` or
+`Cluster_Shared_Bucket` (notebooks can stage data via `boto3`
+first, then point Canvas at the S3 URI):
+
+![SageMaker Studio Canvas Data Wrangler](../images/sagemaker_studio_canvas_data_wrangler.png)
+
+Canvas workspaces use Canvas's own default artifact locations
+(typically a Canvas-managed S3 bucket in the analytics region).
+Per-feature Canvas configuration — workspace S3 artifact path,
+Bedrock role for generative AI, time-series forecasting settings,
+direct-deploy / model-register defaults — lives on
+`AWS::SageMaker::UserProfile` rather than `AWS::SageMaker::Domain`,
+so any defaults you want to pin have to be set at the user-profile
+level rather than from CDK.
+
+Disable Canvas later by flipping the sub-toggle off in `cdk.json`
+and redeploying `gco-analytics`:
+
+```bash
+python3 -c "import json; d=json.load(open('cdk.json')); d['context']['analytics_environment']['canvas']['enabled']=False; json.dump(d, open('cdk.json','w'), indent=2)"
+gco stacks deploy gco-analytics
+```
+
+## (g3) Tracking experiments with managed MLflow
+
+MLflow is always on whenever `analytics_environment.enabled=true` —
+no sub-toggle required. The SageMaker execution role has the
+AWS-managed `AmazonSageMakerFullAccess` policy attached, which
+covers both the classic **MLflow Tracking Servers** and the newer
+**MLflow Apps** control plane, plus an inline `sagemaker-mlflow:*`
+statement covering the data-plane namespace the MLflow SDK's SigV4
+plug-in uses to write experiments, runs, metrics, artifacts, and
+registered-model versions.
+
+End-to-end flow from a Studio notebook:
+
+1. **Install the SageMaker MLflow SigV4 plug-in** (not pre-installed
+    on stock SageMaker Distribution images):
+
+    ```bash
+    pip install sagemaker-mlflow mlflow
+    ```
+
+2. **Create a tracking server** from the notebook. The server is
+    billed per hour it's running; delete it when you're done.
+
+    ```python
+    import boto3
+
+    region = boto3.Session().region_name
+    sm = boto3.client("sagemaker", region_name=region)
+    bucket = boto3.client("ssm", region_name=region).get_parameter(
+        Name="/gco/cluster-shared-bucket/name"
+    )["Parameter"]["Value"]
+
+    sm.create_mlflow_tracking_server(
+        TrackingServerName="gco-mlflow",
+        ArtifactStoreUri=f"s3://{bucket}/mlflow/",
+        TrackingServerSize="Small",
+        RoleArn=sm.describe_domain(
+            DomainId="d-<your-domain-id>"
+        )["DefaultUserSettings"]["ExecutionRole"],
+    )
+    ```
+
+    Wait for the server to report `Created` (a few minutes on
+    first provision):
+
+    ```python
+    import time
+
+    while True:
+        status = sm.describe_mlflow_tracking_server(
+            TrackingServerName="gco-mlflow"
+        )["TrackingServerStatus"]
+        print(status)
+        if status in ("Created", "CreateFailed"):
+            break
+        time.sleep(30)
+    ```
+
+3. **Log your first experiment.** Point MLflow at the tracking
+    server ARN and the SigV4 plug-in handles auth automatically:
+
+    ```python
+    import mlflow
+
+    tracking_arn = sm.describe_mlflow_tracking_server(
+        TrackingServerName="gco-mlflow"
+    )["TrackingServerArn"]
+    mlflow.set_tracking_uri(tracking_arn)
+    mlflow.set_experiment("my-first-experiment")
+
+    with mlflow.start_run(run_name="baseline"):
+        mlflow.log_param("learning_rate", 0.01)
+        mlflow.log_param("epochs", 10)
+        mlflow.log_metric("train_loss", 0.42, step=0)
+        mlflow.log_metric("val_loss", 0.55, step=0)
+        mlflow.log_artifact("confusion_matrix.png")
+    ```
+
+4. **Browse runs in Studio.** Open the **Experiments** panel from
+    the Studio sidebar and pick your tracking server. The SageMaker
+    Studio MLflow UI lands on the experiment-tracking view:
+
+    ![SageMaker Studio MLflow experiment view](../images/sagemaker_studio_mlflow.png)
+
+    From here you can compare runs, inspect metrics over time, and
+    drill into artifacts. The same view is reachable from MLflow
+    Apps (a lighter-weight alternative to tracking servers — faster
+    startup, cross-account sharing) via `create_mlflow_app(...)` if
+    you prefer not to manage a long-running server.
+
+5. **Register a model to the SageMaker Model Registry.** MLflow's
+    `register_model` round-trips through
+    `sagemaker:CreateModelPackage` — covered by the managed policy —
+    so Canvas's "Register model" flow and MLflow's
+    `register_model` write to the same registry:
+
+    ```python
+    mlflow.register_model(
+        model_uri=f"runs:/{run_id}/model",
+        name="my-first-experiment",
+    )
+    ```
+
+6. **Stop the tracking server when you're done** to avoid idle
+    charges:
+
+    ```python
+    sm.stop_mlflow_tracking_server(TrackingServerName="gco-mlflow")
+    ```
+
 ## (h) Opening the environment in Kiro
 
 [Kiro](https://kiro.dev) is an AI-powered IDE that can connect to a
@@ -725,6 +969,47 @@ which asserts (for all toggle states and all regional regions) that
 regional job-pod IAM statements reference
 `arn:aws:s3:::gco-cluster-shared-*` and never
 `arn:aws:s3:::gco-analytics-studio-*`.
+
+### Accessing `Cluster_Shared_Bucket` from Studio
+
+Notebooks reach the cluster-shared bucket through `boto3`. The
+SageMaker execution role carries the cross-region RW grant on the
+bucket (attached in the analytics stack's
+``_grant_sagemaker_role_on_cluster_shared_bucket`` helper), so no
+per-user export step is required:
+
+```python
+# Inside a Studio notebook — list every object a GCO cluster job
+# has written to the shared bucket. The bucket name is published
+# as an SSM parameter in the global region so the code doesn't
+# have to hardcode the suffix.
+import boto3
+ssm = boto3.client("ssm", region_name="us-east-2")  # global region
+bucket = ssm.get_parameter(Name="/gco/cluster-shared-bucket/name")["Parameter"]["Value"]
+s3 = boto3.client("s3")
+for obj in s3.list_objects_v2(Bucket=bucket).get("Contents", []):
+    print(obj["Key"])
+```
+
+A previous revision of this stack also tried to expose the bucket
+as a SageMaker S3 custom file system at ``/mount/cluster-shared``.
+aws-cdk-lib exposes the property and CloudFormation synths it
+cleanly, but the SageMaker Studio service itself rejects the domain
+at create time with ``Invalid request provided: S3FileSystemConfig
+for SageMaker AI Studio is not supported yet``, so the mount is
+deliberately absent. Revisit this section when SageMaker Studio
+lights up S3 custom file systems.
+
+### GCO API submission from a notebook
+
+The SageMaker execution role is granted the full HTTP-method surface
+on both `/prod/*/api/v1/*` and `/prod/*/inference/*` — notebooks can
+submit jobs (`POST`), update templates (`PUT`), and tear things down
+(`DELETE`) via SigV4-signed requests in addition to read-only
+`GET`s. In practice you will usually reach for the `gco` CLI from a
+JupyterLab terminal (see section (f)) — the broader IAM surface is
+there so `boto3` / `requests_aws4auth`-style SigV4 scripting works
+the same way it does from a developer workstation.
 
 ## (k) EFS persistent-home-folder behavior
 

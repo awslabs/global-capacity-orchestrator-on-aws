@@ -483,3 +483,86 @@ EOF
     [ "$status" -eq 0 ]
     [ "$output" = "1.35" ]
 }
+
+# ── extract_direct_python_deps ──────────────────────────────────────────────
+
+@test "extract_direct_python_deps: picks up project.dependencies entries" {
+    # The real pyproject.toml pins boto3, click, requests, etc. in the
+    # top-level ``project.dependencies`` list. Those must all appear
+    # in the normalised output.
+    run extract_direct_python_deps "pyproject.toml"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ (^|$'\n')boto3($|$'\n') ]]
+    [[ "$output" =~ (^|$'\n')click($|$'\n') ]]
+    [[ "$output" =~ (^|$'\n')requests($|$'\n') ]]
+    # And at least one optional-dep group entry should show up, since
+    # the helper also reads ``[project.optional-dependencies]``.
+    [[ "$output" =~ (^|$'\n')aws-cdk-lib($|$'\n') ]]
+}
+
+@test "extract_direct_python_deps: omits pure transitive deps" {
+    # ``attrs``, ``cattrs``, ``rsa``, ``typeguard`` are in
+    # requirements-lock.txt but never listed in pyproject.toml — the
+    # filter must drop them so the dep-scan report only lists
+    # direct-dep drift.
+    run extract_direct_python_deps "pyproject.toml"
+    [ "$status" -eq 0 ]
+    ! [[ "$output" =~ (^|$'\n')attrs($|$'\n') ]]
+    ! [[ "$output" =~ (^|$'\n')cattrs($|$'\n') ]]
+    ! [[ "$output" =~ (^|$'\n')rsa($|$'\n') ]]
+    ! [[ "$output" =~ (^|$'\n')typeguard($|$'\n') ]]
+}
+
+@test "extract_direct_python_deps: strips self-reference (gco-cli[dev])" {
+    # The ``dev`` extra in pyproject.toml lists ``gco-cli[cdk,...]``.
+    # That's a meta-entry pip resolves to the current project; it
+    # must not appear as a "direct dep" name in our filter list.
+    run extract_direct_python_deps "pyproject.toml"
+    [ "$status" -eq 0 ]
+    ! [[ "$output" =~ (^|$'\n')gco-cli($|$'\n') ]]
+}
+
+@test "extract_direct_python_deps: output is lowercased + normalised" {
+    # PEP 503: lowercase and ``_`` / ``.`` → ``-``. Sanity-check by
+    # asserting every output line is already in that normal form.
+    run extract_direct_python_deps "pyproject.toml"
+    [ "$status" -eq 0 ]
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        lowered="$(echo "$line" | tr 'A-Z' 'a-z' | tr '_.' '--')"
+        [ "$line" = "$lowered" ]
+    done <<< "$output"
+}
+
+@test "extract_direct_python_deps: returns empty for missing file" {
+    run extract_direct_python_deps "/nonexistent/pyproject.toml"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "extract_direct_python_deps: fixture with only transitive-shaped names" {
+    # Fixture pyproject with two direct pins + an optional-deps group.
+    # Every transitive in requirements-lock.txt is absent from this
+    # fixture, so the filter must match exactly the two + the optional-
+    # deps entry.
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    cat > "$tmpdir/pyproject.toml" <<'EOF'
+[project]
+name = "toy"
+dependencies = [
+    "boto3==1.43.3",
+    "click==8.3.3",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.0.3"]
+EOF
+    run extract_direct_python_deps "$tmpdir/pyproject.toml"
+    [ "$status" -eq 0 ]
+    # Sort output + expected so the comparison is insertion-order agnostic.
+    expected="$(printf 'boto3\nclick\npytest\n' | sort)"
+    got="$(printf '%s\n' "$output" | sort)"
+    [ "$got" = "$expected" ]
+    rm -rf "$tmpdir"
+}

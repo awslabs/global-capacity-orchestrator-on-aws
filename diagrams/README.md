@@ -1,140 +1,66 @@
-# GCO Infrastructure Diagrams
+# Diagrams
 
-This directory contains tools and auto-generated architecture diagrams for the GCO infrastructure.
+Auto-generated diagrams for the GCO project. Split into two catalogues
+so infrastructure views and code control-flow views stay out of each
+other's way:
 
 ## Table of Contents
 
+- [Catalogues](#catalogues)
+- [Quick reference](#quick-reference)
 - [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
-- [Generated Diagrams](#generated-diagrams)
-- [Stack Overview](#stack-overview)
-- [Requirements](#requirements)
-- [Customization](#customization)
+
+## Catalogues
+
+| Catalogue | What it shows | Generator |
+|-----------|---------------|-----------|
+| [`infra_diagrams/`](infra_diagrams/README.md) | Per-stack and whole-architecture CloudFormation topologies synthesised from the CDK app (AWS PDK cdk-graph). PNG + SVG outputs for embedding in READMEs. | `python diagrams/infra_diagrams/generate.py` |
+| [`code_diagrams/`](code_diagrams/README.md) | Per-function control-flow charts for Lambda handlers, CLI entry points, and CDK stack constructors (pyflowchart + Playwright). Interactive HTML + rasterised PNG. | `python diagrams/code_diagrams/generate.py` |
+
+Both catalogues regenerate deterministically from the source tree —
+no drift possible without a code change. Output files are committed
+alongside their generators so GitHub's Markdown renderer can embed
+the PNGs inline in docs and pull requests (the interactive HTML is
+intended for local browsing since GitHub doesn't execute
+JavaScript from repo files).
+
+## Quick reference
+
+```bash
+# Refresh infrastructure architecture diagrams
+python diagrams/infra_diagrams/generate.py
+
+# Refresh code flowcharts (HTML + PNG) and the source-file markers
+# that point from each charted function to its diagram
+python diagrams/code_diagrams/generate.py
+
+# HTML-only — skip Playwright if you don't have Chromium installed
+python diagrams/code_diagrams/generate.py --skip-png
+
+# Wipe every ``# <pyflowchart-code-diagram>`` marker from the source
+# tree (useful when tearing the feature down or before a placement
+# refactor)
+python diagrams/code_diagrams/generate.py --strip-markers
+```
 
 ## Prerequisites
 
-### Graphviz Installation
+The two generators have independent dependency chains — only install
+what you need.
 
-The diagram generator requires Graphviz to be installed globally for PNG and SVG output.
-
-**macOS (Homebrew):**
-
-```bash
-brew install graphviz
-```
-
-**Ubuntu/Debian:**
+**Infrastructure diagrams** (`aws-pdk` + Graphviz):
 
 ```bash
-sudo apt-get install graphviz
+pip install -e '.[cdk]'
+brew install graphviz      # or: apt-get install graphviz
 ```
 
-**Amazon Linux / RHEL / CentOS:**
+**Code flowcharts** (`pyflowchart` + `playwright` + Chromium):
 
 ```bash
-sudo yum install graphviz
+pip install -e '.[diagrams]'
+playwright install chromium
 ```
 
-**Windows:**
-Download from <https://graphviz.org/download/> and add to PATH.
-
-Without Graphviz, only DOT format files will be generated.
-
-## Quick Start
-
-```bash
-# Generate all diagrams
-python diagrams/generate.py
-
-# Generate specific stack diagram
-python diagrams/generate.py --stack global
-python diagrams/generate.py --stack api-gateway
-python diagrams/generate.py --stack regional
-python diagrams/generate.py --stack regional-api
-python diagrams/generate.py --stack monitoring
-python diagrams/generate.py --stack analytics
-```
-
-## Generated Diagrams
-
-After running the generator, diagrams are saved to `diagrams/`:
-
-| Diagram | Description |
-|---------|-------------|
-| `global-stack.png/svg` | Global Accelerator and endpoint groups |
-| `api-gateway-stack.png/svg` | API Gateway with IAM authentication |
-| `regional-stack.png/svg` | EKS cluster, ALB, SQS, EFS, and services |
-| `regional-api-stack.png/svg` | Regional API Gateway with VPC Lambda (private access). Also shows the regional stack because the regional API gateway consumes the regional VPC construct directly, so both stacks must be synthesized together. |
-| `monitoring-stack.png/svg` | CloudWatch dashboards, alarms, and SNS. Also shows the global, API gateway, and regional stacks because the monitoring stack reads live attributes from each of them (table names, cluster IDs, Lambda names), so all four stacks must be synthesized together. |
-| `analytics-stack.png/svg` | SageMaker Studio, EMR Serverless, Cognito, and the presigned-URL Lambda |
-| `full-architecture.png/svg` | Complete infrastructure (compact view) |
-| `full-architecture-detailed.png/svg` | Complete infrastructure (detailed, dark theme) |
-
-## Stack Overview
-
-### Global Stack
-
-- AWS Global Accelerator
-- TCP Listeners (ports 80, 443)
-- Endpoint groups per region
-- SSM parameters for cross-region sharing
-
-### API Gateway Stack
-
-- REST API with IAM authentication
-- Lambda proxy function
-- Secrets Manager for API keys
-- WAF WebACL with AWS managed rules
-- CloudWatch logging
-
-### Regional Stack
-
-- EKS cluster with Auto Mode
-- Application Load Balancer
-- SQS job queue with DLQ
-- EFS for persistent storage
-- Manifest processor deployment
-- Health monitor deployment
-- KEDA for autoscaling
-- Network policies
-
-### Regional API Gateway Stack
-
-- Regional REST API with IAM authentication
-- VPC Lambda proxy function
-- Direct access to internal ALB
-- Used when public access is disabled
-
-### Monitoring Stack
-
-- CloudWatch dashboard
-- Regional alarms (CPU, memory, SQS)
-- Composite alarms
-- SNS alert topic
-- Log groups
-
-### Analytics Stack
-
-- SageMaker Studio domain (VPC-only, IAM auth)
-- EMR Serverless Spark application
-- Cognito user pool and hosted UI domain
-- Analytics KMS key
-- Private-isolated VPC with SageMaker, ECR, STS, CloudWatch Logs, and EFS endpoints
-- Studio EFS file system for per-user home folders
-- Studio-only S3 bucket plus its access-logs sidecar
-- Presigned-URL Lambda that fronts `/studio/login`
-
-## Requirements
-
-The diagram generator requires:
-
-- `aws-pdk` (included in `pyproject.toml`)
-- Graphviz (see Prerequisites above)
-
-## Customization
-
-Edit `diagrams/generate.py` to customize:
-
-- Diagram themes (`"dark"` or default light)
-- Filter presets (`FilterPreset.COMPACT` or `FilterPreset.NONE`)
-- Output formats (PNG, SVG, DOT)
+See each catalogue's own README for the full reference, including
+the list of stacks / targets each one chart.

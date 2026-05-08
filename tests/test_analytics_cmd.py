@@ -33,6 +33,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import boto3
@@ -184,6 +185,65 @@ class TestToggles:
         data = json.loads(tmp_cdk_json.read_text())
         assert data["context"]["analytics_environment"]["enabled"] is True
         assert data["context"]["analytics_environment"]["hyperpod"]["enabled"] is True
+
+    def test_enable_with_canvas_flag_sets_sub_toggle(self, tmp_cdk_json):
+        from cli.main import cli
+
+        runner = CliRunner()
+        with patch("cli.stacks._find_cdk_json", return_value=tmp_cdk_json):
+            result = runner.invoke(cli, ["analytics", "enable", "--canvas", "-y"])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(tmp_cdk_json.read_text())
+        ae = data["context"]["analytics_environment"]
+        assert ae["enabled"] is True
+        assert ae["canvas"]["enabled"] is True
+        # hyperpod must stay off when only --canvas is passed.
+        assert ae["hyperpod"]["enabled"] is False
+
+    def test_enable_with_both_sub_toggles(self, tmp_cdk_json):
+        from cli.main import cli
+
+        runner = CliRunner()
+        with patch("cli.stacks._find_cdk_json", return_value=tmp_cdk_json):
+            result = runner.invoke(
+                cli,
+                ["analytics", "enable", "--hyperpod", "--canvas", "-y"],
+            )
+
+        assert result.exit_code == 0, result.output
+        ae = json.loads(tmp_cdk_json.read_text())["context"]["analytics_environment"]
+        assert ae["enabled"] is True
+        assert ae["hyperpod"]["enabled"] is True
+        assert ae["canvas"]["enabled"] is True
+
+    def test_disable_preserves_canvas_sub_toggle(self, tmp_cdk_json):
+        from cli.main import cli
+
+        # Pre-seed with canvas=true so we can prove disable doesn't touch it.
+        tmp_cdk_json.write_text(
+            json.dumps(
+                {
+                    "context": {
+                        "analytics_environment": {
+                            "enabled": True,
+                            "hyperpod": {"enabled": False},
+                            "canvas": {"enabled": True},
+                        }
+                    }
+                }
+            )
+        )
+
+        runner = CliRunner()
+        with patch("cli.stacks._find_cdk_json", return_value=tmp_cdk_json):
+            result = runner.invoke(cli, ["analytics", "disable", "-y"])
+
+        assert result.exit_code == 0, result.output
+        ae = json.loads(tmp_cdk_json.read_text())["context"]["analytics_environment"]
+        assert ae["enabled"] is False
+        # The canvas sub-toggle survives a disable/enable round-trip.
+        assert ae["canvas"]["enabled"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +450,187 @@ class TestUsers:
                 result = runner.invoke(
                     cli,
                     ["analytics", "users", "add", "--username", "alice", "--no-email"],
+                )
+
+        assert result.exit_code == 1, result.output
+        assert "gco-analytics stack not deployed" in result.output
+
+    def test_users_set_password_with_explicit_password(self, aws_creds_env, tmp_cdk_json):
+        """``users set-password --password`` sets a permanent password."""
+        from cli.main import cli
+
+        with mock_aws():
+            cognito = boto3.client("cognito-idp", region_name="us-east-2")
+            pool = cognito.create_user_pool(PoolName="gco-studio")
+            pool_id = pool["UserPool"]["Id"]
+            cognito.admin_create_user(
+                UserPoolId=pool_id, Username="alice", MessageAction="SUPPRESS"
+            )
+            _seed_gco_analytics_stack("us-east-2", pool_id, "client-abc")
+
+            captured: dict[str, Any] = {}
+
+            def _spy(*, pool_id, region, username, password, permanent):
+                captured["password"] = password
+                captured["permanent"] = permanent
+                captured["username"] = username
+
+            runner = CliRunner()
+            with (
+                patch("cli.stacks._find_cdk_json", return_value=tmp_cdk_json),
+                patch(
+                    "cli.analytics_user_mgmt.admin_set_user_password",
+                    side_effect=_spy,
+                ),
+            ):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "analytics",
+                        "users",
+                        "set-password",
+                        "--username",
+                        "alice",
+                        "--password",
+                        "Strong!Pass123$",
+                        "--yes",
+                    ],
+                )
+
+            assert result.exit_code == 0, result.output
+            assert "Password set (permanent) for alice" in result.output
+            assert captured == {
+                "password": "Strong!Pass123$",
+                "permanent": True,
+                "username": "alice",
+            }
+
+    def test_users_set_password_generate_flag(self, aws_creds_env, tmp_cdk_json):
+        """``users set-password --generate-password`` emits the new password once."""
+        from cli.main import cli
+
+        with mock_aws():
+            cognito = boto3.client("cognito-idp", region_name="us-east-2")
+            pool = cognito.create_user_pool(PoolName="gco-studio")
+            pool_id = pool["UserPool"]["Id"]
+            cognito.admin_create_user(
+                UserPoolId=pool_id, Username="alice", MessageAction="SUPPRESS"
+            )
+            _seed_gco_analytics_stack("us-east-2", pool_id, "client-abc")
+
+            runner = CliRunner()
+            with patch("cli.stacks._find_cdk_json", return_value=tmp_cdk_json):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "analytics",
+                        "users",
+                        "set-password",
+                        "--username",
+                        "alice",
+                        "--generate-password",
+                        "--yes",
+                    ],
+                )
+
+            assert result.exit_code == 0, result.output
+            assert "Generated password (printed exactly once):" in result.output
+
+    def test_users_set_password_mutually_exclusive_flags(self, aws_creds_env, tmp_cdk_json):
+        """Passing both --password and --generate-password fails fast."""
+        from cli.main import cli
+
+        with mock_aws():
+            cognito = boto3.client("cognito-idp", region_name="us-east-2")
+            pool = cognito.create_user_pool(PoolName="gco-studio")
+            pool_id = pool["UserPool"]["Id"]
+            _seed_gco_analytics_stack("us-east-2", pool_id, "client-abc")
+
+            runner = CliRunner()
+            with patch("cli.stacks._find_cdk_json", return_value=tmp_cdk_json):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "analytics",
+                        "users",
+                        "set-password",
+                        "--username",
+                        "alice",
+                        "--password",
+                        "Strong!Pass123$",
+                        "--generate-password",
+                        "--yes",
+                    ],
+                )
+
+            assert result.exit_code == 1, result.output
+            assert "mutually exclusive" in result.output
+
+    def test_users_set_password_temporary_flag(self, aws_creds_env, tmp_cdk_json):
+        """``--temporary`` sets Permanent=false and emits the expected message."""
+        from cli.main import cli
+
+        with mock_aws():
+            cognito = boto3.client("cognito-idp", region_name="us-east-2")
+            pool = cognito.create_user_pool(PoolName="gco-studio")
+            pool_id = pool["UserPool"]["Id"]
+            cognito.admin_create_user(
+                UserPoolId=pool_id, Username="alice", MessageAction="SUPPRESS"
+            )
+            _seed_gco_analytics_stack("us-east-2", pool_id, "client-abc")
+
+            captured: dict[str, Any] = {}
+
+            def _spy(*, pool_id, region, username, password, permanent):
+                captured["permanent"] = permanent
+                captured["username"] = username
+
+            runner = CliRunner()
+            with (
+                patch("cli.stacks._find_cdk_json", return_value=tmp_cdk_json),
+                patch(
+                    "cli.analytics_user_mgmt.admin_set_user_password",
+                    side_effect=_spy,
+                ),
+            ):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "analytics",
+                        "users",
+                        "set-password",
+                        "--username",
+                        "alice",
+                        "--password",
+                        "Strong!Pass123$",
+                        "--temporary",
+                        "--yes",
+                    ],
+                )
+
+            assert result.exit_code == 0, result.output
+            assert "Password set (temporary) for alice" in result.output
+            assert captured == {"permanent": False, "username": "alice"}
+
+    def test_users_set_password_fails_when_stack_not_deployed(self, aws_creds_env, tmp_cdk_json):
+        """Emits the documented error when gco-analytics is absent."""
+        from cli.main import cli
+
+        with mock_aws():
+            runner = CliRunner()
+            with patch("cli.stacks._find_cdk_json", return_value=tmp_cdk_json):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "analytics",
+                        "users",
+                        "set-password",
+                        "--username",
+                        "alice",
+                        "--password",
+                        "Strong!Pass123$",
+                        "--yes",
+                    ],
                 )
 
         assert result.exit_code == 1, result.output

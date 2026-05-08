@@ -117,6 +117,9 @@
       "hyperpod": {
         "enabled": false
       },
+      "canvas": {
+        "enabled": false
+      },
       "cognito": {
         "domain_prefix": null,
         "removal_policy": "destroy"

@@ -19,6 +19,62 @@ Suppression Categories:
 
 from aws_cdk import Stack
 from cdk_nag import NagPackSuppression, NagSuppressions
+from constructs import IConstruct
+
+
+def suppress_managed_policy_opt_in(
+    resource: IConstruct,
+    *,
+    managed_policy_name: str,
+    reason: str,
+    apply_to_children: bool = False,
+) -> None:
+    """Scoped ``AwsSolutions-IAM4`` suppression for an intentional managed-policy attach.
+
+    The house pattern for GCO is to enumerate least-privilege
+    statements rather than attach AWS-managed policies, but a handful
+    of opt-in sub-features (e.g. SageMaker Canvas) *must* track a
+    managed policy because the underlying service's per-feature
+    permission surface evolves faster than we can keep up with. For
+    those cases we accept the ``AwsSolutions-IAM4`` finding with a
+    scoped suppression rather than a broad one.
+
+    This helper is the single call-site format for that pattern: pass
+    the resource, the managed-policy name, and a one-line reason
+    describing why the policy is appropriate for your feature. The
+    helper expands the standard ``Policy::arn:<AWS::Partition>:iam::
+    aws:policy/<name>`` applies-to ARN so every managed-policy opt-in
+    in the codebase uses the same suppression shape — reviewers can
+    grep for ``suppress_managed_policy_opt_in(`` to find every one.
+
+    Args:
+        resource: The IAM role (or other CDK construct) receiving the
+            managed-policy attachment.
+        managed_policy_name: The bare managed-policy name (e.g.
+            ``"AmazonSageMakerCanvasFullAccess"``). Must NOT include
+            the ``arn:<partition>:iam::aws:policy/`` prefix — the
+            helper adds that.
+        reason: Human-readable justification. Must explain (a) why
+            the managed policy is preferred over an enumerated
+            least-privilege policy, and (b) what the toggle or
+            conditional is that gates the attachment (so reviewers
+            can confirm the wider permission surface is opt-in).
+        apply_to_children: Forward to
+            ``NagSuppressions.add_resource_suppressions``.
+    """
+    NagSuppressions.add_resource_suppressions(
+        resource,
+        [
+            NagPackSuppression(
+                id="AwsSolutions-IAM4",
+                reason=reason,
+                applies_to=[
+                    f"Policy::arn:<AWS::Partition>:iam::aws:policy/{managed_policy_name}",
+                ],
+            ),
+        ],
+        apply_to_children=apply_to_children,
+    )
 
 
 def add_eks_suppressions(stack: Stack) -> None:
@@ -805,11 +861,16 @@ def add_sagemaker_suppressions(
         # (name / arn / region) defined by ``GCOGlobalStack``; the rest of
         # the ARN is fully scoped (global region + account).
         f"Resource::arn:aws:ssm:{gbl_region}:<AWS::AccountId>:parameter/gco/cluster-shared-bucket/*",
-        # SageMaker execution role — execute-api on any REST API id under
-        # /prod/GET/api/v1/* in the api-gateway region. The concrete
-        # region value is templated in so the nag match works regardless
-        # of which region the user deploys to.
-        f"Resource::arn:aws:execute-api:{api_region}:<AWS::AccountId>:*/prod/GET/api/v1/*",
+        # SageMaker execution role — execute-api on any REST API id
+        # under ``/prod/*/api/v1/*`` and ``/prod/*/inference/*`` in the
+        # api-gateway region. The concrete region value is templated in
+        # so the nag match works regardless of which region the user
+        # deploys to. The HTTP-method segment is ``*`` (instead of
+        # pinning ``GET``) so notebooks can submit jobs, update
+        # templates, and manage inference endpoints in addition to
+        # read-only GETs.
+        f"Resource::arn:aws:execute-api:{api_region}:<AWS::AccountId>:*/prod/*/api/v1/*",
+        f"Resource::arn:aws:execute-api:{api_region}:<AWS::AccountId>:*/prod/*/inference/*",
         # KMS decrypt scoped by ``kms:ViaService=s3.<global-region>.amazonaws.com``
         # condition — the resource ARN is unknown to this stack (cluster-
         # shared KMS key lives in the global region) so Resource::* is the
@@ -846,6 +907,21 @@ def add_sagemaker_suppressions(
         # actions. Resource::* is required because EMR Serverless does not
         # support resource-level scoping on most actions.
         "Action::emr-serverless:*",
+        # SageMaker MLflow tracking servers + MLflow Apps. The
+        # ``sagemaker-mlflow:*`` data-plane namespace is the one the
+        # MLflow SDK talks to via SigV4 (``log_metric``,
+        # ``log_artifact``, ``register_model``, etc.); the managed
+        # ``AmazonSageMakerFullAccess`` policy covers the
+        # ``sagemaker:*`` control-plane namespace (MLflow Apps,
+        # Tracking Servers, Model Registry) but NOT the
+        # ``sagemaker-mlflow`` service prefix, so this statement stays
+        # inline and scoped to the api-gateway region + account.
+        "Action::sagemaker-mlflow:*",
+        f"Resource::arn:aws:sagemaker:{api_region}:<AWS::AccountId>:mlflow-tracking-server/*",
+        f"Resource::arn:aws:sagemaker:{api_region}:<AWS::AccountId>:mlflow-app/*",
+        # ``sts:GetCallerIdentity`` does not support resource-level
+        # scoping; the MLflow SigV4 plug-in calls it on every request.
+        "Action::sts:GetCallerIdentity",
     ]
 
     NagSuppressions.add_stack_suppressions(
@@ -857,8 +933,11 @@ def add_sagemaker_suppressions(
                     "SageMaker_Execution_Role uses wildcard ARNs and actions for: "
                     "(1) SQS SendMessage on any regional job queue matching "
                     "``<project>-jobs-<region>``, (2) execute-api:Invoke on "
-                    "any REST API id under /prod/GET/api/v1/* in the "
-                    "api-gateway region, (3) KMS Decrypt/GenerateDataKey "
+                    "any REST API id under /prod/*/api/v1/* and "
+                    "/prod/*/inference/* in the api-gateway region (all "
+                    "HTTP methods, so notebooks can submit jobs and "
+                    "manage inference endpoints in addition to read-only "
+                    "GETs), (3) KMS Decrypt/GenerateDataKey "
                     "scoped by kms:ViaService=s3.<global-region>.amazonaws.com "
                     "condition (the cluster-shared KMS key ARN is not known "
                     "to the analytics stack — it lives in the global region), "
@@ -875,8 +954,20 @@ def add_sagemaker_suppressions(
                     "(covers exactly three literal parameter names — "
                     "name/arn/region — defined by ``GCOGlobalStack``; lets "
                     "Studio notebooks resolve the shared-bucket metadata at "
-                    "runtime without a per-user export step). Each "
-                    "wildcard is scoped on a narrow literal pattern."
+                    "runtime without a per-user export step), (8) "
+                    "``sagemaker-mlflow:*`` on MLflow tracking server and "
+                    "MLflow App ARN wildcards in the api-gateway region + "
+                    "account so notebooks can log experiments, runs, "
+                    "metrics, artifacts, and registered-model versions "
+                    "via the MLflow SDK's SigV4 plug-in (the companion "
+                    "``sagemaker:*Mlflow*`` / ``sagemaker:*ModelPackage*`` "
+                    "control-plane actions are now attached via the "
+                    "``AmazonSageMakerFullAccess`` managed policy instead "
+                    "of enumerated inline), and (9) "
+                    "``sts:GetCallerIdentity`` on ``*`` which is required "
+                    "by MLflow's SigV4 plug-in and does not support "
+                    "resource-level scoping. Each wildcard is scoped on a "
+                    "narrow literal pattern."
                 ),
                 applies_to=applies_to,
             ),

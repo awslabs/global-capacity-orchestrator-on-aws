@@ -156,11 +156,11 @@ See the [Quick Start Guide](QUICKSTART.md) for the full step-by-step walkthrough
 <details>
 <summary>📊 Full Architecture Diagram (click to expand)</summary>
 
-![Full Architecture](diagrams/diagram.full-architecture.png)
+![Full Architecture](diagrams/infra_diagrams/diagram.full-architecture.png)
 
 </details>
 
-Regenerate this diagram and every per-stack view on demand with `python diagrams/generate.py` — it synthesises the current CDK app through AWS PDK cdk-graph so the diagrams never drift from the source. See [`diagrams/README.md`](diagrams/README.md) for per-stack flags (`--stack global|api-gateway|regional|regional-api|monitoring|all`).
+Regenerate this diagram and every per-stack view on demand with `python diagrams/infra_diagrams/generate.py` — it synthesises the current CDK app through AWS PDK cdk-graph so the diagrams never drift from the source. See [`diagrams/infra_diagrams/README.md`](diagrams/infra_diagrams/README.md) for per-stack flags (`--stack global|api-gateway|regional|regional-api|monitoring|analytics|all`). Flowcharts of the code itself (Lambda handlers, CLI commands) live alongside them under [`diagrams/code_diagrams/`](diagrams/code_diagrams/README.md).
 
 > The regional stack can be deployed to any AWS region. Add or remove regions by editing the `deployment_regions.regional` array in `cdk.json`.
 
@@ -337,7 +337,7 @@ This is host-socket pass-through, not true Docker-in-Docker. Anyone with access 
 ├── pyproject.toml                       # Project metadata, dependencies, and CLI installation
 │
 ├── cli/                                 # GCO CLI (jobs, stacks, capacity, inference, costs, DAGs)
-├── diagrams/                            # Auto-generated architecture diagrams
+├── diagrams/                            # Auto-generated architecture diagrams (infra_diagrams/) and code flowcharts (code_diagrams/)
 ├── docs/                                # Documentation (architecture, CLI, API, inference, customization, analytics)
 ├── examples/                            # Example manifests (jobs, inference, Ray, Volcano, Kueue, Slurm, YuniKorn)
 ├── gco/

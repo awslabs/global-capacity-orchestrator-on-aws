@@ -31,7 +31,13 @@ import aws_cdk as cdk
 # ---------------------------------------------------------------------------
 
 
-def build_overlay(enabled: bool, hyperpod_enabled: bool, regions: list[str]) -> dict[str, Any]:
+def build_overlay(
+    enabled: bool,
+    hyperpod_enabled: bool,
+    regions: list[str],
+    *,
+    canvas_enabled: bool = False,
+) -> dict[str, Any]:
     """Return a cdk.json context overlay dict for the given toggle state.
 
     The returned dict is suitable for passing as ``context_overrides`` to
@@ -46,6 +52,9 @@ def build_overlay(enabled: bool, hyperpod_enabled: bool, regions: list[str]) -> 
             ``us-east-2`` to match the baseline cdk.json. If the caller
             needs different non-regional regions they can layer another
             overlay on top of the returned dict.
+        canvas_enabled: Value for ``analytics_environment.canvas.enabled``.
+            Defaults to ``False`` because most existing callers only
+            care about the ``enabled`` × ``hyperpod_enabled`` matrix.
 
     Returns:
         A shallow-merge-compatible dict shaped like the relevant slice of
@@ -55,6 +64,7 @@ def build_overlay(enabled: bool, hyperpod_enabled: bool, regions: list[str]) -> 
         "analytics_environment": {
             "enabled": enabled,
             "hyperpod": {"enabled": hyperpod_enabled},
+            "canvas": {"enabled": canvas_enabled},
             "cognito": {"domain_prefix": None, "removal_policy": "destroy"},
             "efs": {"removal_policy": "destroy"},
             "studio": {"user_profile_name_prefix": None},

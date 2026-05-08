@@ -1,0 +1,210 @@
+"""Targets for :mod:`diagrams.code_diagrams.generate`.
+
+Each :class:`Target` names a source file and a top-level
+function/method to flowchart. Add new entries here to extend the
+catalogue — the generator and README pick them up automatically.
+
+Path conventions:
+
+* ``source`` is relative to the project root (the directory that owns
+  ``cdk.json``).
+* ``function`` is the name as ``pyflowchart`` would resolve it via
+  ``--field``. Use dotted form (``Class.method``) for methods.
+* ``inner`` controls whether to parse the *body* of the function
+  (``True``) or the function definition itself (``False``). Body-level
+  charts read far better for control-flow-heavy functions.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Target:
+    """A single function or method to flowchart."""
+
+    source: str
+    """Path to the source file, relative to project root."""
+
+    function: str
+    """Name of the function (or ``Class.method``) inside ``source``."""
+
+    inner: bool = True
+    """If ``True``, chart the body of the function (preferred)."""
+
+    title: str | None = None
+    """Optional human-readable title for the HTML page and README."""
+
+    def slug(self) -> str:
+        """File-safe slug for the function component of output names."""
+        return self.function.replace(".", "_")
+
+
+# Order matters only for the progress output; README groups by source
+# directory regardless. New targets go at the end of the appropriate
+# section so review diffs stay local.
+TARGETS: list[Target] = [
+    # --- Top-level CDK app entry point -----------------------------------
+    # ``app.py::main`` has real control flow (per-region loop, analytics
+    # sub-toggle gating) so its flowchart is informative. CDK Stack
+    # ``__init__`` methods are mostly linear wiring sequences and we
+    # chart only the ones that carry real branches (e.g. the
+    # ``_create_execution_role_and_grants`` helper on the analytics
+    # stack, which has hyperpod/canvas branches).
+    Target(
+        source="app.py",
+        function="main",
+        title="CDK app entry point (app.py::main)",
+    ),
+    # --- Lambda handlers -------------------------------------------------
+    Target(
+        source="lambda/analytics-presigned-url/handler.py",
+        function="lambda_handler",
+        title="Analytics Presigned-URL Lambda (SageMaker Studio login)",
+    ),
+    Target(
+        source="lambda/analytics-cleanup/handler.py",
+        function="handler",
+        title="Analytics Cleanup Lambda (stack-delete drain)",
+    ),
+    Target(
+        source="lambda/api-gateway-proxy/handler.py",
+        function="lambda_handler",
+        title="API Gateway Proxy Lambda",
+    ),
+    Target(
+        source="lambda/regional-api-proxy/handler.py",
+        function="lambda_handler",
+        title="Regional API Gateway Proxy Lambda",
+    ),
+    Target(
+        source="lambda/alb-header-validator/handler.py",
+        function="lambda_handler",
+        title="ALB Header Validator Lambda",
+    ),
+    Target(
+        source="lambda/cross-region-aggregator/handler.py",
+        function="lambda_handler",
+        title="Cross-Region Aggregator Lambda",
+    ),
+    Target(
+        source="lambda/drift-detection/handler.py",
+        function="lambda_handler",
+        title="CloudFormation Drift Detection Lambda",
+    ),
+    Target(
+        source="lambda/ga-registration/handler.py",
+        function="lambda_handler",
+        title="Global Accelerator Endpoint Registration Lambda",
+    ),
+    Target(
+        source="lambda/helm-installer/handler.py",
+        function="lambda_handler",
+        title="Helm Installer Lambda (CFN custom resource)",
+    ),
+    Target(
+        source="lambda/kubectl-applier-simple/handler.py",
+        function="lambda_handler",
+        title="Kubectl Applier Lambda (CFN custom resource)",
+    ),
+    Target(
+        source="lambda/secret-rotation/handler.py",
+        function="lambda_handler",
+        title="Secrets Manager Rotation Lambda",
+    ),
+    # --- CLI entry points ------------------------------------------------
+    Target(
+        source="cli/jobs.py",
+        function="JobManager.submit_job",
+        title="gco jobs submit — direct kubectl apply path",
+    ),
+    Target(
+        source="cli/jobs.py",
+        function="JobManager.submit_job_sqs",
+        title="gco jobs submit-sqs — SQS-backed submission path",
+    ),
+    Target(
+        source="cli/analytics_user_mgmt.py",
+        function="srp_authenticate",
+        title="Cognito SRP authentication (gco analytics studio login)",
+    ),
+    Target(
+        source="cli/analytics_user_mgmt.py",
+        function="fetch_studio_url",
+        title="Studio presigned-URL fetch (gco analytics studio login)",
+    ),
+    # --- Additional CLI branchy paths ------------------------------------
+    Target(
+        source="cli/stacks.py",
+        function="StackManager.deploy_orchestrated",
+        title="gco stacks deploy-all — orchestrated multi-stack deploy",
+    ),
+    Target(
+        source="cli/stacks.py",
+        function="StackManager.destroy_orchestrated",
+        title="gco stacks destroy-all — orchestrated multi-stack destroy",
+    ),
+    Target(
+        source="cli/inference.py",
+        function="InferenceManager.deploy",
+        title="gco inference deploy — multi-region endpoint deploy",
+    ),
+    Target(
+        source="cli/inference.py",
+        function="InferenceManager.canary_deploy",
+        title="gco inference canary — weighted canary rollout",
+    ),
+    # --- CDK stack constructors ------------------------------------------
+    # Each ``__init__`` is a mostly-linear wiring sequence (create KMS
+    # key → create VPC → create role → …). We chart them anyway because
+    # they're the single most useful map for readers learning the code:
+    # "given this stack, which helpers run in what order, and what
+    # objects do they produce?".
+    Target(
+        source="gco/stacks/global_stack.py",
+        function="GCOGlobalStack.__init__",
+        title="Global stack constructor (Global Accelerator, SSM, DynamoDB)",
+    ),
+    Target(
+        source="gco/stacks/api_gateway_global_stack.py",
+        function="GCOApiGatewayGlobalStack.__init__",
+        title="API Gateway stack constructor (REST API + IAM + WAF)",
+    ),
+    Target(
+        source="gco/stacks/regional_stack.py",
+        function="GCORegionalStack.__init__",
+        title="Regional stack constructor (VPC, EKS, ALB, SQS, EFS)",
+    ),
+    Target(
+        source="gco/stacks/regional_api_gateway_stack.py",
+        function="GCORegionalApiGatewayStack.__init__",
+        title="Regional API Gateway stack constructor (private access)",
+    ),
+    Target(
+        source="gco/stacks/monitoring_stack.py",
+        function="GCOMonitoringStack.__init__",
+        title="Monitoring stack constructor (CloudWatch + alarms + SNS)",
+    ),
+    Target(
+        source="gco/stacks/analytics_stack.py",
+        function="GCOAnalyticsStack.__init__",
+        title="Analytics stack constructor (KMS, VPC, EFS, Studio, EMR, Cognito)",
+    ),
+    # --- CDK stack helpers with real branches ----------------------------
+    # Most CDK ``__init__`` methods are linear wiring sequences (create
+    # KMS key, create VPC, create role, ...). These helpers are the
+    # exception — they carry real conditional branches tied to
+    # sub-toggles (hyperpod, canvas, fsx, valkey, aurora) and feature
+    # flags, so a flowchart of them is genuinely informative.
+    Target(
+        source="gco/stacks/analytics_stack.py",
+        function="GCOAnalyticsStack._create_execution_role_and_grants",
+        title="Analytics stack SageMaker execution role (hyperpod/canvas branches)",
+    ),
+    Target(
+        source="gco/stacks/analytics_stack.py",
+        function="GCOAnalyticsStack._create_studio_domain",
+        title="Analytics stack Studio domain (Canvas override branch)",
+    ),
+]

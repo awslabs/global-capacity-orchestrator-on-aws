@@ -48,17 +48,54 @@ source "${SCAN_SCRIPT_DIR}/lib_dependency_scan.sh"
 
 # ---------------------------------------------------------------------------
 # Python packages
+#
+# We run ``pip list --outdated`` on the installed interpreter, but
+# filter the JSON result down to packages we pin *directly* in
+# ``pyproject.toml::[project.dependencies]`` or the
+# ``[project.optional-dependencies]`` groups. Every other outdated
+# entry is a transitive dependency — its version is controlled by
+# something we pin (``jsii``, ``aws-cdk-lib``, ``fastmcp``,
+# ``botocore``, …) and bumping it ourselves either does nothing or
+# breaks the resolver. Leaving those entries in the monthly scan
+# report was creating noise: the operator had no action to take on
+# them beyond "wait for upstream". Filter them out so the report
+# only lists packages we can act on.
 # ---------------------------------------------------------------------------
 echo "=== Checking for outdated Python dependencies ==="
 
 pip install -e . --quiet --root-user-action=ignore
-OUTDATED="$(pip list --outdated --format=json)"
+OUTDATED_RAW="$(pip list --outdated --format=json)"
+
+# Build a newline-separated list of PEP-503-normalised direct-dep names.
+# An empty list disables the filter so we never silently hide drift when
+# the TOML parse breaks. In practice the file always parses — we just
+# can't risk a dropped report section.
+DIRECT_DEPS="$(extract_direct_python_deps pyproject.toml)"
+
+OUTDATED="$(printf '%s' "$OUTDATED_RAW" | python3 -c "
+import json, re, sys
+raw = sys.stdin.read()
+direct = set(
+    line.strip() for line in '''$DIRECT_DEPS'''.splitlines() if line.strip()
+)
+try:
+    data = json.loads(raw) if raw else []
+except json.JSONDecodeError:
+    data = []
+if direct:
+    data = [
+        e for e in data
+        if re.sub(r'[-_.]+', '-', e.get('name', '')).lower() in direct
+    ]
+print(json.dumps(data))
+")"
+
 PYTHON_COUNT="$(echo "$OUTDATED" | jq 'length')"
 if [ "$PYTHON_COUNT" -eq 0 ]; then
   echo "All Python dependencies are up to date."
   PYTHON_OUTDATED=""
 else
-  echo "Found $PYTHON_COUNT outdated Python package(s)"
+  echo "Found $PYTHON_COUNT outdated Python package(s) (direct dependencies only — transitive bumps are upstream's job)"
   echo "$OUTDATED" | jq -r '.[] | "  - \(.name): \(.version) -> \(.latest_version)"'
   PYTHON_OUTDATED="$OUTDATED"
 fi
@@ -634,6 +671,11 @@ fi
 
   if [ "$PYTHON_COUNT" -gt 0 ]; then
     echo "## Python Packages"
+    echo ""
+    echo "Direct dependencies pinned in \`pyproject.toml\`"
+    echo "(transitive-only drift is excluded because those versions are"
+    echo "controlled by upstream pins and bumping them ourselves either"
+    echo "no-ops or breaks the resolver)."
     echo ""
     echo "| Package | Current | Latest |"
     echo "|---------|---------|--------|"

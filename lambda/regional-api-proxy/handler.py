@@ -26,6 +26,13 @@ from typing import Any
 
 from proxy_utils import build_target_url, forward_request, get_secret_token
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``lambda_handler`` -> ``diagrams/code_diagrams/lambda/regional-api-proxy/handler.lambda_handler.html``
+#     (PNG: ``diagrams/code_diagrams/lambda/regional-api-proxy/handler.lambda_handler.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """

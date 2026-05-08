@@ -56,6 +56,17 @@ from gco.stacks.constants import (
 )
 from gco.stacks.nag_suppressions import apply_all_suppressions
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``GCOAnalyticsStack.__init__`` -> ``diagrams/code_diagrams/gco/stacks/analytics_stack.GCOAnalyticsStack___init__.html``
+#     (PNG: ``diagrams/code_diagrams/gco/stacks/analytics_stack.GCOAnalyticsStack___init__.png``)
+#   * ``GCOAnalyticsStack._create_execution_role_and_grants`` -> ``diagrams/code_diagrams/gco/stacks/analytics_stack.GCOAnalyticsStack__create_execution_role_and_grants.html``
+#     (PNG: ``diagrams/code_diagrams/gco/stacks/analytics_stack.GCOAnalyticsStack__create_execution_role_and_grants.png``)
+#   * ``GCOAnalyticsStack._create_studio_domain`` -> ``diagrams/code_diagrams/gco/stacks/analytics_stack.GCOAnalyticsStack__create_studio_domain.html``
+#     (PNG: ``diagrams/code_diagrams/gco/stacks/analytics_stack.GCOAnalyticsStack__create_studio_domain.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
 
 def _parse_removal(value: str) -> RemovalPolicy:
     """Map a cdk.json removal-policy string to ``aws_cdk.RemovalPolicy``.
@@ -101,6 +112,7 @@ class GCOAnalyticsStack(Stack):
 
         cfg = config.get_analytics_config()
         self.hyperpod_enabled: bool = bool(cfg["hyperpod"]["enabled"])
+        self.canvas_enabled: bool = bool(cfg["canvas"]["enabled"])
         self.efs_removal: RemovalPolicy = _parse_removal(cfg["efs"]["removal_policy"])
         self.cognito_removal: RemovalPolicy = _parse_removal(cfg["cognito"]["removal_policy"])
         self._cognito_domain_prefix_override: str | None = cfg["cognito"].get("domain_prefix")
@@ -360,6 +372,22 @@ class GCOAnalyticsStack(Stack):
           the presigned-URL Lambda at runtime; the role-level grant here is
           scoped to the EFS ARN)
         * HyperPod training-job actions when ``hyperpod.enabled=true``
+        * AWS-managed ``AmazonSageMakerCanvasFullAccess`` when
+          ``canvas.enabled=true`` (opt-in no-code ML app)
+        * AWS-managed ``AmazonSageMakerFullAccess`` — always attached
+          whenever analytics is enabled. Covers the full SageMaker
+          control-plane surface including MLflow Apps
+          (``CreateMlflowApp``/``ListMlflowApps``/``DescribeMlflowApp``),
+          MLflow Tracking Servers, Model Registry, Studio space/app
+          lifecycle, and adjacent services (S3, ECR, CloudWatch Logs,
+          etc.) that SageMaker needs to launch training jobs, create
+          apps, and render the Studio IDE. We pair the managed policy
+          with an inline ``sagemaker-mlflow:*`` statement (next block)
+          because the managed policy does not cover the
+          ``sagemaker-mlflow`` data-plane namespace the MLflow SDK
+          talks to. MLflow does not have its own sub-toggle — the
+          managed policy replaces our previous enumerated
+          ``sagemaker:*MlflowTrackingServer*`` inline grant.
 
         The ``Cluster_Shared_Bucket`` grant lives in its own helper
         (:meth:`_grant_sagemaker_role_on_cluster_shared_bucket`) because the
@@ -395,19 +423,35 @@ class GCOAnalyticsStack(Stack):
             "kms:DescribeKey",
         )
 
-        # Read-only GCO API scope: every GET route under /api/v1/*. The
-        # exact API id is not known here (it lives in the api-gateway stack
-        # and is discovered through SSM or CfnOutput at synth time — see
-        # the api_gateway_global_stack wiring). Scope to the api-gateway
-        # region with any REST API id for now; tighter scope is applied
-        # once ``AnalyticsApiConfig`` is wired in.
+        # GCO API scope — notebooks need both read-only GET operations
+        # (list jobs, describe endpoints, fetch health) and job/inference
+        # submission actions (POST manifests, PUT template updates, DELETE
+        # jobs). Grant the full ``/api/v1/*`` method surface instead of
+        # GET-only so users can submit new jobs, manage templates, and
+        # tear things down from inside a notebook without bouncing
+        # through a service account.
+        #
+        # The exact API id is not known here (it lives in the api-gateway
+        # stack and is discovered through SSM or CfnOutput at synth time
+        # — see the api_gateway_global_stack wiring). Scope to the
+        # api-gateway region with any REST API id for now; tighter scope
+        # is applied once ``AnalyticsApiConfig`` is wired in.
         api_gw_region = self.config.get_api_gateway_region()
         self.sagemaker_execution_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
                 actions=["execute-api:Invoke"],
                 resources=[
-                    f"arn:aws:execute-api:{api_gw_region}:{self.account}:*/prod/GET/api/v1/*",
+                    # ``*/prod/*/api/v1/*`` — any API id, any HTTP method
+                    # (GET/POST/PUT/DELETE/PATCH), any path below
+                    # /api/v1/.  /studio/* is explicitly excluded; Canvas
+                    # users go through their own Cognito-authorized
+                    # ``/studio/login`` route.
+                    f"arn:aws:execute-api:{api_gw_region}:{self.account}:*/prod/*/api/v1/*",
+                    # ``/inference/*`` proxies through to regional ALBs
+                    # for in-cluster model endpoints — notebooks need
+                    # the full method surface here too.
+                    f"arn:aws:execute-api:{api_gw_region}:{self.account}:*/prod/*/inference/*",
                 ],
             )
         )
@@ -527,6 +571,88 @@ class GCOAnalyticsStack(Stack):
             )
         )
 
+        # SageMaker-managed MLflow + Model Registry + MLflow Apps.
+        #
+        # We attach the AWS-managed ``AmazonSageMakerFullAccess`` policy
+        # for two reasons:
+        #
+        # 1. MLflow Apps (the newer Studio panel, separate from MLflow
+        #    Tracking Servers) requires ``sagemaker:CreateMlflowApp``/
+        #    ``ListMlflowApps``/``DescribeMlflowApp`` etc. The action
+        #    surface is evolving quickly and the managed policy tracks
+        #    it. Enumerating it inline would drift.
+        # 2. SageMaker Model Registry (``sagemaker:*ModelPackage*``),
+        #    Studio space/app lifecycle, training-job submission, and
+        #    the "related-services" helpers (S3, ECR, CloudWatch Logs)
+        #    are already covered by the managed policy — keeping them
+        #    inline duplicated the managed policy and kept us in a
+        #    catch-up loop whenever SageMaker shipped a new feature.
+        #
+        # The managed policy is ``Resource: *`` by design; the trade-off
+        # (broader-than-least-privilege inside the role) is
+        # acknowledged with a nag suppression below.  The inline
+        # ``sagemaker-mlflow:*`` statement that follows is still
+        # required because the managed policy does NOT cover the
+        # ``sagemaker-mlflow`` data-plane namespace — that's what the
+        # MLflow SDK talks to over SigV4 for ``log_metric``,
+        # ``log_artifact``, ``register_model``, etc.
+        from gco.stacks.nag_suppressions import suppress_managed_policy_opt_in
+
+        self.sagemaker_execution_role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSageMakerFullAccess")
+        )
+        suppress_managed_policy_opt_in(
+            self.sagemaker_execution_role,
+            managed_policy_name="AmazonSageMakerFullAccess",
+            reason=(
+                "AmazonSageMakerFullAccess is attached to "
+                "SageMaker_Execution_Role when analytics_environment.enabled=true. "
+                "The managed policy covers MLflow Apps, MLflow Tracking "
+                "Servers, SageMaker Model Registry, Studio space/app "
+                "lifecycle, training-job submission, and the cross-service "
+                "helpers (S3, ECR, CloudWatch Logs) SageMaker needs to "
+                "render the IDE and run jobs. Enumerating this surface "
+                "inline drifts out of date within weeks — tracking the "
+                "AWS-managed policy is the supported path. The inline "
+                "``sagemaker-mlflow:*`` statement that follows covers "
+                "the data-plane namespace the managed policy does not "
+                "include. Users who want a locked-down alternative can "
+                "disable the analytics environment."
+            ),
+        )
+
+        # MLflow SDK data-plane (``sagemaker-mlflow:*``) — required for
+        # ``mlflow.log_metric``, ``mlflow.log_artifact``,
+        # ``mlflow.register_model``, etc. to round-trip through the
+        # SageMaker-managed tracking server over SigV4. The managed
+        # policy above covers the ``sagemaker:*`` control-plane
+        # namespace but not ``sagemaker-mlflow:*`` (a separate service
+        # prefix), so we keep this inline and scope it to the
+        # api-gateway region where the tracking server and MLflow apps
+        # live.
+        self.sagemaker_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["sagemaker-mlflow:*"],
+                resources=[
+                    f"arn:aws:sagemaker:{api_gw_region}:{self.account}:mlflow-tracking-server/*",
+                    f"arn:aws:sagemaker:{api_gw_region}:{self.account}:mlflow-app/*",
+                ],
+            )
+        )
+
+        # MLflow's SigV4 plug-in exchanges STS ``GetCallerIdentity`` on
+        # every request — the execution role needs that on ``*``.
+        # ``sts:GetCallerIdentity`` does not support resource-level
+        # scoping, so Resource: * is the only valid value.
+        self.sagemaker_execution_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["sts:GetCallerIdentity"],
+                resources=["*"],
+            )
+        )
+
         # HyperPod sub-toggle — additional SageMaker actions for training-job
         # submission and cluster-instance lifecycle management.
         # ``resources=["*"]`` is the documented scope; the HyperPod actions
@@ -546,6 +672,42 @@ class GCOAnalyticsStack(Stack):
                     ],
                     resources=["*"],
                 )
+            )
+
+        # Canvas sub-toggle — attach AWS-managed ``AmazonSageMakerCanvasFullAccess``
+        # to the execution role so users can launch the Canvas no-code ML
+        # app from inside Studio. The managed policy is used deliberately
+        # (rather than enumerating each action) because Canvas's per-feature
+        # permission surface — Bedrock for generative AI, Forecast for time
+        # series, Rekognition for image classification, S3 writes for
+        # datasets, Athena for SQL sources, etc. — is large and evolves with
+        # every Canvas release. Tracking AWS's managed policy means we pick
+        # up new Canvas capabilities automatically without shipping a CDK
+        # change. The trade-off (broader-than-least-privilege inside the
+        # role) is acknowledged with a dedicated nag suppression below.
+        #
+        # The matching ``CanvasAppSettings`` override on the Studio domain
+        # lives in ``_create_studio_domain`` so the Canvas tile shows up
+        # on the Studio landing page when the toggle is on.
+        if self.canvas_enabled:
+            self.sagemaker_execution_role.add_managed_policy(
+                iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSageMakerCanvasFullAccess")
+            )
+
+            suppress_managed_policy_opt_in(
+                self.sagemaker_execution_role,
+                managed_policy_name="AmazonSageMakerCanvasFullAccess",
+                reason=(
+                    "AmazonSageMakerCanvasFullAccess is attached to "
+                    "SageMaker_Execution_Role when analytics_environment.canvas.enabled=true. "
+                    "Canvas is an opt-in sub-toggle (off by default) and its managed "
+                    "policy is preferred over an enumerated least-privilege policy "
+                    "because Canvas's cross-service permission surface (Bedrock, "
+                    "Forecast, Rekognition, Athena, S3 dataset writes, etc.) evolves "
+                    "with every Canvas release — tracking the managed policy keeps "
+                    "Canvas functional as AWS ships new features. Users who want a "
+                    "locked-down alternative can keep the toggle off."
+                ),
             )
 
         # EFS resource policy — must include DescribeMountTargets without
@@ -732,9 +894,26 @@ class GCOAnalyticsStack(Stack):
             file_system_id=self.studio_efs.file_system_id,
             file_system_path="/home/sagemaker-user",
         )
-        custom_fs_config = sagemaker.CfnDomain.CustomFileSystemConfigProperty(
+        efs_custom_fs = sagemaker.CfnDomain.CustomFileSystemConfigProperty(
             efs_file_system_config=efs_fs_config,
         )
+
+        # We also considered adding an ``S3FileSystemConfig`` custom file
+        # system that would mount the always-on ``Cluster_Shared_Bucket``
+        # under ``/mount/cluster-shared``. aws-cdk-lib exposes the
+        # property and CloudFormation synths it cleanly, but the
+        # SageMaker Studio service rejects the resource at create time
+        # with ``Invalid request provided: S3FileSystemConfig for
+        # SageMaker AI Studio is not supported yet.`` — so we ship
+        # without the mount. Notebooks access the cluster-shared
+        # bucket via ``boto3`` (the SageMaker execution role's
+        # cross-region RW grant in
+        # :meth:`_grant_sagemaker_role_on_cluster_shared_bucket` already
+        # authorizes that path). Revisit this block when SageMaker
+        # Studio lights up S3 custom file systems.
+        custom_file_systems: list[sagemaker.CfnDomain.CustomFileSystemConfigProperty] = [
+            efs_custom_fs,
+        ]
 
         # Security group for Studio compute — allows all outbound so
         # notebooks can reach the internet (pip, git, etc.) via the NAT
@@ -750,7 +929,7 @@ class GCOAnalyticsStack(Stack):
 
         default_user_settings = sagemaker.CfnDomain.UserSettingsProperty(
             execution_role=self.sagemaker_execution_role.role_arn,
-            custom_file_system_configs=[custom_fs_config],
+            custom_file_system_configs=custom_file_systems,
             security_groups=[self.studio_compute_sg.security_group_id],
             # ``jupyter_lab_app_settings`` is deliberately omitted so
             # ``CustomImages`` stays absent — the template contains no
@@ -769,6 +948,24 @@ class GCOAnalyticsStack(Stack):
             kms_key_id=self.kms_key.key_id,
             default_user_settings=default_user_settings,
         )
+
+        # Canvas sub-toggle (UI side): **IAM-only**. The
+        # ``AmazonSageMakerCanvasFullAccess`` managed policy attached to
+        # the SageMaker execution role in
+        # :meth:`_create_execution_role_and_grants` is sufficient to
+        # surface the Canvas tile on the Studio landing page — when a
+        # user with that policy opens Studio, SageMaker auto-discovers
+        # the entitlement and lights up the Canvas launcher.
+        #
+        # We intentionally do *not* inject a
+        # ``DefaultUserSettings.CanvasAppSettings`` block on the domain.
+        # The CloudFormation ``AWS::SageMaker::Domain`` resource does
+        # not accept that property (only ``AWS::SageMaker::UserProfile``
+        # does), so a property override fails early validation with
+        # ``Unsupported property [CanvasAppSettings]``. Canvas uses its
+        # own default workspace artifact locations; operators who want
+        # to pin per-user Canvas defaults can apply
+        # ``CanvasAppSettings`` at the ``UserProfile`` level directly.
 
         # The domain validates that the EFS file system has mount targets in
         # every subnet before stabilizing. CDK doesn't infer this dependency

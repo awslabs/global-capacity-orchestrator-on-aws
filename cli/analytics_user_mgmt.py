@@ -17,8 +17,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-logger = logging.getLogger(__name__)
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``srp_authenticate`` -> ``diagrams/code_diagrams/cli/analytics_user_mgmt.srp_authenticate.html``
+#     (PNG: ``diagrams/code_diagrams/cli/analytics_user_mgmt.srp_authenticate.png``)
+#   * ``fetch_studio_url`` -> ``diagrams/code_diagrams/cli/analytics_user_mgmt.fetch_studio_url.html``
+#     (PNG: ``diagrams/code_diagrams/cli/analytics_user_mgmt.fetch_studio_url.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
 
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # CloudFormation output discovery
@@ -148,17 +157,18 @@ def srp_authenticate(
 __all__ = [
     "admin_create_user",
     "admin_delete_user",
+    "admin_set_user_password",
     "check_ssm_parameter",
     "check_stack_complete",
     "discover_api_endpoint",
     "discover_cognito_client_id",
     "discover_cognito_pool_id",
     "fetch_studio_url",
+    "generate_strong_password",
     "list_users",
     "scan_orphan_analytics_resources",
     "srp_authenticate",
 ]
-
 
 # ---------------------------------------------------------------------------
 # Cognito user management helpers

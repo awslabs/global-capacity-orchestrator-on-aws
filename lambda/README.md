@@ -48,3 +48,28 @@ Scheduled → secret-rotation → Secrets Manager (daily rotation)
 
 Global API → cross-region-aggregator → DynamoDB/SSM (aggregates all regions)
 ```
+
+## Control-Flow Diagrams
+
+Auto-generated flowcharts for each handler live under
+[`diagrams/code_diagrams/lambda/`](../diagrams/code_diagrams/README.md).
+Open the interactive HTML pages for pan/zoom/SVG export; the PNGs
+below are static snapshots embedded for GitHub's web viewer where
+JavaScript can't run.
+
+| Handler | Flowchart |
+|---------|-----------|
+| `analytics-presigned-url` | [HTML](../diagrams/code_diagrams/lambda/analytics-presigned-url/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/analytics-presigned-url/handler.lambda_handler.png) |
+| `analytics-cleanup` | [HTML](../diagrams/code_diagrams/lambda/analytics-cleanup/handler.handler.html) · [PNG](../diagrams/code_diagrams/lambda/analytics-cleanup/handler.handler.png) |
+| `api-gateway-proxy` | [HTML](../diagrams/code_diagrams/lambda/api-gateway-proxy/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/api-gateway-proxy/handler.lambda_handler.png) |
+| `regional-api-proxy` | [HTML](../diagrams/code_diagrams/lambda/regional-api-proxy/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/regional-api-proxy/handler.lambda_handler.png) |
+| `cross-region-aggregator` | [HTML](../diagrams/code_diagrams/lambda/cross-region-aggregator/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/cross-region-aggregator/handler.lambda_handler.png) |
+| `alb-header-validator` | [HTML](../diagrams/code_diagrams/lambda/alb-header-validator/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/alb-header-validator/handler.lambda_handler.png) |
+| `drift-detection` | [HTML](../diagrams/code_diagrams/lambda/drift-detection/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/drift-detection/handler.lambda_handler.png) |
+| `ga-registration` | [HTML](../diagrams/code_diagrams/lambda/ga-registration/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/ga-registration/handler.lambda_handler.png) |
+| `helm-installer` | [HTML](../diagrams/code_diagrams/lambda/helm-installer/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/helm-installer/handler.lambda_handler.png) |
+| `kubectl-applier-simple` | [HTML](../diagrams/code_diagrams/lambda/kubectl-applier-simple/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/kubectl-applier-simple/handler.lambda_handler.png) |
+| `secret-rotation` | [HTML](../diagrams/code_diagrams/lambda/secret-rotation/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/secret-rotation/handler.lambda_handler.png) |
+
+Regenerate with `python diagrams/code_diagrams/generate.py` after
+editing a handler's control flow.

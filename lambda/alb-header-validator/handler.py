@@ -10,6 +10,14 @@ from typing import Any, cast
 
 import boto3
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``lambda_handler`` -> ``diagrams/code_diagrams/lambda/alb-header-validator/handler.lambda_handler.html``
+#     (PNG: ``diagrams/code_diagrams/lambda/alb-header-validator/handler.lambda_handler.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
+
 secrets_client = boto3.client("secretsmanager")
 _cached_tokens: set[str] = set()
 _cache_timestamp: float = 0.0

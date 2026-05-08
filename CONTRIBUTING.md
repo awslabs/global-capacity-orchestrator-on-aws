@@ -476,7 +476,18 @@ gco stacks destroy-all -y
 
 - Use clear, concise language
 - Include code examples
-- Add diagrams where helpful
+- Add diagrams where helpful — GCO has two auto-generated diagram
+  catalogues you can lean on or extend:
+  - `diagrams/infra_diagrams/` — per-stack and full-architecture
+    views synthesized from the CDK app via AWS PDK cdk-graph. Run
+    `python diagrams/infra_diagrams/generate.py` to refresh.
+  - `diagrams/code_diagrams/` — per-function control-flow charts
+    (Lambda handlers, CLI entry points) rendered with pyflowchart +
+    Playwright. Run `python diagrams/code_diagrams/generate.py` to
+    refresh; the script auto-inserts a `# Flowchart:` pointer
+    comment at the top of every source file it charts so readers
+    can navigate from code to diagram without guessing. Add new
+    targets by editing `diagrams/code_diagrams/_targets.py`.
 - Keep it up-to-date with code changes
 
 ## Code Review Guidelines

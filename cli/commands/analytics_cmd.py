@@ -68,15 +68,22 @@ def analytics_status(config: Any) -> None:
 
 @analytics.command("enable")
 @click.option("--hyperpod", is_flag=True, help="Also enable SageMaker HyperPod job submission.")
+@click.option(
+    "--canvas",
+    is_flag=True,
+    help="Also enable the SageMaker Canvas no-code ML app.",
+)
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation.")
 @pass_config
-def analytics_enable(config: Any, hyperpod: bool, yes: bool) -> None:
+def analytics_enable(config: Any, hyperpod: bool, canvas: bool, yes: bool) -> None:
     """Enable the analytics environment in cdk.json.
 
     Flips ``analytics_environment.enabled`` to ``true``; ``--hyperpod``
-    additionally flips ``analytics_environment.hyperpod.enabled``.
-    Prints the follow-up ``gco stacks deploy gco-analytics`` command —
-    does not deploy automatically.
+    additionally flips ``analytics_environment.hyperpod.enabled``, and
+    ``--canvas`` flips ``analytics_environment.canvas.enabled`` (which
+    attaches ``AmazonSageMakerCanvasFullAccess`` to the SageMaker
+    execution role). Prints the follow-up ``gco stacks deploy
+    gco-analytics`` command — does not deploy automatically.
     """
     from ..stacks import get_analytics_config, update_analytics_config
 
@@ -86,19 +93,32 @@ def analytics_enable(config: Any, hyperpod: bool, yes: bool) -> None:
         formatter.print_info("Analytics environment will be enabled in cdk.json.")
         if hyperpod:
             formatter.print_info("  Hyperpod sub-toggle will also be enabled.")
+        if canvas:
+            formatter.print_info("  Canvas sub-toggle will also be enabled.")
         click.confirm("\nEnable the analytics environment?", abort=True)
 
     try:
         current = get_analytics_config()
-        # Preserve everything the operator has set under ``hyperpod`` —
-        # the underlying helper replaces nested blocks wholesale, so we
-        # have to rebuild the sub-dict with only the field we own.
+        # Preserve everything the operator has set under ``hyperpod`` /
+        # ``canvas`` — the underlying helper replaces nested blocks
+        # wholesale, so we rebuild each sub-dict with only the field we own.
         hyperpod_block = dict(current.get("hyperpod") or {})
         if hyperpod:
             hyperpod_block["enabled"] = True
         hyperpod_block.setdefault("enabled", False)
 
-        update_analytics_config({"enabled": True, "hyperpod": hyperpod_block})
+        canvas_block = dict(current.get("canvas") or {})
+        if canvas:
+            canvas_block["enabled"] = True
+        canvas_block.setdefault("enabled", False)
+
+        update_analytics_config(
+            {
+                "enabled": True,
+                "hyperpod": hyperpod_block,
+                "canvas": canvas_block,
+            }
+        )
         formatter.print_success("Analytics environment enabled in cdk.json")
         formatter.print_info("Run `gco stacks deploy gco-analytics` to apply changes")
     except Exception as exc:  # noqa: BLE001 — user-facing error from file I/O
@@ -113,9 +133,9 @@ def analytics_disable(config: Any, yes: bool) -> None:
     """Disable the analytics environment in cdk.json.
 
     Only flips ``analytics_environment.enabled`` to ``false``; the
-    ``hyperpod`` / ``cognito`` / ``efs`` sub-blocks are left untouched
-    so the operator's existing preferences survive a disable/enable
-    cycle.
+    ``hyperpod`` / ``canvas`` / ``cognito`` / ``efs`` sub-blocks are
+    left untouched so the operator's existing preferences survive a
+    disable/enable cycle.
     """
     from ..stacks import update_analytics_config
 
@@ -322,6 +342,99 @@ def users_remove(config: Any, username: str, yes: bool) -> None:
         sys.exit(1)
 
     formatter.print_success(f"Deleted Cognito user: {username}")
+
+
+@users_cmd.command("set-password")
+@click.option("--username", required=True, help="Cognito username whose password to change.")
+@click.option(
+    "--password",
+    envvar="GCO_STUDIO_PASSWORD",
+    help=(
+        "New password (also read from $GCO_STUDIO_PASSWORD; prompted "
+        "otherwise). Mutually exclusive with --generate-password."
+    ),
+)
+@click.option(
+    "--generate-password",
+    is_flag=True,
+    help=(
+        "Generate a strong random password, set it, and print it once. "
+        "Mutually exclusive with --password."
+    ),
+)
+@click.option(
+    "--temporary",
+    is_flag=True,
+    help=(
+        "Set the password as temporary so the user is forced to change "
+        "it on first login (Permanent=false). Default is permanent."
+    ),
+)
+@click.option("--yes", "-y", is_flag=True, help="Skip the confirmation prompt.")
+@pass_config
+def users_set_password(
+    config: Any,
+    username: str,
+    password: str | None,
+    generate_password: bool,
+    temporary: bool,
+    yes: bool,
+) -> None:
+    """Change a Cognito user's password via AdminSetUserPassword.
+
+    By default the new password is marked ``Permanent=true`` so the
+    user can sign in directly with ``gco analytics studio login``
+    without the ``NEW_PASSWORD_REQUIRED`` challenge. Pass
+    ``--temporary`` to require the user to choose their own password
+    on first sign-in.
+    """
+    from botocore.exceptions import ClientError
+
+    from ..analytics_user_mgmt import admin_set_user_password, generate_strong_password
+
+    formatter = get_output_formatter(config)
+
+    if password and generate_password:
+        formatter.print_error("--password and --generate-password are mutually exclusive")
+        sys.exit(1)
+
+    pool_id, region = _require_cognito_pool_id(config)
+
+    if generate_password:
+        new_password = generate_strong_password()
+    elif password is not None:
+        new_password = password
+    else:
+        new_password = click.prompt(
+            "New password",
+            hide_input=True,
+            confirmation_prompt=True,
+        )
+
+    if not yes:
+        qualifier = "temporary" if temporary else "permanent"
+        click.confirm(
+            f"Set a new {qualifier} password for Cognito user '{username}'?",
+            abort=True,
+        )
+
+    try:
+        admin_set_user_password(
+            pool_id=pool_id,
+            region=region,
+            username=username,
+            password=new_password,
+            permanent=not temporary,
+        )
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code", "Unknown")
+        formatter.print_error(f"Failed to set password for {username}: {error_code}")
+        sys.exit(1)
+
+    qualifier = "temporary" if temporary else "permanent"
+    formatter.print_success(f"Password set ({qualifier}) for {username}")
+    if generate_password:
+        formatter.print_info(f"Generated password (printed exactly once): {new_password}")
 
 
 # ---------------------------------------------------------------------------

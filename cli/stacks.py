@@ -49,6 +49,16 @@ from typing import TYPE_CHECKING, Any
 
 from botocore.exceptions import ClientError
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``StackManager.deploy_orchestrated`` -> ``diagrams/code_diagrams/cli/stacks.StackManager_deploy_orchestrated.html``
+#     (PNG: ``diagrams/code_diagrams/cli/stacks.StackManager_deploy_orchestrated.png``)
+#   * ``StackManager.destroy_orchestrated`` -> ``diagrams/code_diagrams/cli/stacks.StackManager_destroy_orchestrated.html``
+#     (PNG: ``diagrams/code_diagrams/cli/stacks.StackManager_destroy_orchestrated.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
+
 if TYPE_CHECKING:
     from .config import GCOConfig
 
@@ -1985,6 +1995,7 @@ def update_aurora_config(settings: dict[str, Any], region: str | None = None) ->
 _ANALYTICS_DEFAULTS: dict[str, Any] = {
     "enabled": False,
     "hyperpod": {"enabled": False},
+    "canvas": {"enabled": False},
     "cognito": {"domain_prefix": None, "removal_policy": "destroy"},
     "efs": {"removal_policy": "destroy"},
     "studio": {"user_profile_name_prefix": None},
@@ -2006,9 +2017,9 @@ def update_analytics_config(settings: dict[str, Any]) -> None:
     """Update the analytics environment configuration in cdk.json.
 
     Mirrors ``update_valkey_config`` / ``update_aurora_config``. Nested
-    keys under ``analytics_environment`` (``hyperpod``, ``cognito``,
-    ``efs``, ``studio``) are merged one level deep rather than replaced
-    wholesale — ``enable --hyperpod`` must not clobber
+    keys under ``analytics_environment`` (``hyperpod``, ``canvas``,
+    ``cognito``, ``efs``, ``studio``) are merged one level deep rather
+    than replaced wholesale — ``enable --hyperpod`` must not clobber
     ``cognito.removal_policy``.
     """
     _update_feature_config("analytics_environment", settings, _ANALYTICS_DEFAULTS)

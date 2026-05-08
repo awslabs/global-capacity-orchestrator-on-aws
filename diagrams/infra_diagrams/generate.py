@@ -17,13 +17,14 @@ etc.) rather than instantiating the dependency stacks. Two exceptions:
   stacks appear in that diagram.
 
 Usage:
-    python diagrams/generate.py              # Generate all diagrams
-    python diagrams/generate.py --stack all  # Generate all diagrams
-    python diagrams/generate.py --stack global
-    python diagrams/generate.py --stack api-gateway
-    python diagrams/generate.py --stack regional
-    python diagrams/generate.py --stack regional-api
-    python diagrams/generate.py --stack monitoring
+    python diagrams/infra_diagrams/generate.py              # Generate all diagrams
+    python diagrams/infra_diagrams/generate.py --stack all  # Generate all diagrams
+    python diagrams/infra_diagrams/generate.py --stack global
+    python diagrams/infra_diagrams/generate.py --stack api-gateway
+    python diagrams/infra_diagrams/generate.py --stack regional
+    python diagrams/infra_diagrams/generate.py --stack regional-api
+    python diagrams/infra_diagrams/generate.py --stack monitoring
+    python diagrams/infra_diagrams/generate.py --stack analytics
 """
 
 import argparse
@@ -32,8 +33,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add project root to path. This script lives at
+# ``diagrams/infra_diagrams/generate.py`` so the project root is two
+# parents up. The ``sys.path.insert`` lets the script be invoked
+# standalone (``python diagrams/infra_diagrams/generate.py``) without a
+# prior ``pip install -e .``.
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import aws_cdk as cdk
 from aws_pdk.cdk_graph import CdkGraph, FilterPreset
@@ -344,6 +349,7 @@ def generate_analytics_stack_diagram(output_dir: Path) -> None:
                 "analytics_environment": {
                     "enabled": True,
                     "hyperpod": {"enabled": False},
+                    "canvas": {"enabled": False},
                     "cognito": {"domain_prefix": None, "removal_policy": "destroy"},
                     "efs": {"removal_policy": "destroy"},
                     "studio": {"user_profile_name_prefix": None},

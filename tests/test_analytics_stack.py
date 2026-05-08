@@ -58,11 +58,13 @@ class _AnalyticsMockConfig:
         efs_removal: str = "destroy",
         cognito_removal: str = "destroy",
         hyperpod_enabled: bool = False,
+        canvas_enabled: bool = False,
     ) -> None:
         self._enabled = enabled
         self._efs_removal = efs_removal
         self._cognito_removal = cognito_removal
         self._hyperpod_enabled = hyperpod_enabled
+        self._canvas_enabled = canvas_enabled
 
     def get_project_name(self) -> str:
         return "gco-test"
@@ -91,6 +93,7 @@ class _AnalyticsMockConfig:
         return {
             "enabled": self._enabled,
             "hyperpod": {"enabled": self._hyperpod_enabled},
+            "canvas": {"enabled": self._canvas_enabled},
             "cognito": {
                 "domain_prefix": None,
                 "removal_policy": self._cognito_removal,
@@ -180,6 +183,7 @@ class TestAnalyticsStackOffByDefault:
                 "analytics_environment": {
                     "enabled": False,
                     "hyperpod": {"enabled": False},
+                    "canvas": {"enabled": False},
                     "cognito": {"domain_prefix": None, "removal_policy": "destroy"},
                     "efs": {"removal_policy": "destroy"},
                     "studio": {"user_profile_name_prefix": None},
@@ -801,14 +805,21 @@ class TestSageMakerExecutionRole:
             f"attached statements={statements!r}"
         )
 
-    def test_role_has_execute_api_invoke_on_prod_get_api_v1(self) -> None:
-        """Read-only ``execute-api:Invoke`` grant on
-        ``/prod/GET/api/v1/*`` for the API gateway region/account."""
+    def test_role_has_execute_api_invoke_on_api_v1_and_inference(self) -> None:
+        """Full-method ``execute-api:Invoke`` grant on ``/prod/*/api/v1/*``
+        and ``/prod/*/inference/*`` for the API gateway region/account.
+
+        Notebooks need POST/PUT/DELETE in addition to GET so analytics
+        users can submit jobs, update templates, and manage inference
+        endpoints from inside a notebook. The resource ARNs keep the
+        HTTP-method segment as ``*`` instead of pinning GET.
+        """
         template = _synth_analytics()
         role_lid, _ = self._find_sagemaker_role(template)
         statements = self._collect_role_statements(template, role_lid)
 
-        matches = []
+        api_v1_ok = False
+        inference_ok = False
         for stmt in statements:
             if stmt.get("Effect") != "Allow":
                 continue
@@ -820,15 +831,42 @@ class TestSageMakerExecutionRole:
             if not isinstance(resources, list):
                 resources = [resources]
             for res in resources:
-                if isinstance(res, str) and "/prod/GET/api/v1/*" in res:
-                    matches.append(stmt)
-                    break
+                if not isinstance(res, str):
+                    continue
+                if "/prod/*/api/v1/*" in res:
+                    api_v1_ok = True
+                if "/prod/*/inference/*" in res:
+                    inference_ok = True
 
-        assert matches, (
-            "expected an Allow statement granting execute-api:Invoke on "
-            "<api-arn>/prod/GET/api/v1/*; "
-            f"attached statements={statements!r}"
+        assert api_v1_ok, (
+            "expected execute-api:Invoke on <api-arn>/prod/*/api/v1/* "
+            f"(all HTTP methods); attached statements={statements!r}"
         )
+        assert inference_ok, (
+            "expected execute-api:Invoke on <api-arn>/prod/*/inference/* "
+            f"(all HTTP methods); attached statements={statements!r}"
+        )
+
+        # And, critically, *none* of the execute-api grants may pin the
+        # method segment to GET — that would silently re-break POST
+        # submissions. This guard catches future refactors that
+        # accidentally re-introduce the old GET-only scope.
+        for stmt in statements:
+            if stmt.get("Effect") != "Allow":
+                continue
+            actions = stmt.get("Action")
+            action_set = set(actions) if isinstance(actions, list) else {actions}
+            if "execute-api:Invoke" not in action_set:
+                continue
+            resources = stmt.get("Resource") or []
+            if not isinstance(resources, list):
+                resources = [resources]
+            for res in resources:
+                if isinstance(res, str):
+                    assert "/prod/GET/" not in res, (
+                        "execute-api grant must not pin the HTTP method "
+                        f"to GET — got {res!r}; blocks POST submissions"
+                    )
 
     def test_role_has_sqs_sendmessage_on_jobs_queue_pattern(self) -> None:
         """``sqs:SendMessage`` on the regional job-queue naming
@@ -1103,3 +1141,302 @@ class TestEmrServerlessApp:
             f"least one private subnet; got "
             f"refs={referenced_lids!r}, private={private_lids!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Canvas sub-toggle
+# ---------------------------------------------------------------------------
+
+
+class TestCanvasDisabled:
+    """Default fixture: ``analytics_environment.canvas.enabled=false``.
+
+    The synthesized template must omit the Canvas managed-policy
+    attachment and the ``DefaultUserSettings.CanvasAppSettings`` block
+    on the Studio domain. Canvas is opt-in — leaving the toggle off is
+    the common case.
+    """
+
+    def test_canvas_full_access_not_attached(self) -> None:
+        """No IAM::Role has ``AmazonSageMakerCanvasFullAccess`` in its
+        ``ManagedPolicyArns``."""
+        template = _synth_analytics()
+        roles = template.find_resources("AWS::IAM::Role")
+        for role in roles.values():
+            arns = role.get("Properties", {}).get("ManagedPolicyArns", []) or []
+            for entry in arns:
+                if isinstance(entry, dict) and "Fn::Join" in entry:
+                    # Managed-policy ARNs are rendered as Fn::Join; flatten
+                    # the join arguments to a single string for matching.
+                    flat = "".join(
+                        str(piece) for piece in entry["Fn::Join"][1] if isinstance(piece, str)
+                    )
+                    assert "AmazonSageMakerCanvasFullAccess" not in flat, (
+                        "Canvas managed policy must not be attached when " "canvas.enabled=false."
+                    )
+                elif isinstance(entry, str):
+                    assert "AmazonSageMakerCanvasFullAccess" not in entry
+
+    def test_canvas_app_settings_absent_on_domain(self) -> None:
+        """``DefaultUserSettings.CanvasAppSettings`` must be absent from
+        the Studio domain when the toggle is off."""
+        template = _synth_analytics()
+        domains = template.find_resources("AWS::SageMaker::Domain")
+        assert domains, "expected a Studio domain in the template"
+        for domain in domains.values():
+            default_user_settings = domain["Properties"].get("DefaultUserSettings", {})
+            assert "CanvasAppSettings" not in default_user_settings, (
+                "CanvasAppSettings must not appear when canvas.enabled=false; "
+                f"got {default_user_settings!r}"
+            )
+
+
+class TestCanvasEnabled:
+    """Variant fixture: ``analytics_environment.canvas.enabled=true``.
+
+    The Canvas managed policy must be attached to ``SageMaker_Execution_Role``.
+    We do **not** inject ``DefaultUserSettings.CanvasAppSettings`` on the
+    domain because CloudFormation's ``AWS::SageMaker::Domain`` resource
+    rejects that property (it only belongs on
+    ``AWS::SageMaker::UserProfile``); per-user Canvas configuration, when
+    we need it, will be applied by the presigned-URL Lambda at user-profile
+    creation time. Canvas is still discoverable from Studio purely via IAM
+    — the managed policy attachment is sufficient to surface the tile.
+    """
+
+    @staticmethod
+    def _synth() -> assertions.Template:
+        return _synth_analytics(
+            config=_AnalyticsMockConfig(canvas_enabled=True),
+        )
+
+    def test_canvas_full_access_attached_to_execution_role(self) -> None:
+        """``SageMaker_Execution_Role`` has ``AmazonSageMakerCanvasFullAccess``
+        on its ``ManagedPolicyArns``."""
+        template = self._synth()
+        roles = template.find_resources("AWS::IAM::Role")
+        matched = False
+        for role in roles.values():
+            role_name = role.get("Properties", {}).get("RoleName", "")
+            if not (isinstance(role_name, str) and role_name.startswith("AmazonSageMaker")):
+                continue
+            for entry in role["Properties"].get("ManagedPolicyArns", []) or []:
+                if isinstance(entry, dict) and "Fn::Join" in entry:
+                    flat = "".join(
+                        str(piece) for piece in entry["Fn::Join"][1] if isinstance(piece, str)
+                    )
+                    if "AmazonSageMakerCanvasFullAccess" in flat:
+                        matched = True
+                        break
+        assert matched, (
+            "Expected SageMaker_Execution_Role to have "
+            "AmazonSageMakerCanvasFullAccess in ManagedPolicyArns when "
+            "canvas.enabled=true"
+        )
+
+    def test_domain_does_not_carry_canvas_app_settings(self) -> None:
+        """Regression guard: ``CanvasAppSettings`` must NEVER appear on
+        ``AWS::SageMaker::Domain``.
+
+        The CloudFormation schema rejects the property at the domain
+        level (``Unsupported property [CanvasAppSettings]``) with an
+        early-validation error that fails ``cdk deploy`` before any
+        resources are created. Keeping this assertion guards against a
+        future refactor that re-introduces the domain-level override
+        we tried (and reverted) during the Canvas rollout.
+        """
+        template = self._synth()
+        domains = template.find_resources("AWS::SageMaker::Domain")
+        assert domains, "expected a Studio domain"
+        for domain in domains.values():
+            default_user_settings = domain["Properties"].get("DefaultUserSettings", {})
+            assert "CanvasAppSettings" not in default_user_settings, (
+                "CanvasAppSettings is not a valid property on "
+                "AWS::SageMaker::Domain — it belongs on UserProfile only. "
+                f"Got {default_user_settings!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# MLflow (always-on, not gated)
+# ---------------------------------------------------------------------------
+
+
+def _flatten_cfn(value: object) -> str:
+    """Flatten a CloudFormation intrinsic-function tree to a single string.
+
+    Used by the Canvas and MLflow tests to assert on resource ARNs and
+    other interpolated properties rendered as nested ``Fn::Join`` /
+    ``Fn::Select`` / ``Fn::Split`` calls in the synthesized template.
+    We care only about the string prefixes/suffixes so any dict leaf
+    collapses to an empty string.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "".join(_flatten_cfn(item) for item in value)
+    if isinstance(value, dict):
+        return "".join(_flatten_cfn(v) for v in value.values())
+    return ""
+
+
+class TestMlflowPermissions:
+    """Whenever analytics is enabled, the SageMaker execution role must:
+
+    1. Have the AWS-managed ``AmazonSageMakerFullAccess`` attached so
+       MLflow Apps (``CreateMlflowApp`` / ``ListMlflowApps`` /
+       ``DescribeMlflowApp``) and MLflow Tracking Servers work from
+       Studio without inline action enumeration.
+    2. Have an inline ``sagemaker-mlflow:*`` statement scoped to
+       ``mlflow-tracking-server/*`` and ``mlflow-app/*`` ARNs in the
+       api-gateway region. The managed policy covers the
+       ``sagemaker:*`` control-plane namespace but not the
+       ``sagemaker-mlflow`` data-plane prefix the MLflow SDK's SigV4
+       plug-in uses.
+    """
+
+    def test_full_access_managed_policy_attached(self) -> None:
+        template = _synth_analytics()
+        roles = template.find_resources("AWS::IAM::Role")
+        matched = False
+        for role in roles.values():
+            role_name = role.get("Properties", {}).get("RoleName", "")
+            if not (isinstance(role_name, str) and role_name.startswith("AmazonSageMaker")):
+                continue
+            for entry in role["Properties"].get("ManagedPolicyArns", []) or []:
+                if isinstance(entry, dict) and "Fn::Join" in entry:
+                    flat = "".join(
+                        str(piece) for piece in entry["Fn::Join"][1] if isinstance(piece, str)
+                    )
+                    if "AmazonSageMakerFullAccess" in flat:
+                        matched = True
+                        break
+                elif isinstance(entry, str) and "AmazonSageMakerFullAccess" in entry:
+                    matched = True
+                    break
+        assert matched, (
+            "SageMaker_Execution_Role must have AmazonSageMakerFullAccess "
+            "in ManagedPolicyArns so MLflow Apps / Tracking Servers work "
+            "from Studio."
+        )
+
+    def test_sagemaker_mlflow_data_plane_statement_present(self) -> None:
+        """A role policy must grant ``sagemaker-mlflow:*`` on
+        tracking-server and MLflow-app ARN wildcards."""
+        template = _synth_analytics()
+        policies = template.find_resources("AWS::IAM::Policy")
+        matched = False
+        for policy in policies.values():
+            for stmt in policy["Properties"]["PolicyDocument"].get("Statement", []):
+                actions = stmt.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                if "sagemaker-mlflow:*" not in actions:
+                    continue
+                resources = stmt.get("Resource", [])
+                if isinstance(resources, str):
+                    resources = [resources]
+                flat = [_flatten_cfn(r) for r in resources]
+                has_tracking = any("mlflow-tracking-server/*" in r for r in flat)
+                has_app = any("mlflow-app/*" in r for r in flat)
+                if has_tracking and has_app:
+                    matched = True
+                    break
+            if matched:
+                break
+        assert matched, (
+            "Expected an inline policy granting sagemaker-mlflow:* on both "
+            "mlflow-tracking-server/* and mlflow-app/* ARNs (required "
+            "because AmazonSageMakerFullAccess does not cover the "
+            "sagemaker-mlflow service prefix)."
+        )
+
+    def test_no_enumerated_mlflow_tracking_server_actions_inline(self) -> None:
+        """Regression guard: the old inline enumeration
+        (``sagemaker:CreateMlflowTrackingServer``, ``sagemaker:*ModelPackage*``,
+        etc.) must NOT come back — those are now covered by
+        ``AmazonSageMakerFullAccess`` and duplicating them inline
+        defeats the managed-policy-tracks-new-features rationale.
+        """
+        template = _synth_analytics()
+        forbidden_actions = {
+            "sagemaker:CreateMlflowTrackingServer",
+            "sagemaker:DescribeMlflowTrackingServer",
+            "sagemaker:ListMlflowTrackingServers",
+            "sagemaker:CreateModelPackage",
+            "sagemaker:CreateModelPackageGroup",
+        }
+        policies = template.find_resources("AWS::IAM::Policy")
+        for policy in policies.values():
+            for stmt in policy["Properties"]["PolicyDocument"].get("Statement", []):
+                actions = stmt.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                for action in actions:
+                    assert action not in forbidden_actions, (
+                        f"Inline policy still enumerates {action!r}; this "
+                        "action is covered by AmazonSageMakerFullAccess — "
+                        "remove the inline entry."
+                    )
+
+
+# ---------------------------------------------------------------------------
+# Custom file-system configuration (EFS-only for now)
+# ---------------------------------------------------------------------------
+
+
+class TestDomainCustomFileSystems:
+    """The Studio domain mounts the per-user EFS home folder as its only
+    custom file system. An earlier revision also tried to mount the
+    cluster-shared bucket via ``S3FileSystemConfig`` — aws-cdk-lib
+    exposes the property but SageMaker Studio rejects the resource at
+    create time (``S3FileSystemConfig for SageMaker AI Studio is not
+    supported yet``), so we ship EFS-only and notebooks reach the
+    cluster-shared bucket via ``boto3`` instead.
+    """
+
+    def test_domain_has_efs_custom_file_system(self) -> None:
+        """The Studio domain exposes the per-user EFS mount."""
+        template = _synth_analytics()
+        domains = template.find_resources("AWS::SageMaker::Domain")
+        assert domains, "expected a Studio domain"
+        efs_seen = False
+        for domain in domains.values():
+            configs = (
+                domain["Properties"]
+                .get("DefaultUserSettings", {})
+                .get("CustomFileSystemConfigs", [])
+                or []
+            )
+            for entry in configs:
+                if "EFSFileSystemConfig" in entry:
+                    efs_seen = True
+        assert efs_seen, (
+            "Expected an EFSFileSystemConfig entry on CustomFileSystemConfigs "
+            "so per-user home folders on Studio_EFS work."
+        )
+
+    def test_domain_does_not_declare_s3_file_system_config(self) -> None:
+        """Regression guard: ``S3FileSystemConfig`` must NOT appear on the
+        domain. SageMaker rejects the resource at create time even though
+        CloudFormation accepts it at synth time — re-introducing the
+        mount would re-break the analytics stack deploy with
+        ``Invalid request provided: S3FileSystemConfig for SageMaker AI
+        Studio is not supported yet``.
+        """
+        template = _synth_analytics()
+        domains = template.find_resources("AWS::SageMaker::Domain")
+        assert domains
+        for domain in domains.values():
+            configs = (
+                domain["Properties"]
+                .get("DefaultUserSettings", {})
+                .get("CustomFileSystemConfigs", [])
+                or []
+            )
+            for entry in configs:
+                assert "S3FileSystemConfig" not in entry, (
+                    "S3FileSystemConfig is not supported on AWS::SageMaker::Domain "
+                    "(the Studio service rejects it even though CFN synths it cleanly). "
+                    f"Got entry: {entry!r}"
+                )

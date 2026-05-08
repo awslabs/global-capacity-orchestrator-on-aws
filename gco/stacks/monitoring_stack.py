@@ -57,6 +57,14 @@ from constructs import Construct
 
 from gco.config.config_loader import ConfigLoader
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``GCOMonitoringStack.__init__`` -> ``diagrams/code_diagrams/gco/stacks/monitoring_stack.GCOMonitoringStack___init__.html``
+#     (PNG: ``diagrams/code_diagrams/gco/stacks/monitoring_stack.GCOMonitoringStack___init__.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
+
 if TYPE_CHECKING:
     from gco.stacks.api_gateway_global_stack import GCOApiGatewayGlobalStack
     from gco.stacks.global_stack import GCOGlobalStack

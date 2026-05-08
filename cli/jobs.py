@@ -17,6 +17,16 @@ from gco.services.manifest_processor import safe_load_all_yaml
 from .aws_client import get_aws_client
 from .config import GCOConfig, get_config
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``JobManager.submit_job`` -> ``diagrams/code_diagrams/cli/jobs.JobManager_submit_job.html``
+#     (PNG: ``diagrams/code_diagrams/cli/jobs.JobManager_submit_job.png``)
+#   * ``JobManager.submit_job_sqs`` -> ``diagrams/code_diagrams/cli/jobs.JobManager_submit_job_sqs.html``
+#     (PNG: ``diagrams/code_diagrams/cli/jobs.JobManager_submit_job_sqs.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
+
 logger = __import__("logging").getLogger(__name__)
 
 

@@ -32,6 +32,14 @@ from urllib.parse import urlencode
 import boto3
 import urllib3
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``lambda_handler`` -> ``diagrams/code_diagrams/lambda/cross-region-aggregator/handler.lambda_handler.html``
+#     (PNG: ``diagrams/code_diagrams/lambda/cross-region-aggregator/handler.lambda_handler.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
+
 # Initialize clients
 secrets_client = boto3.client("secretsmanager")
 http = urllib3.PoolManager()

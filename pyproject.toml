@@ -53,6 +53,22 @@ cdk = [
     "cdk-nag==2.37.55",
     "constructs==10.6.0",
 ]
+diagrams = [
+    # Dependencies for ``diagrams/code_diagrams/generate.py``. Pinned to
+    # match the reproducibility policy used by the rest of this project.
+    # ``pyflowchart`` turns Python source into flowchart.js DSL; we emit
+    # interactive HTML via its ``output_html`` helper. ``playwright``
+    # drives a headless Chromium to rasterise each flowchart.js SVG to
+    # a PNG — run ``playwright install chromium`` once to fetch the
+    # browser binary. ``black`` is invoked by the generator's marker
+    # inserter to normalise whitespace around the injected ``# Flowchart:``
+    # comment block so the result is formatter-stable under ``black
+    # --check`` (kept at the same pin as the ``lint`` extra to avoid
+    # version-drift between the generator and the CI lint gate).
+    "pyflowchart==0.6.0",
+    "playwright==1.59.0",
+    "black==26.3.1",
+]
 inference-monitor = [
     "boto3==1.43.3",
     "kubernetes==35.0.0",
@@ -99,7 +115,7 @@ security = [
     "pip-tools==7.5.3",
 ]
 dev = [
-    "gco-cli[cdk,lint,typecheck,test,security]",
+    "gco-cli[cdk,diagrams,lint,typecheck,test,security]",
     "pre-commit==4.5.1",
 ]
 

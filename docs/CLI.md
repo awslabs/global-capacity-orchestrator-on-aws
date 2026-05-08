@@ -1971,6 +1971,7 @@ gco analytics enable [OPTIONS]
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--hyperpod` | | Also set `analytics_environment.hyperpod.enabled=true` (adds HyperPod training-job permissions to the SageMaker execution role). |
+| `--canvas` | | Also set `analytics_environment.canvas.enabled=true` (attaches `AmazonSageMakerCanvasFullAccess` to the SageMaker execution role and enables the Canvas app on the Studio domain; artifacts land under `Cluster_Shared_Bucket/analytics-canvas/`). |
 | `--yes` | `-y` | Skip the confirmation prompt. |
 
 **Example:**
@@ -1978,7 +1979,8 @@ gco analytics enable [OPTIONS]
 ```bash
 gco analytics enable
 gco analytics enable --hyperpod
-gco analytics enable --hyperpod -y
+gco analytics enable --canvas
+gco analytics enable --hyperpod --canvas -y
 
 # Follow-up to actually deploy the stack:
 gco stacks deploy gco-analytics
@@ -1987,8 +1989,8 @@ gco stacks deploy gco-analytics
 #### `gco analytics disable`
 
 Flip `analytics_environment.enabled` to `false` in `cdk.json`. Leaves
-the `hyperpod`, `cognito`, and `efs` sub-blocks untouched so a later
-`enable` preserves your preferences. Run `gco stacks destroy
+the `hyperpod`, `canvas`, `cognito`, and `efs` sub-blocks untouched so
+a later `enable` preserves your preferences. Run `gco stacks destroy
 gco-analytics` afterward to tear down the deployed resources.
 
 ```bash
@@ -2101,6 +2103,46 @@ gco analytics users remove [OPTIONS]
 ```bash
 gco analytics users remove --username alice
 gco analytics users remove --username alice --yes
+```
+
+#### `gco analytics users set-password`
+
+Change a Cognito user's password via ``AdminSetUserPassword``. By
+default the new password is marked permanent so the user can sign in
+directly with ``gco analytics studio login`` without hitting the
+``NEW_PASSWORD_REQUIRED`` challenge. Pass ``--temporary`` to require
+the user to choose their own password on first sign-in.
+
+```bash
+gco analytics users set-password [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--username` | Cognito username whose password to change (required). |
+| `--password` | New password (also read from `$GCO_STUDIO_PASSWORD`; prompted otherwise). Mutually exclusive with `--generate-password`. |
+| `--generate-password` | Generate a strong random password, set it, and print it once. Mutually exclusive with `--password`. |
+| `--temporary` | Set the password as temporary (`Permanent=false`). Default is permanent. |
+| `--yes`, `-y` | Skip the confirmation prompt. |
+
+**Examples:**
+
+```bash
+# Interactive — prompts twice for the new password
+gco analytics users set-password --username alice
+
+# Non-interactive via env var (won't leak into shell history)
+GCO_STUDIO_PASSWORD='StrongP@ssw0rd!' \
+  gco analytics users set-password --username alice --yes
+
+# Generate and print a new password
+gco analytics users set-password --username alice --generate-password --yes
+
+# Force the user to reset on next login
+gco analytics users set-password --username alice \
+  --password 'Temp!Reset123$' --temporary --yes
 ```
 
 #### `gco analytics studio login`

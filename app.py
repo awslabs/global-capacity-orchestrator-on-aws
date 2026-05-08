@@ -35,6 +35,13 @@ from gco.stacks.global_stack import GCOGlobalStack
 from gco.stacks.monitoring_stack import GCOMonitoringStack
 from gco.stacks.regional_stack import GCORegionalStack
 
+# <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
+# Flowchart(s) generated from this file:
+#   * ``main`` -> ``diagrams/code_diagrams/app.main.html``
+#     (PNG: ``diagrams/code_diagrams/app.main.png``)
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+# <pyflowchart-code-diagram> END
+
 
 @jsii.implements(cdk.IAspect)
 class LambdaTracingAspect:

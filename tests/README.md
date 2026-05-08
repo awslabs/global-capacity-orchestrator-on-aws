@@ -119,6 +119,12 @@ Tests are organized by the component they test:
 | `test_stacks.py` | CLI stack management commands |
 | `test_stacks_extended.py` | Extended stack scenarios |
 
+### Diagram Generator Tests
+
+| File | Description |
+|------|-------------|
+| `test_code_diagrams_generator.py` | Unit tests for `diagrams/code_diagrams/generate.py` — `Target` catalogue well-formedness (every source file + function resolves), `_output_stem_for` path math (including the dotted-function edge case that `Path.with_suffix` would mangle), idempotent insertion of the `# <pyflowchart-code-diagram>` marker block into source files (handles module docstrings, `from __future__` imports, no-docstring files, and multi-target collapse), and the grouped hierarchical rendering of the `code_diagrams/README.md` index (alphabetized top-level directory groups, HTML + optional PNG links with POSIX separators, Chromium install note). |
+
 ### Analytics Environment Tests
 
 Tests for the optional `analytics_environment` (SageMaker Studio + EMR
@@ -129,12 +135,12 @@ assertions live in `test_analytics_stack.py`.
 
 | File | Description |
 |------|-------------|
-| `test_analytics_stack.py` | Core CDK template assertions for `GCOAnalyticsStack` — SageMaker Studio domain, EMR Serverless Spark application, Cognito user pool + client + hosted domain, `Analytics_KMS_Key`, private-isolated VPC + nine interface endpoints + S3 gateway endpoint, `Studio_EFS` + dedicated SG, `SageMaker_Execution_Role` grants (including the cross-region `Cluster_Shared_Bucket` policy resolved via `AwsCustomResource`), IAM/cdk-nag compliance |
+| `test_analytics_stack.py` | Core CDK template assertions for `GCOAnalyticsStack` — SageMaker Studio domain, EMR Serverless Spark application, Cognito user pool + client + hosted domain, `Analytics_KMS_Key`, private-isolated VPC + nine interface endpoints + S3 gateway endpoint, `Studio_EFS` + dedicated SG, `SageMaker_Execution_Role` grants (including the cross-region `Cluster_Shared_Bucket` policy resolved via `AwsCustomResource`), IAM/cdk-nag compliance. Also asserts the `canvas` sub-toggle correctly attaches `AmazonSageMakerCanvasFullAccess` and injects a `DefaultUserSettings.CanvasAppSettings` block with an `S3ArtifactPath` that points at the cluster-shared bucket under `analytics-canvas/` when the toggle is on, and omits both when it's off. |
 | `test_analytics_bucket_isolation_property.py` | Hypothesis property test: across randomized cdk.json overlays the regional job-pod role's S3 policy only references `arn:aws:s3:::gco-cluster-shared-*` ARNs and never touches `gco-analytics-studio-*` |
 | `test_analytics_configmap_property.py` | Hypothesis property test for the biconditional between `analytics_environment.enabled` and the presence of the SageMaker execution role's RW grant on `Cluster_Shared_Bucket` — enabling the toggle must materialize the grant, disabling it must remove both the role and the grant |
 | `test_analytics_roundtrip_property.py` | Hypothesis property test that the two-bit `(enabled, hyperpod_enabled)` toggle state can be recovered from the synthesized CloudFormation templates alone (derive the toggles back from resource presence/absence and assert equality with the input config) |
 | `test_analytics_cluster_shared_configmap_property.py` | Hypothesis property test that the `gco-cluster-shared-bucket` ConfigMap is present in every regional cluster regardless of the `analytics_environment.enabled` toggle — the cluster-shared bucket is always-on |
-| `test_analytics_cmd.py` | CLI tests for `gco analytics enable/disable/status/users/studio login/doctor` including the toggle round-trip Hypothesis property and a `cdk synth` integration test that exercises the full analytics pipeline from CLI toggle to template |
+| `test_analytics_cmd.py` | CLI tests for `gco analytics enable/disable/status/users/studio login/doctor` including the toggle round-trip Hypothesis property, the `--hyperpod` and `--canvas` sub-toggle flags (individually and combined), a `disable` test that proves `canvas.enabled=true` survives a disable/enable cycle, and a `cdk synth` integration test that exercises the full analytics pipeline from CLI toggle to template |
 | `test_analytics_cmd_branches.py` | Edge-case coverage for the analytics CLI command branches (error paths, missing-config fallbacks, mixed-toggle scenarios) |
 | `test_analytics_user_mgmt.py` | Tests for the stdlib SRP implementation and Cognito auto-discovery helpers in `cli/analytics_user_mgmt.py` (used by `gco analytics studio login`) |
 | `test_analytics_examples_validation.py` | Validates the three new analytics example manifests (notebook-hosted SageMaker job, EMR Serverless Spark job, cluster-shared-bucket read/write job) pass `ManifestProcessor.validate_manifest` against the trusted-registry security config |

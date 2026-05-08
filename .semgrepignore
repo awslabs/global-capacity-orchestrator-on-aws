@@ -69,3 +69,18 @@ htmlcov/
 # base64-encoded strings (e.g., SecretRotationFunction/InvokeN0--a2GK...).
 # These are CFN logical IDs, not actual secrets.
 demo/*.cast
+
+# =============================================================================
+# Auto-generated code flowchart HTML
+# =============================================================================
+# ``diagrams/code_diagrams/**/*.html`` is produced by pyflowchart's
+# ``output_html`` helper. The template it renders loads raphael.js,
+# flowchart.js, and bootstrap from cdnjs over HTTPS and embeds a
+# plaintext-HTTP example link in the "Format Help" section. Those are
+# all pyflowchart / flowchart.js upstream template decisions, not ours.
+# The files are not served from any GCO endpoint — they're local
+# documentation artifacts users open in a checkout — so the
+# ``missing-integrity`` (no SRI hash on CDN scripts) and
+# ``plaintext-http-link`` findings have no runtime impact here.
+# Regenerate with ``python diagrams/code_diagrams/generate.py``.
+diagrams/code_diagrams/**/*.html
