@@ -1,17 +1,29 @@
 # Text Generation Inference (TGI) Endpoint Example
-# HuggingFace's optimized inference server for LLMs
 #
-# Deploy with: gco inference deploy tgi-mistral \
-#   -i ghcr.io/huggingface/text-generation-inference:3.3.7 \
-#   --gpu-count 1 --replicas 1 \
-#   -e MODEL_ID=mistralai/Mistral-7B-Instruct-v0.3 \
-#   -e MAX_INPUT_TOKENS=2048 \
-#   -e MAX_TOTAL_TOKENS=4096
+# HuggingFace's optimized LLM inference server. Deploys a Mistral 7B endpoint
+# reachable through the authenticated API Gateway.
 #
-# Test the endpoint:
-#   curl https://<GA-endpoint>/inference/tgi-mistral/generate \
+# Prerequisites:
+#   - GPU node with enough memory for the model (1x 24GB+ for Mistral-7B)
+#   - HF_TOKEN env var if the model is gated
+#
+# Usage (recommended, multi-region aware):
+#   gco inference deploy tgi-mistral \
+#     -i ghcr.io/huggingface/text-generation-inference:3.3.7 \
+#     --gpu-count 1 --replicas 1 \
+#     -e MODEL_ID=mistralai/Mistral-7B-Instruct-v0.3 \
+#     -e MAX_INPUT_TOKENS=2048 \
+#     -e MAX_TOTAL_TOKENS=4096
+#
+# Usage (single region, deploy this manifest directly):
+#   gco jobs submit-direct examples/inference-tgi.yaml -r us-east-1
+#
+# Test the endpoint (SigV4-authenticated via API Gateway; see docs/INFERENCE.md):
+#   curl https://<API-Gateway-endpoint>/inference/tgi-mistral/generate \
 #     -H "Content-Type: application/json" \
 #     -d '{"inputs": "What is deep learning?", "parameters": {"max_new_tokens": 100}}'
+#
+# Docs: ../docs/INFERENCE.md
 
 apiVersion: apps/v1
 kind: Deployment

@@ -1,5 +1,8 @@
-# DAG Pipeline Step 2: Train
-# Reads preprocess output from EFS, writes model artifacts.
+# DAG Pipeline Step: Train
+#
+# Step 2 of examples/pipeline-dag.yaml. Reads preprocess output from shared
+# EFS and writes model artifacts back to EFS. Not intended to be submitted
+# standalone — invoke via `gco dag run examples/pipeline-dag.yaml`.
 apiVersion: batch/v1
 kind: Job
 metadata:

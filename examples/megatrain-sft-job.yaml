@@ -1,58 +1,50 @@
 # MegaTrain SFT Training Job
-# Fine-tunes Qwen2.5-1.5B on the built-in alpaca demo dataset using MegaTrain.
-# MegaTrain stores parameters in CPU RAM and streams one layer at a time to the
-# GPU, enabling training of models larger than GPU memory on a single device.
 #
-# How it works:
-#   1. Init container downloads model weights to shared EFS (skipped if cached)
-#   2. Main container clones MegaTrain, installs it with CUDA extensions,
-#      then runs examples/sft/train.py against the downloaded model
-#
-# Notes from testing:
-#   - The devel image is required (not runtime) because MegaTrain builds a
-#     CUDA extension at install time
-#   - The trainer runs as root because conda's site-packages aren't writable
-#     as non-root in the PyTorch devel image
-#   - flash_attention_2 is installed at runtime and requires Ampere+ GPUs
-#     (i.e. A10G, L4, A100, H100, etc.) — T4/Turing GPUs are not supported
-#   - For larger models (7B+), increase memory requests and ensure the GPU
-#     nodepool includes instances with enough RAM (e.g., g5.12xlarge for 7B)
-#
-# ⚠️ Resource quota:
-#   This example REQUIRES raising the shipped per-manifest caps before
-#   submission. MegaTrain holds the full model in CPU RAM and materializes
-#   optimizer state lazily, so it needs more memory than the default 32Gi
-#   cap allows. Submission will fail with:
-#
-#     "Memory <N>Gi exceeds max 32Gi"
-#
-#   To raise the caps, edit the shared policy in cdk.json and redeploy
-#   (both the REST manifest processor and the SQS queue processor read
-#   from the same section):
-#
-#     context.job_validation_policy.resource_quotas.max_memory_per_manifest: "64Gi"
-#     context.job_validation_policy.resource_quotas.max_cpu_per_manifest:    "16"
-#
-#   The quota is summed across init + main containers, so a manifest with
-#   a 2Gi init + 48Gi trainer needs at least a 50Gi per-manifest cap.
-#
-# Why 48Gi:
-#   MegaTrain holds the full model in CPU RAM and materializes optimizer
-#   state lazily on the first backward pass. Observed peaks during the 5-step
-#   Qwen2.5-1.5B demo are ~19GB mid-step-1 but climb further between steps
-#   as optimizer state fully allocates. 28Gi was not enough in practice
-#   (OOMKilled between step 1 and step 2). 48Gi leaves comfortable headroom.
-#   Scale this up for larger models.
+# Fine-tunes Qwen2.5-1.5B on the built-in alpaca demo dataset using
+# MegaTrain, which stores parameters in CPU RAM and streams one layer at a
+# time to the GPU — letting you train models larger than GPU memory on a
+# single device.
 #
 # Prerequisites:
-#   - A GPU node with enough CPU RAM for the model (~20GB for 1.5B)
-#   - Shared storage (EFS) mounted via gco-shared-storage PVC
+#   - GPU node with enough CPU RAM for the model (~20 GB for 1.5B)
+#   - Shared EFS PVC (gco-shared-storage, default)
+#   - Raised per-manifest memory cap (default 32Gi is too small — see Notes)
 #
 # Usage:
 #   gco jobs submit-direct examples/megatrain-sft-job.yaml -r us-east-1
 #   gco jobs logs megatrain-sft -r us-east-1 -f
 #
-# To train a different model, change MODEL_NAME in both the init container
+# Notes:
+#   - The devel image is required (not runtime) because MegaTrain builds a
+#     CUDA extension at install time.
+#   - The trainer runs as root because conda's site-packages aren't
+#     writable as non-root in the PyTorch devel image.
+#   - flash_attention_2 is installed at runtime and requires Ampere+ GPUs
+#     (A10G, L4, A100, H100, …) — T4/Turing is not supported.
+#   - For larger models (7B+), raise memory requests and use an instance
+#     type with enough CPU RAM (e.g. g5.12xlarge for 7B).
+#
+#   - Quota caveat: MegaTrain holds the full model in CPU RAM and
+#     materializes optimizer state lazily, so it needs more memory than the
+#     default 32Gi per-manifest cap allows. Submission will fail with:
+#
+#       "Memory <N>Gi exceeds max 32Gi"
+#
+#     Raise the caps in cdk.json (both the REST manifest processor and the
+#     SQS queue processor read the same section) and redeploy:
+#
+#       context.job_validation_policy.resource_quotas.max_memory_per_manifest: "64Gi"
+#       context.job_validation_policy.resource_quotas.max_cpu_per_manifest:    "16"
+#
+#     The quota sums init + main containers, so 2Gi init + 48Gi trainer
+#     needs at least a 50Gi cap.
+#
+#   - Why 48Gi: observed peaks during the 5-step Qwen2.5-1.5B demo are
+#     ~19 GB mid-step-1 but climb further as optimizer state fully
+#     allocates. 28Gi OOMKilled between step 1 and step 2. 48Gi has
+#     comfortable headroom. Scale up for larger models.
+#
+#   - To train a different model, change MODEL_NAME in both the init container
 # and main container env vars.
 #
 # Reference: https://github.com/DLYuanGod/MegaTrain

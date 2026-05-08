@@ -1,17 +1,19 @@
-# Aurora pgvector Example Job
-# Demonstrates connecting to the regional Aurora Serverless v2 PostgreSQL
-# cluster with pgvector for vector similarity search (RAG, semantic search).
+# Aurora pgvector Job Example
 #
-# The Aurora endpoint and credentials are injected automatically via the
-# gco-aurora-pgvector ConfigMap and AWS Secrets Manager — no need to
-# hardcode connection strings. The same manifest works in any region.
+# Connects to the regional Aurora Serverless v2 PostgreSQL cluster with
+# pgvector for vector similarity search (RAG, semantic search). Endpoint
+# and credentials are injected via the gco-aurora-pgvector ConfigMap and
+# AWS Secrets Manager — no hardcoded connection strings. The same
+# manifest works in any region.
 #
 # Prerequisites:
 #   - aurora_pgvector.enabled = true in cdk.json
-#   - The regional stack deployed with Aurora enabled
+#   - Regional stack deployed with Aurora enabled
 #
-# Submit with:
+# Usage:
 #   gco jobs submit-direct examples/aurora-pgvector-job.yaml -r us-east-1
+#
+# Docs: ../docs/CUSTOMIZATION.md#configure-aurora-pgvector
 apiVersion: batch/v1
 kind: Job
 metadata:

@@ -1,26 +1,23 @@
-# KubeRay RayCluster Example
-# This example creates a Ray cluster for distributed computing
-# Supports distributed training, hyperparameter tuning, and model serving
+# Ray Cluster Example
+#
+# Creates a KubeRay RayCluster for distributed computing — training,
+# hyperparameter tuning, and Ray Serve. Includes a head node and an
+# auto-scaling CPU worker group (1-5 replicas).
 #
 # Prerequisites:
-#   - KubeRay operator must be installed (enabled by default in GCO)
+#   - KubeRay operator (enabled by default)
 #
 # Usage:
-#   # Create the Ray cluster
 #   kubectl apply -f examples/ray-cluster.yaml
-#
-#   # Wait for cluster to be ready
 #   kubectl get raycluster -n gco-jobs
 #   kubectl get pods -n gco-jobs -l ray.io/cluster=ray-cluster
-#
-#   # Port-forward to Ray dashboard
+#   # Port-forward to the Ray dashboard:
 #   kubectl port-forward svc/ray-cluster-head-svc 8265:8265 -n gco-jobs
-#   # Open http://localhost:8265 in browser
+#   # Submit a Ray job:
+#   ray job submit --address http://localhost:8265 -- \
+#     python -c "import ray; ray.init(); print(ray.cluster_resources())"
 #
-#   # Submit a Ray job
-#   ray job submit --address http://localhost:8265 -- python -c "import ray; ray.init(); print(ray.cluster_resources())"
-#
-# Documentation: https://docs.ray.io/en/latest/cluster/kubernetes/index.html
+# Docs: ../docs/KUBERAY.md
 
 apiVersion: ray.io/v1
 kind: RayCluster

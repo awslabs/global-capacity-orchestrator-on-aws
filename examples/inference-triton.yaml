@@ -1,14 +1,26 @@
 # NVIDIA Triton Inference Server Example
-# Supports multiple frameworks: TensorRT, ONNX, PyTorch, TensorFlow
 #
-# Deploy with: gco inference deploy triton-models \
-#   -i nvcr.io/nvidia/tritonserver:25.01-py3 \
-#   --gpu-count 1 --replicas 2 \
-#   --model-path /mnt/gco/models/triton-repo \
-#   --health-path /v2/health/ready
+# Multi-framework model serving (TensorRT, ONNX, PyTorch, TensorFlow).
+# Deploys a Triton endpoint reachable through the authenticated API Gateway.
 #
-# Test the endpoint:
-#   curl https://<GA-endpoint>/inference/triton-models/v2/models
+# Prerequisites:
+#   - GPU node
+#   - Model repository staged on EFS at /mnt/gco/models/triton-repo
+#
+# Usage (recommended, multi-region aware):
+#   gco inference deploy triton-models \
+#     -i nvcr.io/nvidia/tritonserver:25.01-py3 \
+#     --gpu-count 1 --replicas 2 \
+#     --model-path /mnt/gco/models/triton-repo \
+#     --health-path /v2/health/ready
+#
+# Usage (single region, deploy this manifest directly):
+#   gco jobs submit-direct examples/inference-triton.yaml -r us-east-1
+#
+# Test the endpoint (SigV4-authenticated via API Gateway; see docs/INFERENCE.md):
+#   curl https://<API-Gateway-endpoint>/inference/triton-models/v2/models
+#
+# Docs: ../docs/INFERENCE.md
 
 apiVersion: apps/v1
 kind: Deployment

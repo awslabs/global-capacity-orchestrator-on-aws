@@ -1,24 +1,23 @@
 # Kueue Job Queueing Example
-# This example demonstrates job queueing with quotas and fair-sharing
-# Jobs are queued and scheduled based on available cluster resources
+#
+# Demonstrates job queueing with resource quotas and fair-sharing. Creates a
+# ClusterQueue, LocalQueue, ResourceFlavors, and sample CPU + GPU jobs that
+# are queued and scheduled based on available cluster resources.
 #
 # Prerequisites:
-#   - Kueue must be installed (enabled by default in GCO)
+#   - Kueue (enabled by default)
 #
 # Usage:
-#   # First, create the ClusterQueue and LocalQueue
 #   kubectl apply -f examples/kueue-job.yaml
-#
-#   # Submit jobs (they will be queued if resources are limited)
+#   # Submit jobs (they will be queued if resources are limited):
 #   kubectl create job test-job-1 --image=python:3.14.4-slim -n gco-jobs -- sleep 60
 #   kubectl create job test-job-2 --image=python:3.14.4-slim -n gco-jobs -- sleep 60
-#
-#   # Check queue status
+#   # Inspect queue state:
 #   kubectl get clusterqueue
 #   kubectl get localqueue -n gco-jobs
 #   kubectl get workloads -n gco-jobs
 #
-# Documentation: https://kueue.sigs.k8s.io/docs/
+# Docs: ../docs/KUEUE.md
 
 ---
 # ResourceFlavor - defines the type of resources available

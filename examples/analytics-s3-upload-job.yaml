@@ -1,38 +1,41 @@
-# Analytics S3 Upload Example Job
+# Analytics S3 Upload Job Example
+#
 # Cluster-side half of the analytics workflow: publishes a small dataset
 # snapshot plus its schema manifest to Cluster_Shared_Bucket under the
 # analytics-data/ prefix so a SageMaker Studio notebook can read it via
-# the notebook's SageMaker execution role (which is granted RW on the
-# shared bucket when the analytics environment is enabled).
+# the notebook's SageMaker execution role (granted RW on the shared bucket
+# when the analytics environment is enabled).
 #
-# Same ConfigMap as examples/cluster-shared-bucket-upload-job.yaml —
-# gco-cluster-shared-bucket, exposing sharedBucketName / sharedBucketArn /
-# sharedBucketRegion via envFrom. The difference is the prerequisites:
-# the Studio reader counterpart only exists when the analytics stack is
-# deployed and a Studio user has been provisioned.
+# Uses the same gco-cluster-shared-bucket ConfigMap as
+# cluster-shared-bucket-upload-job.yaml (envFrom exposes sharedBucketName
+# / sharedBucketArn / sharedBucketRegion). The extra prerequisites are
+# only needed for the Studio reader counterpart.
 #
 # Prerequisites:
 #   1. gco analytics enable
 #      Sets analytics_environment.enabled = true in cdk.json.
 #   2. gco stacks deploy gco-analytics
-#      Provisions SageMaker Studio domain, Cognito user pool, KMS key,
-#      Studio_Only_Bucket, and EFS home folders. Also grants the
-#      SageMaker execution role RW on the shared bucket.
+#      Provisions the Studio domain, Cognito user pool, KMS key,
+#      Studio_Only_Bucket, and EFS home folders. Grants the SageMaker
+#      execution role RW on the shared bucket.
 #   3. gco analytics users add <username>
 #      Creates a Cognito user and associated Studio user profile with a
 #      per-user EFS access point under /home/<username>.
 #
-# Studio reader snippet (paste into a notebook cell after this job runs):
-#   import boto3, os, pandas
-#   df = pandas.read_csv(
-#       boto3.client('s3').get_object(
-#           Bucket=os.environ['sharedBucketName'],
-#           Key='analytics-data/dataset.csv',
-#       )['Body']
-#   )
-#
-# Submit with:
+# Usage:
 #   gco jobs submit-direct examples/analytics-s3-upload-job.yaml -r us-east-1
+#
+# Notes:
+#   - Studio reader snippet (paste into a notebook cell after this job runs):
+#       import boto3, os, pandas
+#       df = pandas.read_csv(
+#           boto3.client('s3').get_object(
+#               Bucket=os.environ['sharedBucketName'],
+#               Key='analytics-data/dataset.csv',
+#           )['Body']
+#       )
+#
+# Docs: ../docs/ANALYTICS.md
 apiVersion: batch/v1
 kind: Job
 metadata:

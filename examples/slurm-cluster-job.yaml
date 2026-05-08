@@ -1,11 +1,13 @@
-# Slurm Job Example — Submit a batch job to the GCO Slurm cluster
+# Slurm Job Example
 #
-# This example generates a JWT token from the Slurm auth secret, submits
-# a batch job via the Slurm REST API, waits for completion, and prints
-# the result. Fully automated — works via kubectl or API Gateway.
+# Submits a batch job to the GCO-hosted Slurm cluster via the Slurm REST API.
+# Generates a JWT token from the Slurm auth secret, submits via sbatch, waits
+# for completion, and prints the output. Works from kubectl or the GCO API
+# Gateway (the Slurm REST API is reachable in-cluster, not from the Internet).
 #
 # Prerequisites:
-#   - Enable Slurm in cdk.json: "helm": { "slurm": { "enabled": true } }
+#   - Slurm enabled in cdk.json:
+#       "helm": { "slurm": { "enabled": true } }
 #   - Deploy: gco stacks deploy-all -y
 #   - Verify: kubectl get pods -n gco-jobs -l app.kubernetes.io/part-of=slurm
 #
@@ -13,11 +15,12 @@
 #   kubectl apply -f examples/slurm-cluster-job.yaml
 #   kubectl logs job/slurm-test -n gco-jobs -f
 #
-# For interactive Slurm access:
-#   kubectl exec -it -n gco-jobs deploy/slinky-slurm-controller -- bash
-#   sinfo && srun hostname && sbatch --wrap="echo Hello"
+# Notes:
+#   - For interactive Slurm access:
+#       kubectl exec -it -n gco-jobs deploy/slinky-slurm-controller -- bash
+#       sinfo && srun hostname && sbatch --wrap="echo Hello"
 #
-# Documentation: docs/SLURM_OPERATOR.md
+# Docs: ../docs/SLURM_OPERATOR.md
 
 apiVersion: batch/v1
 kind: Job

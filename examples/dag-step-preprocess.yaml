@@ -1,5 +1,8 @@
-# DAG Pipeline Step 1: Preprocess
-# Writes output to shared EFS for the next step to consume.
+# DAG Pipeline Step: Preprocess
+#
+# Step 1 of examples/pipeline-dag.yaml. Writes output to shared EFS at
+# /mnt/shared for the train step to consume. Not intended to be submitted
+# standalone — invoke via `gco dag run examples/pipeline-dag.yaml`.
 apiVersion: batch/v1
 kind: Job
 metadata:

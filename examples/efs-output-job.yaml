@@ -1,14 +1,18 @@
-# Example job that writes output to shared EFS storage
-# This demonstrates how to use the gco-shared-storage PVC for job outputs
+# EFS Output Job Example
 #
-# The job:
-# 1. Mounts the shared EFS volume at /outputs
-# 2. Creates a timestamped output file using the JOB_NAME (not pod name)
-# 3. Writes job results to the file
+# Writes a timestamped output file to shared EFS via the gco-shared-storage
+# PVC. Demonstrates how to persist job results so they survive pod termination
+# and can be read by other pods or downloaded with `gco files`.
 #
-# Download results with: gco files download efs-output-example ./results -r <region>
+# Prerequisites:
+#   - Shared EFS PVC (provisioned by default as gco-shared-storage)
 #
-# Other jobs or pods can read these outputs by mounting the same PVC
+# Usage:
+#   gco jobs submit-direct examples/efs-output-job.yaml -r us-east-1
+#   gco files ls -r us-east-1
+#   gco files download efs-output-example ./results -r us-east-1
+#
+# Docs: ../docs/CUSTOMIZATION.md
 apiVersion: batch/v1
 kind: Job
 metadata:

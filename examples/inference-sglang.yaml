@@ -1,12 +1,20 @@
 # SGLang Inference Endpoint Example
-# Uses Phi-3.5-mini-instruct (ungated, no HF token required)
 #
-# Deploy with: gco inference deploy sglang-phi3 \
-#   -i lmsysorg/sglang:v0.5.10 \
-#   --gpu-count 1 --replicas 1 \
-#   -e MODEL=microsoft/Phi-3.5-mini-instruct
+# High-throughput LLM serving with RadixAttention. Deploys a Phi-3.5-mini
+# endpoint (ungated, no HF token required) reachable through the
+# authenticated API Gateway.
 #
-# Deploy with autoscaling:
+# Prerequisites:
+#   - GPU node
+#   - HF_TOKEN env var if switching to a gated model
+#
+# Usage (recommended, multi-region aware):
+#   gco inference deploy sglang-phi3 \
+#     -i lmsysorg/sglang:v0.5.10 \
+#     --gpu-count 1 --replicas 1 \
+#     -e MODEL=microsoft/Phi-3.5-mini-instruct
+#
+# Usage with autoscaling:
 #   gco inference deploy sglang-phi3 \
 #     -i lmsysorg/sglang:v0.5.10 \
 #     --gpu-count 1 --replicas 2 \
@@ -14,16 +22,15 @@
 #     --autoscale-metric cpu:70 --autoscale-metric memory:80 \
 #     -e MODEL=microsoft/Phi-3.5-mini-instruct
 #
-# Or deploy this manifest directly (single region):
+# Usage (single region, deploy this manifest directly):
 #   gco jobs submit-direct examples/inference-sglang.yaml -r us-east-1
 #
-# Test the endpoint (OpenAI-compatible):
+# Test the endpoint (SigV4-authenticated via API Gateway; OpenAI-compatible):
 #   curl https://<API-Gateway-endpoint>/inference/sglang-phi3/v1/completions \
 #     -H "Content-Type: application/json" \
 #     -d '{"model": "microsoft/Phi-3.5-mini-instruct", "prompt": "Hello", "max_tokens": 50}'
 #
-# For gated models (e.g. Llama), add HF_TOKEN env var:
-#   -e HF_TOKEN=hf_your_token_here
+# Docs: ../docs/INFERENCE.md
 
 apiVersion: apps/v1
 kind: Deployment

@@ -1,19 +1,23 @@
 # Multi-GPU Distributed Training Example
-# This example demonstrates distributed training across multiple GPUs
-# Uses PyTorch with DistributedDataParallel (DDP)
+#
+# Distributed training across multiple GPU pods using PyTorch
+# DistributedDataParallel (DDP). Uses indexed pods with a headless service
+# for DNS-based peer discovery.
 #
 # Prerequisites:
-#   - GPU nodes must be available
-#   - NVIDIA GPU Operator installed (enabled by default)
+#   - GPU nodes available
+#   - NVIDIA GPU Operator (enabled by default)
 #
 # Usage:
 #   kubectl apply -f examples/multi-gpu-training.yaml
 #   kubectl get pods -n gco-jobs -l job-name=pytorch-ddp-training
 #   kubectl logs -f job/pytorch-ddp-training -n gco-jobs
 #
-# For production training, mount EFS or FSx for checkpoints:
-#   - Add volumeMounts for /checkpoints
-#   - Use gco files download to retrieve results
+# Notes:
+#   - For production training, mount EFS or FSx for checkpoints and use
+#     `gco files download` to retrieve results.
+#
+# Docs: ../docs/INFERENCE.md
 
 apiVersion: batch/v1
 kind: Job

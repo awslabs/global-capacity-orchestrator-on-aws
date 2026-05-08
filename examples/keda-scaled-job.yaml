@@ -1,18 +1,24 @@
 # KEDA ScaledJob Example — Custom SQS Consumer
 #
-# NOTE: GCO ships with a built-in SQS consumer (post-helm-sqs-consumer.yaml) that
-# automatically processes manifests submitted via `gco jobs submit-sqs`.
-# You do NOT need this example for basic SQS job submission.
+# A starting point for CUSTOM SQS-triggered workloads. NOT required for
+# basic SQS job submission — GCO ships with a built-in SQS consumer
+# (post-helm-sqs-consumer.yaml) that automatically processes manifests
+# submitted via `gco jobs submit-sqs`.
 #
-# Use this example as a starting point if you want to build a CUSTOM
-# SQS-triggered job — e.g., processing messages from your own queue,
-# running a different consumer logic, or scaling a different workload.
+# Use this example when you want to process messages from your own queue,
+# run different consumer logic, or scale a different workload on queue depth.
 #
 # Prerequisites:
-#   - KEDA must be installed (enabled by default in GCO)
-#   - GCO regional stack deployed (creates SQS queue automatically)
+#   - KEDA (enabled by default)
+#   - Regional stack deployed (creates the built-in SQS queue)
 #
-# Documentation: https://keda.sh/docs/latest/scalers/aws-sqs/
+# Usage:
+#   # Edit the manifest to set JOB_QUEUE_URL and REGION, then:
+#   kubectl apply -f examples/keda-scaled-job.yaml
+#
+# Docs:
+#   - KEDA SQS scaler: https://keda.sh/docs/latest/scalers/aws-sqs/
+#   - GCO guide: ../docs/KEDA.md
 
 ---
 # ScaledJob - scales job replicas based on regional SQS queue depth

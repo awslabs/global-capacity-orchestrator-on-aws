@@ -1,29 +1,24 @@
-# Apache YuniKorn Scheduling Example
-# Demonstrates app-aware scheduling with hierarchical queues and resource quotas.
-# YuniKorn provides fair-sharing, preemption, and gang scheduling for multi-tenant
-# AI/ML clusters.
+# YuniKorn Hierarchical Queues Example
+#
+# Demonstrates Apache YuniKorn's app-aware scheduling with hierarchical
+# queues, resource quotas, gang scheduling, and GPU queue placement. Useful
+# for multi-tenant clusters where teams need fair-sharing and preemption.
 #
 # Prerequisites:
-#   1. YuniKorn is opt-in. Enable it in cdk.json:
-#        "helm": { "yunikorn": { "enabled": true } }
-#   2. Deploy: gco stacks deploy-all -y
+#   - YuniKorn is opt-in. Enable in cdk.json:
+#       "helm": { "yunikorn": { "enabled": true } }
+#   - Deploy: gco stacks deploy-all -y
 #
 # Usage:
 #   kubectl apply -f examples/yunikorn-job.yaml
-#
-#   # Check queue status via YuniKorn REST API
+#   # Inspect queue state via the YuniKorn REST API:
 #   kubectl port-forward svc/yunikorn-service -n yunikorn 9889:9889
 #   curl http://localhost:9889/ws/v1/queues
-#
-#   # Check application status
 #   curl http://localhost:9889/ws/v1/apps
-#
-#   # Monitor pods
+#   # Monitor pods:
 #   kubectl get pods -n gco-jobs -l app=yunikorn-demo -w
 #
-# Documentation:
-#   - YuniKorn: https://yunikorn.apache.org/docs/
-#   - GCO guide: docs/YUNIKORN.md
+# Docs: ../docs/YUNIKORN.md
 
 ---
 # Job using YuniKorn scheduling with queue placement

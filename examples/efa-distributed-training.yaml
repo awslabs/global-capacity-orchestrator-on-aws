@@ -1,17 +1,27 @@
 # EFA-Enabled Distributed Training Example
-# Uses Elastic Fabric Adapter for high-bandwidth inter-node communication
+#
+# Uses Elastic Fabric Adapter for high-bandwidth, low-latency inter-node
+# communication — up to 3.2 Tbps on P5/Trn2 and up to 28.8 Tbps on
+# P6e-GB200. Required for large-scale NCCL-based multi-node training.
 #
 # Prerequisites:
-#   1. EFA is enabled by default via the helm config in cdk.json.
-#      If disabled, re-enable: "helm": { "nvidia_network_operator": { "enabled": true } }
-#      and redeploy: gco stacks deploy-all -y
+#   - EFA-capable instance type (see list below)
+#   - NVIDIA Network Operator enabled in cdk.json (on by default):
+#       "helm": { "nvidia_network_operator": { "enabled": true } }
+#   - Regional stack deployed: `gco stacks deploy-all -y`
 #
-# Deploy with:
+# Usage:
 #   gco jobs submit-direct examples/efa-distributed-training.yaml -r us-east-1
 #
-# Supported instance types: p4d.24xlarge (4x EFA), p5.48xlarge (32x EFA), p6 (B200/B300)
-# EFA bandwidth: P4d 400 Gbps, P5/P5e/P5en/Trn2 3,200 Gbps, P6-B200 3.2 Tbps, P6e-GB200 28.8 Tbps
-# EKS Auto Mode uses EKS-optimized AMIs which include host-level EFA components
+# Notes:
+#   - Supported instance types: p4d.24xlarge (4x EFA), p5.48xlarge (32x EFA),
+#     p6 (B200/B300), trn1.32xlarge, trn2.48xlarge.
+#   - EFA bandwidth: P4d 400 Gbps, P5/P5e/P5en/Trn2 3,200 Gbps,
+#     P6-B200 3.2 Tbps, P6e-GB200 28.8 Tbps.
+#   - EKS Auto Mode uses EKS-optimized AMIs with host-level EFA components
+#     already present.
+#
+# Docs: ../docs/INFERENCE.md
 apiVersion: batch/v1
 kind: Job
 metadata:

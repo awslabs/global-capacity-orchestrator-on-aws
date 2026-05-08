@@ -1,5 +1,17 @@
 # GPU Job Example
-# This job requests GPU resources and runs on GPU nodes
+#
+# Runs nvidia-smi on a GPU-enabled node to verify GPU scheduling and driver
+# visibility. A good smoke test after enabling GPU nodepools.
+#
+# Prerequisites:
+#   - GPU nodepool (enabled by default)
+#   - NVIDIA device plugin (enabled by default)
+#
+# Usage:
+#   gco jobs submit-sqs examples/gpu-job.yaml --region us-east-1
+#   gco jobs logs gpu-test-job -r us-east-1
+#
+# Docs: ../docs/CLI.md
 
 apiVersion: batch/v1
 kind: Job

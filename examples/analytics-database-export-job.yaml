@@ -1,4 +1,5 @@
-# Analytics Database Export Example Job
+# Analytics Database Export Job Example
+#
 # Exports rows from the regional Aurora Serverless v2 PostgreSQL cluster
 # (pgvector) to Cluster_Shared_Bucket as CSV, so a SageMaker Studio
 # notebook can analyse the export without direct database credentials.
@@ -8,7 +9,7 @@
 #     sharedBucketArn, sharedBucketRegion). Always present.
 #   - gco-aurora-pgvector — source (endpoint, port, database, secret_arn,
 #     region, role_arn). Only present when aurora_pgvector.enabled = true
-#     in cdk.json and the regional stack has been redeployed.
+#     and the regional stack has been redeployed.
 #
 # An init container checks for the Aurora ConfigMap on disk and exits 0
 # when Aurora is not enabled, turning this job into a safe no-op on
@@ -24,8 +25,10 @@
 #   3. (Optional, for the notebook reader)
 #      gco analytics enable && gco stacks deploy gco-analytics
 #
-# Submit with:
+# Usage:
 #   gco jobs submit-direct examples/analytics-database-export-job.yaml -r us-east-1
+#
+# Docs: ../docs/ANALYTICS.md
 apiVersion: batch/v1
 kind: Job
 metadata:

@@ -1,16 +1,18 @@
 # Volcano Gang Scheduling Example
-# This example demonstrates gang scheduling for distributed training
-# All pods in the job must be scheduled together or none at all
+#
+# Demonstrates gang scheduling for distributed training — all pods in the job
+# must be scheduled together or none at all. Creates a master + 2 workers
+# with automatic restart policies.
 #
 # Prerequisites:
-#   - Volcano must be installed (enabled by default in GCO)
+#   - Volcano (enabled by default)
 #
 # Usage:
 #   kubectl apply -f examples/volcano-gang-job.yaml
 #   kubectl get vcjob -n gco-jobs
 #   kubectl get pods -n gco-jobs -l volcano.sh/job-name=distributed-training
 #
-# Documentation: https://volcano.sh/en/docs/
+# Docs: ../docs/VOLCANO.md
 
 ---
 # Volcano Job with gang scheduling

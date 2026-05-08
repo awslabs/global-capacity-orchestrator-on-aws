@@ -1,5 +1,17 @@
 # Simple Kubernetes Job Example
-# This job runs a simple command and completes
+#
+# A minimal job that prints a message, sleeps briefly, and exits. Useful for
+# verifying cluster connectivity and the submission path end-to-end.
+#
+# Prerequisites:
+#   - None
+#
+# Usage:
+#   gco jobs submit-sqs examples/simple-job.yaml --region us-east-1
+#   # or apply directly:
+#   kubectl apply -f examples/simple-job.yaml
+#
+# Docs: ../docs/CLI.md
 
 apiVersion: batch/v1
 kind: Job

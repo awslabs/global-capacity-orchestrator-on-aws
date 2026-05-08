@@ -1,33 +1,30 @@
-# GPU Time-Slicing Example
+# GPU Time-Slicing Job Example
 #
-# This example shows how to run a job using a fractional (shared) GPU via
-# NVIDIA GPU time-slicing. Time-slicing lets multiple pods share a single
-# physical GPU by taking turns, similar to how a CPU handles multiple processes.
+# Runs a job on a fractional (shared) GPU via NVIDIA time-slicing — multiple
+# pods share a single physical GPU by taking turns. Good for lightweight
+# inference or dev/test where a full GPU per pod is wasteful.
 #
-# PREREQUISITES:
-#   Time-slicing must be enabled on the cluster. Apply the ConfigMap below
-#   to configure the NVIDIA device plugin to advertise multiple "replicas"
-#   per physical GPU. Each replica represents a time-slice that a pod can
-#   request. For example, replicas=4 means one physical GPU is exposed as
-#   4 schedulable nvidia.com/gpu units.
+# Prerequisites:
+#   - GPU nodepool (enabled by default)
+#   - NVIDIA device plugin configured for time-slicing. Apply the ConfigMap
+#     below, which advertises multiple `nvidia.com/gpu` replicas per physical
+#     GPU. For example, replicas=4 exposes one GPU as 4 schedulable units.
 #
-#   1. Apply the time-slicing ConfigMap:
-#
-#      kubectl apply -f - <<'EOF'
-#      apiVersion: v1
-#      kind: ConfigMap
-#      metadata:
-#        name: nvidia-device-plugin-config
-#        namespace: kube-system
-#      data:
-#        config.yaml: |
-#          version: v1
-#          sharing:
-#            timeSlicing:
-#              renameByDefault: false
-#              resources:
-#                - name: nvidia.com/gpu
-#                  replicas: 4
+#     kubectl apply -f - <<'EOF'
+#     apiVersion: v1
+#     kind: ConfigMap
+#     metadata:
+#       name: nvidia-device-plugin-config
+#       namespace: kube-system
+#     data:
+#       config.yaml: |
+#         version: v1
+#         sharing:
+#           timeSlicing:
+#             renameByDefault: false
+#             resources:
+#               - name: nvidia.com/gpu
+#                 replicas: 4
 #      EOF
 #
 #   2. Restart the NVIDIA device plugin to pick up the config:

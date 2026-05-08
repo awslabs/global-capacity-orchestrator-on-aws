@@ -1,23 +1,23 @@
 # SQS-Based Job Submission Example
 #
-# Submit Kubernetes manifests to the regional SQS queue for processing.
-# The built-in queue processor (KEDA ScaledJob) automatically picks up
-# messages and applies the manifests to the cluster.
+# Submits Kubernetes manifests to the regional SQS queue. The built-in
+# queue processor (KEDA ScaledJob) picks up messages and applies them to
+# the cluster. This is the recommended submission path: decoupled,
+# fault-tolerant (DLQ after 3 retries), auto-scaling, and priority-aware.
 #
-# This is the recommended submission method because:
-#   - Decoupled: submission returns immediately, processing happens async
-#   - Fault-tolerant: messages persist in SQS if processing fails (DLQ after 3 retries)
-#   - Auto-scaling: KEDA scales consumer pods based on queue depth
-#   - Priority support: higher-priority jobs can be processed first
-#
-# This file contains two examples:
+# Contains two jobs in one file:
 #   1. CPU job — simple Python training simulation
-#   2. GPU job — PyTorch GPU computation (requires GPU compute)
+#   2. GPU job — PyTorch GPU computation (requires a GPU node)
+#
+# Prerequisites:
+#   - Regional stack deployed (creates the SQS queue and built-in consumer)
 #
 # Usage:
 #   gco jobs submit-sqs examples/sqs-job-submission.yaml --region us-east-1
 #   gco jobs submit-sqs examples/sqs-job-submission.yaml --auto-region
 #   gco jobs submit-sqs examples/sqs-job-submission.yaml --priority 10
+#
+# Docs: ../docs/CLI.md
 
 ---
 apiVersion: batch/v1

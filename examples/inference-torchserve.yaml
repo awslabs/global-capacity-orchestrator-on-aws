@@ -1,21 +1,32 @@
 # TorchServe Inference Endpoint Example
-# PyTorch's native model serving framework
 #
-# Deploy with: gco inference deploy torchserve-resnet \
-#   -i pytorch/torchserve:0.12.0-gpu \
-#   --gpu-count 1 --replicas 1 \
-#   --model-path /mnt/gco/models/torchserve \
-#   --health-path /ping \
-#   --port 8080
+# PyTorch's native model serving framework. Deploys a ResNet50 endpoint
+# reachable through the authenticated API Gateway.
 #
-# Pre-requisite: Package your model as a .mar file and upload to EFS:
-#   torch-model-archiver --model-name resnet50 \
-#     --version 1.0 --serialized-file model.pt \
-#     --handler image_classifier --export-path /mnt/gco/models/torchserve/model-store
+# Prerequisites:
+#   - GPU node
+#   - Model packaged as a .mar file on EFS:
+#       torch-model-archiver --model-name resnet50 \
+#         --version 1.0 --serialized-file model.pt \
+#         --handler image_classifier \
+#         --export-path /mnt/gco/models/torchserve/model-store
 #
-# Test the endpoint:
-#   curl https://<GA-endpoint>/inference/torchserve-resnet/predictions/resnet50 \
+# Usage (recommended, multi-region aware):
+#   gco inference deploy torchserve-resnet \
+#     -i pytorch/torchserve:0.12.0-gpu \
+#     --gpu-count 1 --replicas 1 \
+#     --model-path /mnt/gco/models/torchserve \
+#     --health-path /ping \
+#     --port 8080
+#
+# Usage (single region, deploy this manifest directly):
+#   gco jobs submit-direct examples/inference-torchserve.yaml -r us-east-1
+#
+# Test the endpoint (SigV4-authenticated via API Gateway; see docs/INFERENCE.md):
+#   curl https://<API-Gateway-endpoint>/inference/torchserve-resnet/predictions/resnet50 \
 #     -T image.jpg
+#
+# Docs: ../docs/INFERENCE.md
 
 apiVersion: apps/v1
 kind: Deployment

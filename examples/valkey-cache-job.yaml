@@ -1,13 +1,18 @@
-# Valkey Cache Example Job
-# Demonstrates connecting to the regional Valkey Serverless cache
-# for K/V caching, session state, or feature stores.
+# Valkey Cache Job Example
 #
-# The Valkey endpoint is injected automatically via the gco-valkey
-# ConfigMap — no need to look up or hardcode endpoint URLs.
-# The same manifest works in any region.
+# Connects to the regional Valkey Serverless cache for K/V caching, session
+# state, or feature stores. The Valkey endpoint is injected via the
+# gco-valkey ConfigMap — no hardcoded endpoint URLs. The same manifest
+# works in any region.
 #
-# Submit with:
+# Prerequisites:
+#   - valkey.enabled = true in cdk.json
+#   - Regional stack deployed with Valkey enabled
+#
+# Usage:
 #   gco jobs submit-direct examples/valkey-cache-job.yaml -r us-east-1
+#
+# Docs: ../docs/CUSTOMIZATION.md#configure-valkey-cache
 apiVersion: batch/v1
 kind: Job
 metadata:

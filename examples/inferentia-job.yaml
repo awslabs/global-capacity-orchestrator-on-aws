@@ -1,32 +1,26 @@
-# AWS Inferentia Inference Example
+# AWS Inferentia Job Example
 #
-# This example runs a job on an AWS Inferentia2 instance (inf2).
-# Inferentia is a purpose-built ML inference accelerator designed by AWS,
-# using the Neuron SDK. It's optimized for low-cost, high-throughput
-# inference workloads.
+# Runs a job on an AWS Inferentia2 (inf2) instance using the Neuron SDK.
+# Inferentia is a purpose-built, low-cost, high-throughput ML inference
+# accelerator. Pods request Neuron devices via aws.amazon.com/neuron and
+# Karpenter provisions inf2 nodes from the Neuron nodepool.
 #
-# HOW IT WORKS:
-#   Pods request Neuron devices via aws.amazon.com/neuron. The Neuron
-#   device plugin (installed via Helm chart) advertises these resources.
-#   Karpenter provisions inf2 instances from the Neuron nodepool when a
-#   pod requests Neuron devices and tolerates the taint.
+# Prerequisites:
+#   - Neuron device plugin (installed by default via Helm chart)
+#   - Neuron nodepool (manifests/44-nodepool-neuron.yaml, applied by default)
+#   - Container image built with the Neuron SDK (not CUDA)
 #
-# USAGE:
-#   gco jobs submit examples/inferentia-job.yaml --region us-east-1
+# Usage:
+#   gco jobs submit-direct examples/inferentia-job.yaml --region us-east-1
 #   gco jobs logs inferentia-test -r us-east-1
 #   gco jobs delete inferentia-test -r us-east-1
 #
-# PREREQUISITES:
-#   - Neuron device plugin (installed by default via Helm chart)
-#   - Neuron nodepool (manifests/44-nodepool-neuron.yaml, applied by default)
-#
-# INSTANCE TYPES:
-#   inf2.xlarge    — 1 Inferentia2 chip,  2 NeuronCores, 32 GB
-#   inf2.8xlarge   — 1 Inferentia2 chip,  2 NeuronCores, 32 GB
-#   inf2.24xlarge  — 6 Inferentia2 chips, 12 NeuronCores, 192 GB
-#   inf2.48xlarge  — 12 Inferentia2 chips, 24 NeuronCores, 384 GB
-#
-# NOTES:
+# Notes:
+#   - Instance types:
+#       inf2.xlarge    — 1 Inferentia2 chip,  2 NeuronCores,  32 GB
+#       inf2.8xlarge   — 1 Inferentia2 chip,  2 NeuronCores,  32 GB
+#       inf2.24xlarge  — 6 Inferentia2 chips, 12 NeuronCores, 192 GB
+#       inf2.48xlarge  — 12 Inferentia2 chips, 24 NeuronCores, 384 GB
 #   - Inferentia uses the Neuron SDK, not CUDA. Your container images must
 #     include the Neuron runtime. Use images from public.ecr.aws/neuron/.
 #   - inf2 instances are cost-optimized for inference — for training,

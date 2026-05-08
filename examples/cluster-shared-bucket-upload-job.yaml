@@ -1,26 +1,26 @@
-# Cluster Shared Bucket Upload Example Job
-# Demonstrates the always-on Cluster_Shared_Bucket: every regional GCO
-# cluster can read and write this bucket regardless of whether the
-# analytics environment is enabled. The bucket's name, ARN, and region
-# are injected via the gco-cluster-shared-bucket ConfigMap using envFrom,
-# which exposes the keys sharedBucketName, sharedBucketArn, and
-# sharedBucketRegion directly as env vars — no ConfigMap key lookup or
-# hardcoded bucket name.
+# Cluster Shared Bucket Upload Job Example
 #
-# Cross-region caveat:
-#   The shared bucket lives in the global region (default us-east-2)
-#   where GCOGlobalStack is deployed, NOT in the regional cluster's own
-#   region. This job runs in whatever region you submit it to, but the
-#   boto3 S3 client below is pointed at os.environ["sharedBucketRegion"]
-#   so the request goes to the bucket's home region. Expect small
-#   cross-region egress charges on large uploads.
+# Writes a small JSON artifact to the always-on Cluster_Shared_Bucket using
+# envFrom against the gco-cluster-shared-bucket ConfigMap. The bucket's
+# name, ARN, and region are exposed as env vars (sharedBucketName,
+# sharedBucketArn, sharedBucketRegion) — no hardcoded bucket names. Works
+# regardless of whether the analytics environment is enabled.
 #
 # Prerequisites:
-#   None — Cluster_Shared_Bucket is always on. This example works with
-#   analytics_environment.enabled = false.
+#   - None — Cluster_Shared_Bucket is always provisioned with
+#     `gco stacks deploy gco-global`.
 #
-# Submit with:
+# Usage:
 #   gco jobs submit-direct examples/cluster-shared-bucket-upload-job.yaml -r us-east-1
+#
+# Notes:
+#   - Cross-region caveat: the shared bucket lives in the global region
+#     (default us-east-2) where GCOGlobalStack is deployed, not in the
+#     regional cluster's own region. The boto3 client below is pointed at
+#     os.environ["sharedBucketRegion"] so requests go to the bucket's home
+#     region. Expect small cross-region egress charges on large uploads.
+#
+# Docs: ../docs/CLUSTER_SHARED_BUCKET.md
 apiVersion: batch/v1
 kind: Job
 metadata:

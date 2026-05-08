@@ -1,18 +1,26 @@
 # Model Download Job
-# Downloads model weights to shared EFS so inference endpoints can mount them.
-# This example downloads facebook/opt-125m (small, public, no token needed).
-# For gated models like Llama, uncomment the HF_TOKEN env var.
+#
+# Downloads model weights from HuggingFace to shared EFS so inference
+# endpoints can mount them instantly. Defaults to facebook/opt-125m
+# (small, public, no token needed) — change MODEL_ID for other models,
+# or uncomment HF_TOKEN for gated models.
+#
+# Prerequisites:
+#   - Shared EFS PVC (gco-shared-storage, default)
+#   - HF_TOKEN env var if the model is gated
 #
 # Usage:
 #   kubectl apply -f examples/model-download-job.yaml
-#
-# After completion, deploy inference with:
+#   # After completion, deploy inference with the cached model:
 #   gco inference deploy my-model \
 #     -i vllm/vllm-openai:v0.20.1 \
 #     --model-path /models/opt-125m
 #
-# To download from S3 instead of HuggingFace, change the command to:
-#   aws s3 sync s3://my-bucket/models/llama3 /mnt/gco/models/llama3
+# Notes:
+#   - To pull from S3 instead of HuggingFace, swap the command for:
+#       aws s3 sync s3://my-bucket/models/llama3 /mnt/gco/models/llama3
+#
+# Docs: ../docs/INFERENCE.md
 apiVersion: batch/v1
 kind: Job
 metadata:

@@ -1,11 +1,20 @@
 # vLLM Inference Endpoint Example
-# Deploy with: gco inference deploy vllm-llama3 \
-#   -i vllm/vllm-openai:v0.20.1 \
-#   --gpu-count 1 --replicas 1 \
-#   -e MODEL=meta-llama/Llama-3.1-8B-Instruct \
-#   -e MAX_MODEL_LEN=4096
 #
-# Deploy with autoscaling:
+# OpenAI-compatible LLM serving with PagedAttention. Deploys a Llama 3.1 8B
+# endpoint reachable through the authenticated API Gateway.
+#
+# Prerequisites:
+#   - GPU node with enough memory for the model (1x 24GB+ for Llama-3.1-8B)
+#   - HF_TOKEN env var if the model is gated
+#
+# Usage (recommended, multi-region aware):
+#   gco inference deploy vllm-llama3 \
+#     -i vllm/vllm-openai:v0.20.1 \
+#     --gpu-count 1 --replicas 1 \
+#     -e MODEL=meta-llama/Llama-3.1-8B-Instruct \
+#     -e MAX_MODEL_LEN=4096
+#
+# Usage with autoscaling:
 #   gco inference deploy vllm-llama3 \
 #     -i vllm/vllm-openai:v0.20.1 \
 #     --gpu-count 1 --replicas 2 \
@@ -13,13 +22,15 @@
 #     --autoscale-metric cpu:70 --autoscale-metric memory:80 \
 #     -e MODEL=meta-llama/Llama-3.1-8B-Instruct
 #
-# Or deploy this manifest directly (single region):
+# Usage (single region, deploy this manifest directly):
 #   gco jobs submit-direct examples/inference-vllm.yaml -r us-east-1
 #
-# Test the endpoint:
-#   curl https://<GA-endpoint>/inference/vllm-llama3/v1/completions \
+# Test the endpoint (SigV4-authenticated via API Gateway; see docs/INFERENCE.md):
+#   curl https://<API-Gateway-endpoint>/inference/vllm-llama3/v1/completions \
 #     -H "Content-Type: application/json" \
 #     -d '{"model": "meta-llama/Llama-3.1-8B-Instruct", "prompt": "Hello", "max_tokens": 50}'
+#
+# Docs: ../docs/INFERENCE.md
 
 apiVersion: apps/v1
 kind: Deployment

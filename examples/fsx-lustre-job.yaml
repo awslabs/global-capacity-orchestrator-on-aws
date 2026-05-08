@@ -1,17 +1,19 @@
-# Example job that uses FSx for Lustre high-performance storage
-# FSx for Lustre provides high-throughput, low-latency storage ideal for:
-# - Large dataset processing (ML training data)
-# - High-performance computing (HPC) workloads
-# - Checkpoint/restart for long-running jobs
+# FSx for Lustre Job Example
+#
+# Uses FSx for Lustre high-performance parallel storage for I/O-intensive
+# workloads — large dataset processing, HPC, and long-running training with
+# frequent checkpoints. Mounts the FSx volume at /scratch.
 #
 # Prerequisites:
-# 1. FSx must be enabled: gco stacks fsx enable
-# 2. Stack must be redeployed after enabling FSx
+#   - FSx enabled and regional stack redeployed:
+#       gco stacks fsx enable -y
+#       gco stacks deploy gco-us-east-1 -y
 #
-# The job:
-# 1. Mounts the FSx Lustre volume at /scratch
-# 2. Demonstrates high-throughput I/O operations
-# 3. Shows how to use FSx for ML training data and checkpoints
+# Usage:
+#   gco jobs submit-direct examples/fsx-lustre-job.yaml -r us-east-1
+#   gco files download fsx-lustre-example ./fsx-results -r us-east-1 -t fsx
+#
+# Docs: ../docs/CUSTOMIZATION.md#configure-fsx-storage
 apiVersion: batch/v1
 kind: Job
 metadata:
