@@ -223,6 +223,117 @@ class TestUsers:
         # human-readable note rather than inventing one.
         assert "admin-set-user-password" in result.output or "printed exactly once" in result.output
 
+    def test_users_add_with_explicit_password_sets_permanent(self, aws_creds_env, tmp_cdk_json):
+        """``--password`` calls admin_set_user_password with Permanent=True
+        and doesn't leak the password into stdout."""
+        from cli.main import cli
+
+        with mock_aws():
+            cognito = boto3.client("cognito-idp", region_name="us-east-2")
+            pool = cognito.create_user_pool(PoolName="gco-studio")
+            pool_id = pool["UserPool"]["Id"]
+            _seed_gco_analytics_stack("us-east-2", pool_id, "client-abc")
+
+            runner = CliRunner()
+            with patch("cli.stacks._find_cdk_json", return_value=tmp_cdk_json):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "analytics",
+                        "users",
+                        "add",
+                        "--username",
+                        "bob",
+                        "--no-email",
+                        "--password",
+                        "StrongP@ssw0rd!",
+                    ],
+                )
+
+            assert result.exit_code == 0, result.output
+            # The password itself must not be echoed back.
+            assert "StrongP@ssw0rd!" not in result.output
+            assert "Password set (permanent)" in result.output
+
+            # And the user must be in CONFIRMED / FORCE_CHANGE_PASSWORD=false
+            # state — moto reflects AdminSetUserPassword's Permanent=True by
+            # flipping the user's status to CONFIRMED.
+            user = cognito.admin_get_user(UserPoolId=pool_id, Username="bob")
+            assert user["UserStatus"] == "CONFIRMED"
+
+    def test_users_add_with_generate_password_prints_once(self, aws_creds_env, tmp_cdk_json):
+        """``--generate-password`` generates a strong password, sets it
+        permanent on Cognito, and prints it once."""
+        from cli.main import cli
+
+        with mock_aws():
+            cognito = boto3.client("cognito-idp", region_name="us-east-2")
+            pool = cognito.create_user_pool(PoolName="gco-studio")
+            pool_id = pool["UserPool"]["Id"]
+            _seed_gco_analytics_stack("us-east-2", pool_id, "client-abc")
+
+            runner = CliRunner()
+            with patch("cli.stacks._find_cdk_json", return_value=tmp_cdk_json):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "analytics",
+                        "users",
+                        "add",
+                        "--username",
+                        "carol",
+                        "--no-email",
+                        "--generate-password",
+                    ],
+                )
+
+            assert result.exit_code == 0, result.output
+            assert "Generated password" in result.output
+            # Password appears exactly once in output (printed-once guarantee).
+            # Extract it and sanity-check the shape.
+            import re
+
+            match = re.search(r"Generated password[^:]*:\s*(\S.+)$", result.output, re.M)
+            assert match, (
+                "expected a 'Generated password ...: <pw>' line in output; "
+                f"got {result.output!r}"
+            )
+            generated = match.group(1).strip()
+            assert len(generated) >= 16
+            # Cognito policy classes.
+            assert any(c.islower() for c in generated)
+            assert any(c.isupper() for c in generated)
+            assert any(c.isdigit() for c in generated)
+
+            user = cognito.admin_get_user(UserPoolId=pool_id, Username="carol")
+            assert user["UserStatus"] == "CONFIRMED"
+
+    def test_users_add_rejects_password_and_generate_together(
+        self, aws_creds_env, tmp_cdk_json
+    ):
+        """``--password`` and ``--generate-password`` are mutually exclusive."""
+        from cli.main import cli
+
+        runner = CliRunner()
+        with patch("cli.stacks._find_cdk_json", return_value=tmp_cdk_json):
+            result = runner.invoke(
+                cli,
+                [
+                    "analytics",
+                    "users",
+                    "add",
+                    "--username",
+                    "dave",
+                    "--no-email",
+                    "--password",
+                    "StrongP@ssw0rd!",
+                    "--generate-password",
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "mutually exclusive" in result.output
+
     def test_users_list_shows_all_users(self, aws_creds_env, tmp_cdk_json):
         from cli.main import cli
 

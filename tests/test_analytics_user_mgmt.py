@@ -228,6 +228,82 @@ class TestUserMgmtHelpers:
         remaining = cognito.list_users(UserPoolId=pool_id).get("Users", [])
         assert all(u["Username"] != "alice" for u in remaining)
 
+    @mock_aws
+    def test_admin_set_user_password_marks_permanent(self):
+        """Permanent=True flips the user to CONFIRMED (no forced reset)."""
+        cognito = boto3.client("cognito-idp", region_name="us-east-2")
+        pool = cognito.create_user_pool(PoolName="gco-studio")
+        pool_id = pool["UserPool"]["Id"]
+        cognito.admin_create_user(
+            UserPoolId=pool_id, Username="alice", MessageAction="SUPPRESS"
+        )
+
+        aum.admin_set_user_password(
+            pool_id=pool_id,
+            region="us-east-2",
+            username="alice",
+            password="StrongP@ssw0rd!",
+            permanent=True,
+        )
+
+        user = cognito.admin_get_user(UserPoolId=pool_id, Username="alice")
+        assert user["UserStatus"] == "CONFIRMED"
+
+    def test_admin_set_user_password_passes_permanent_flag(self):
+        """Verifies the Permanent kwarg is threaded through to boto3."""
+        fake = MagicMock()
+        with patch("boto3.client", return_value=fake):
+            aum.admin_set_user_password(
+                pool_id="pool-id",
+                region="us-east-2",
+                username="alice",
+                password="StrongP@ssw0rd!",
+                permanent=False,
+            )
+        fake.admin_set_user_password.assert_called_once_with(
+            UserPoolId="pool-id",
+            Username="alice",
+            Password="StrongP@ssw0rd!",
+            Permanent=False,
+        )
+
+
+class TestGenerateStrongPassword:
+    def test_default_length_is_twenty(self):
+        pw = aum.generate_strong_password()
+        assert len(pw) == 20
+
+    def test_custom_length_respected(self):
+        pw = aum.generate_strong_password(length=32)
+        assert len(pw) == 32
+
+    def test_rejects_length_below_policy_minimum(self):
+        with pytest.raises(ValueError, match=">= 8"):
+            aum.generate_strong_password(length=4)
+
+    def test_contains_all_required_character_classes(self):
+        # Run many times so any single-character-class slip-up shows up.
+        for _ in range(200):
+            pw = aum.generate_strong_password()
+            assert any(c.islower() for c in pw), pw
+            assert any(c.isupper() for c in pw), pw
+            assert any(c.isdigit() for c in pw), pw
+            assert any(not c.isalnum() for c in pw), pw
+
+    def test_never_contains_whitespace(self):
+        """Cognito rejects passwords containing whitespace
+        (``InvalidParameterException``). The allowed-symbol list must
+        not leak any whitespace characters into the output."""
+        for _ in range(500):
+            pw = aum.generate_strong_password()
+            assert not any(c.isspace() for c in pw), pw
+
+    def test_values_look_random(self):
+        """Sanity check that the generator isn't returning a constant."""
+        samples = {aum.generate_strong_password() for _ in range(50)}
+        # Collisions on a 20-char alphabet-100+ output should be effectively zero.
+        assert len(samples) == 50
+
 
 # ---------------------------------------------------------------------------
 # fetch_studio_url (urllib-level)

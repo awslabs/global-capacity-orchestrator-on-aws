@@ -210,6 +210,74 @@ def admin_create_user(
     return response, temporary_password
 
 
+def admin_set_user_password(
+    pool_id: str,
+    region: str,
+    username: str,
+    password: str,
+    permanent: bool = True,
+) -> None:
+    """Set a Cognito user's password via AdminSetUserPassword.
+
+    ``permanent=True`` (the default) marks the password as already
+    satisfying Cognito's ``NEW_PASSWORD_REQUIRED`` challenge so the
+    user can sign in without a forced reset — matching what you'd
+    get from ``aws cognito-idp admin-set-user-password --permanent``.
+    Pass ``permanent=False`` to require the user to pick their own
+    password on first login.
+    """
+    import boto3
+
+    cognito = boto3.client("cognito-idp", region_name=region)
+    cognito.admin_set_user_password(
+        UserPoolId=pool_id,
+        Username=username,
+        Password=password,
+        Permanent=permanent,
+    )
+
+
+def generate_strong_password(length: int = 20) -> str:
+    """Return a random password that satisfies Cognito's default policy.
+
+    Cognito's default password policy requires at least one uppercase
+    letter, one lowercase letter, one digit, and one symbol, plus the
+    length minimum (8). The generated password is sampled from
+    :func:`secrets.choice` — cryptographically strong by construction —
+    and guaranteed to contain one character from each required class,
+    with the remaining characters drawn from the union.
+    """
+    import secrets
+    import string
+
+    if length < 8:
+        raise ValueError(f"length must be >= 8 to satisfy Cognito policy; got {length}")
+
+    lowers = string.ascii_lowercase
+    uppers = string.ascii_uppercase
+    digits = string.digits
+    # Cognito's allowed symbol set per AWS docs. Notably excludes space
+    # and tab — Cognito rejects whitespace with InvalidParameterException.
+    symbols = "^$*.[]{}()?-\"!@#%&/\\,><':;|_~`+="
+
+    required = [
+        secrets.choice(lowers),
+        secrets.choice(uppers),
+        secrets.choice(digits),
+        secrets.choice(symbols),
+    ]
+    alphabet = lowers + uppers + digits + symbols
+    remaining = [secrets.choice(alphabet) for _ in range(length - len(required))]
+
+    # Shuffle so the required-class characters aren't always at the start.
+    chars = required + remaining
+    for i in range(len(chars) - 1, 0, -1):
+        j = secrets.randbelow(i + 1)
+        chars[i], chars[j] = chars[j], chars[i]
+
+    return "".join(chars)
+
+
 def list_users(pool_id: str, region: str) -> list[dict[str, str]]:
     """Return a flat row-per-user list suitable for tabular output."""
     import boto3

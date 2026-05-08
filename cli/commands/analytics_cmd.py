@@ -169,14 +169,54 @@ def _require_cognito_pool_id(config: Any) -> tuple[str, str]:
     is_flag=True,
     help="Suppress the Cognito welcome email (MessageAction=SUPPRESS).",
 )
+@click.option(
+    "--password",
+    envvar="GCO_STUDIO_PASSWORD",
+    help=(
+        "Set a permanent password via admin_set_user_password (also read "
+        "from $GCO_STUDIO_PASSWORD). Mutually exclusive with --generate-password."
+    ),
+)
+@click.option(
+    "--generate-password",
+    is_flag=True,
+    help=(
+        "Generate a strong random password, set it as permanent via "
+        "admin_set_user_password, and print it once. Mutually exclusive "
+        "with --password."
+    ),
+)
 @pass_config
-def users_add(config: Any, username: str, email: str | None, no_email: bool) -> None:
-    """Create a Cognito user and print the temporary password exactly once."""
+def users_add(
+    config: Any,
+    username: str,
+    email: str | None,
+    no_email: bool,
+    password: str | None,
+    generate_password: bool,
+) -> None:
+    """Create a Cognito user and print the temporary password exactly once.
+
+    When ``--password`` or ``--generate-password`` is passed, the user is
+    created and then has a permanent password set via
+    ``admin_set_user_password`` — this skips the ``NEW_PASSWORD_REQUIRED``
+    challenge on first login, so the resulting credentials work directly
+    with ``gco analytics studio login``.
+    """
     from botocore.exceptions import ClientError
 
-    from ..analytics_user_mgmt import admin_create_user
+    from ..analytics_user_mgmt import (
+        admin_create_user,
+        admin_set_user_password,
+        generate_strong_password,
+    )
 
     formatter = get_output_formatter(config)
+
+    if password and generate_password:
+        formatter.print_error("--password and --generate-password are mutually exclusive")
+        sys.exit(1)
+
     pool_id, region = _require_cognito_pool_id(config)
 
     try:
@@ -193,13 +233,45 @@ def users_add(config: Any, username: str, email: str | None, no_email: bool) -> 
         sys.exit(1)
 
     formatter.print_success(f"Created Cognito user: {username}")
+
+    # Password path — explicit or generated — takes precedence over the
+    # temporary-password path so the resulting credentials don't get
+    # blocked by NEW_PASSWORD_REQUIRED on first sign-in.
+    if password or generate_password:
+        final_password = password or generate_strong_password()
+        try:
+            admin_set_user_password(
+                pool_id=pool_id,
+                region=region,
+                username=username,
+                password=final_password,
+                permanent=True,
+            )
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code", "Unknown")
+            formatter.print_error(
+                f"User {username} created, but setting the password "
+                f"failed: {error_code}. Retry with "
+                "`aws cognito-idp admin-set-user-password --permanent`."
+            )
+            sys.exit(1)
+
+        if generate_password:
+            formatter.print_info(
+                f"Generated password (printed exactly once): {final_password}"
+            )
+        else:
+            formatter.print_info(f"Password set (permanent) for {username}")
+        return
+
     if temporary_password:
         formatter.print_info(f"Temporary password (printed exactly once): {temporary_password}")
     else:
         formatter.print_info(
             "Cognito did not return a temporary password. "
             "If --no-email was passed, set one via "
-            "`aws cognito-idp admin-set-user-password`."
+            "`aws cognito-idp admin-set-user-password` "
+            "or re-run `gco analytics users add` with --password or --generate-password."
         )
 
 

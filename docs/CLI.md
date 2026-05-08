@@ -2028,7 +2028,9 @@ gco analytics status
 
 Create a Cognito user in the analytics user pool. Calls
 `cognito-idp:AdminCreateUser` and prints the temporary password to
-stdout exactly once.
+stdout exactly once. Optionally sets a permanent password via
+`cognito-idp:AdminSetUserPassword` so the user can sign in without the
+`NEW_PASSWORD_REQUIRED` challenge on first login.
 
 ```bash
 gco analytics users add [OPTIONS]
@@ -2041,12 +2043,18 @@ gco analytics users add [OPTIONS]
 | `--username` | Cognito username to create (required). |
 | `--email` | Email address for the new user. |
 | `--no-email` | Suppress the Cognito welcome email (`MessageAction=SUPPRESS`). |
+| `--password` | Set a permanent password on the new user (also read from `$GCO_STUDIO_PASSWORD`). Mutually exclusive with `--generate-password`. |
+| `--generate-password` | Generate a strong random password, set it permanent, and print it once. Mutually exclusive with `--password`. |
 
 **Example:**
 
 ```bash
 gco analytics users add --username alice --email alice@example.com
 gco analytics users add --username bob --email bob@example.com --no-email
+
+# Set a permanent password so first-time login doesn't hit NEW_PASSWORD_REQUIRED
+gco analytics users add --username carol --no-email --generate-password
+GCO_STUDIO_PASSWORD='StrongP@ssw0rd!' gco analytics users add --username dave --no-email --password "$GCO_STUDIO_PASSWORD"
 ```
 
 #### `gco analytics users list`
