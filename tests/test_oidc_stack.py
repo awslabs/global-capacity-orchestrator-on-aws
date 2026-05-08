@@ -214,6 +214,30 @@ class TestOIDCIAMPolicy:
             },
         )
 
+    def test_policy_has_eks_describe_cluster_versions(self):
+        """Policy should allow eks:DescribeClusterVersions so the
+        dependency scan can detect newer Kubernetes minor releases."""
+        template = _synth_stack()
+        template.has_resource_properties(
+            "AWS::IAM::Policy",
+            {
+                "PolicyDocument": {
+                    "Statement": Match.array_with(
+                        [
+                            Match.object_like(
+                                {
+                                    "Action": Match.array_with(
+                                        ["eks:DescribeClusterVersions"]
+                                    ),
+                                    "Effect": "Allow",
+                                }
+                            )
+                        ]
+                    )
+                }
+            },
+        )
+
     def test_policy_has_rds_describe(self):
         """Policy should allow rds:DescribeDBEngineVersions."""
         template = _synth_stack()

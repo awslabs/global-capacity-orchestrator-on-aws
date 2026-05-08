@@ -241,14 +241,20 @@ To turn the check on without introducing long-lived access keys, configure a Git
    }
    ```
 
-3. **Attach a single-permission inline policy** (principle of least privilege — the scan needs exactly one API call):
+3. **Attach a least-privilege inline policy** listing only the read-only actions the scan needs. Keep this in sync with `.github/oidc_provider/policy.json` when you add new checks:
 
    ```json
    {
      "Version": "2012-10-17",
      "Statement": [{
        "Effect":   "Allow",
-       "Action":   "eks:DescribeAddonVersions",
+       "Action": [
+         "eks:DescribeAddonVersions",
+         "eks:DescribeClusterVersions",
+         "elasticmapreduce:ListReleaseLabels",
+         "rds:DescribeDBEngineVersions",
+         "sts:GetCallerIdentity"
+       ],
        "Resource": "*"
      }]
    }

@@ -12,6 +12,7 @@
 #     and Helm chart values
 #   - Helm chart versions from charts.yaml
 #   - EKS add-on versions from gco/stacks/constants.py (AWS creds)
+#   - EKS Kubernetes minor from cdk.json (AWS creds)
 #   - Aurora PostgreSQL engine versions (AWS creds)
 #   - EMR Serverless release labels (AWS creds)
 #   - Dockerfile.dev ARG pins (Node LTS major, CDK CLI, kubectl, AWS CLI v2,
@@ -253,6 +254,85 @@ fi
 
 ADDON_COUNT="$(wc -l < "$ADDON_RESULTS" 2>/dev/null | tr -d ' ')"
 [ -z "$ADDON_COUNT" ] && ADDON_COUNT=0
+
+# ---------------------------------------------------------------------------
+# EKS Kubernetes version (best-effort — requires AWS credentials)
+#
+# Compares ``kubernetes_version`` in cdk.json against the latest minor
+# available from ``aws eks describe-cluster-versions`` (filtered to
+# ``STANDARD_SUPPORT``). If a newer minor is available, we also report
+# when standard support for the currently-pinned minor ends so the
+# upgrade urgency is visible in the PR.
+#
+# IAM action: ``eks:DescribeClusterVersions``. Same credential preflight
+# as the EKS add-on / Aurora / EMR checks.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Checking EKS Kubernetes version ==="
+
+EKS_K8S_RESULTS="$(mktemp)"
+EKS_K8S_SKIP_REASON=""
+
+if ! aws sts get-caller-identity >/dev/null 2>&1; then
+  EKS_K8S_SKIP_REASON="No AWS credentials available (scan needs eks:DescribeClusterVersions). Configure OIDC to enable."
+  echo "  $EKS_K8S_SKIP_REASON"
+else
+  # ``--include-all`` returns every cluster version, not just the
+  # default. ``--version-status STANDARD_SUPPORT`` filters to minors
+  # still in standard support — we don't want to flag the extended-
+  # support lifecycle as "newer."
+  CLUSTER_VERSIONS_JSON="$(aws eks describe-cluster-versions \
+    --include-all \
+    --version-status STANDARD_SUPPORT \
+    --output json 2>/dev/null)" || CLUSTER_VERSIONS_JSON=""
+
+  if [ -n "$CLUSTER_VERSIONS_JSON" ]; then
+    # Max of ``clusterVersion`` across all rows is the newest standard-
+    # support minor. We use Python for a proper numeric sort so 1.10
+    # beats 1.9 (sort -V already does this, but Python keeps the data
+    # wrangling in one place).
+    LATEST_K8S="$(echo "$CLUSTER_VERSIONS_JSON" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+versions = sorted(
+    {row["clusterVersion"] for row in data.get("clusterVersions", [])},
+    key=lambda v: tuple(int(p) for p in v.split(".")),
+)
+print(versions[-1] if versions else "")
+' 2>/dev/null)" || LATEST_K8S=""
+
+    CURRENT_K8S="$(extract_k8s_version "cdk.json")"
+
+    if [ -n "$LATEST_K8S" ] && [ "$CURRENT_K8S" != "$LATEST_K8S" ] \
+       && [ "$(compare_semver "$CURRENT_K8S" "$LATEST_K8S")" = "newer" ]; then
+      # Grab the standard-support end date for the currently-pinned
+      # minor. Blank when EKS hasn't published one yet (brand-new release).
+      EOS_DATE="$(echo "$CLUSTER_VERSIONS_JSON" | python3 -c "
+import json, sys
+cv = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for row in data.get('clusterVersions', []):
+    if row.get('clusterVersion') == cv:
+        ts = row.get('endOfStandardSupportDate', '')
+        # Strip time-of-day; the date is what the report cares about.
+        print(str(ts).split('T', 1)[0].split(' ', 1)[0])
+        break
+" "$CURRENT_K8S" 2>/dev/null)" || EOS_DATE=""
+
+      echo "  - kubernetes_version: ${CURRENT_K8S} -> ${LATEST_K8S} (std support ends ${EOS_DATE:-unknown})"
+      echo "kubernetes_version|${CURRENT_K8S}|${LATEST_K8S}|${EOS_DATE:-unknown}" >> "$EKS_K8S_RESULTS"
+    fi
+  fi
+fi
+
+EKS_K8S_COUNT="$(wc -l < "$EKS_K8S_RESULTS" 2>/dev/null | tr -d ' ')"
+[ -z "$EKS_K8S_COUNT" ] && EKS_K8S_COUNT=0
 
 # ---------------------------------------------------------------------------
 # Aurora PostgreSQL engine versions (best-effort — requires AWS credentials)
@@ -497,6 +577,11 @@ if [ -n "$ADDON_SKIP_REASON" ]; then
 else
   echo "EKS add-ons outdated:     $ADDON_COUNT"
 fi
+if [ -n "$EKS_K8S_SKIP_REASON" ]; then
+  echo "EKS Kubernetes version:   (skipped)"
+else
+  echo "EKS Kubernetes version:   $EKS_K8S_COUNT"
+fi
 if [ -n "$AURORA_SKIP_REASON" ]; then
   echo "Aurora PostgreSQL:        (skipped)"
 else
@@ -511,12 +596,17 @@ echo "Dockerfile.dev pins:      $DOCKERFILE_COUNT"
 
 if [ "$PYTHON_COUNT" -eq 0 ] && [ "$DOCKER_COUNT" -eq 0 ] \
    && [ "$HELM_COUNT" -eq 0 ] && [ "$ADDON_COUNT" -eq 0 ] \
+   && [ "$EKS_K8S_COUNT" -eq 0 ] \
    && [ "$AURORA_COUNT" -eq 0 ] && [ "$EMR_COUNT" -eq 0 ] \
    && [ "$DOCKERFILE_COUNT" -eq 0 ]; then
   echo ""
   SKIP_NOTES=""
   if [ -n "$ADDON_SKIP_REASON" ]; then
     SKIP_NOTES="EKS add-ons skipped: $ADDON_SKIP_REASON"
+  fi
+  if [ -n "$EKS_K8S_SKIP_REASON" ]; then
+    [ -n "$SKIP_NOTES" ] && SKIP_NOTES="$SKIP_NOTES; "
+    SKIP_NOTES="${SKIP_NOTES}EKS Kubernetes skipped: $EKS_K8S_SKIP_REASON"
   fi
   if [ -n "$AURORA_SKIP_REASON" ]; then
     [ -n "$SKIP_NOTES" ] && SKIP_NOTES="$SKIP_NOTES; "
@@ -531,7 +621,7 @@ if [ "$PYTHON_COUNT" -eq 0 ] && [ "$DOCKER_COUNT" -eq 0 ] \
   else
     echo "All dependencies are up to date."
   fi
-  rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS"
+  rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$EKS_K8S_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS"
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
     echo "has_drift=false" >> "$GITHUB_OUTPUT"
   fi
@@ -588,6 +678,29 @@ fi
     echo "## EKS Add-ons (skipped)"
     echo ""
     echo "> $ADDON_SKIP_REASON"
+    echo ""
+  fi
+
+  if [ "$EKS_K8S_COUNT" -gt 0 ]; then
+    echo "## EKS Kubernetes Version"
+    echo ""
+    echo "The Kubernetes minor pinned in \`cdk.json::kubernetes_version\`"
+    echo "is behind the latest release still in EKS **standard support**."
+    echo "Upgrade before standard support ends to avoid the extended-"
+    echo "support pricing uplift."
+    echo ""
+    echo "| Pin | Current | Latest (standard support) | Std support ends |"
+    echo "|-----|---------|---------------------------|------------------|"
+    while IFS='|' read -r pin cur lat eos; do
+      echo "| \`$pin\` | $cur | $lat | $eos |"
+    done < "$EKS_K8S_RESULTS"
+    echo ""
+  fi
+
+  if [ -n "$EKS_K8S_SKIP_REASON" ]; then
+    echo "## EKS Kubernetes Version (skipped)"
+    echo ""
+    echo "> $EKS_K8S_SKIP_REASON"
     echo ""
   fi
 
@@ -652,7 +765,7 @@ fi
   echo "_Automatically created by the \`deps-scan\` workflow._"
 } > "$REPORT_FILE"
 
-rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS"
+rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$EKS_K8S_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "has_drift=true"            >> "$GITHUB_OUTPUT"
