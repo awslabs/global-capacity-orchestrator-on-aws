@@ -794,7 +794,13 @@ class GCOAnalyticsStack(Stack):
             runtime=getattr(lambda_.Runtime, LAMBDA_PYTHON_RUNTIME),
             handler="handler.handler",
             code=lambda_.Code.from_asset("lambda/analytics-cleanup"),
-            timeout=Duration.minutes(5),
+            # 15 minutes covers the worst case of multiple async drain
+            # loops in series: apps (up to ~2 min), spaces (up to ~3 min),
+            # user profiles (up to ~3 min), SageMaker-managed EFS mount
+            # targets (up to ~2 min), plus incidental RPC latency and
+            # security-group cleanup. In the common case (a handful of
+            # users) this finishes in well under a minute.
+            timeout=Duration.minutes(15),
             environment={
                 "DOMAIN_ID": self.studio_domain.attr_domain_id,
                 "EFS_ID": self.studio_efs.file_system_id,
