@@ -226,9 +226,7 @@ class TestOIDCIAMPolicy:
                         [
                             Match.object_like(
                                 {
-                                    "Action": Match.array_with(
-                                        ["eks:DescribeClusterVersions"]
-                                    ),
+                                    "Action": Match.array_with(["eks:DescribeClusterVersions"]),
                                     "Effect": "Allow",
                                 }
                             )

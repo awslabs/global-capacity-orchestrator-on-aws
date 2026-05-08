@@ -2226,9 +2226,7 @@ class TestRemoveApiGatewayAnalyticsDependency:
 
         with (
             patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=True),
-            patch.object(
-                StackManager, "_api_gateway_imports_from_analytics", return_value=False
-            ),
+            patch.object(StackManager, "_api_gateway_imports_from_analytics", return_value=False),
             patch.object(StackManager, "deploy") as mock_deploy,
         ):
             manager = StackManager(config)
@@ -2248,9 +2246,7 @@ class TestRemoveApiGatewayAnalyticsDependency:
         # The second call (post-redeploy recheck) also reports imports.
         with (
             patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=True),
-            patch.object(
-                StackManager, "_api_gateway_imports_from_analytics", return_value=True
-            ),
+            patch.object(StackManager, "_api_gateway_imports_from_analytics", return_value=True),
             patch.object(StackManager, "deploy", return_value=False),
             patch("cli.stacks.get_analytics_config", return_value={"enabled": True}),
             patch("cli.stacks.update_analytics_config"),
