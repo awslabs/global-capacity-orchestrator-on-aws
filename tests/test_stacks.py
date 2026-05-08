@@ -2020,6 +2020,11 @@ class TestStackManagerDestroyAnalyticsFallback:
                 StackManager, "_ensure_analytics_enabled_for_destroy", return_value=True
             ) as mock_enable,
             patch.object(StackManager, "_restore_analytics_disabled") as mock_restore,
+            # Patch the dependency-removal helper so we only exercise
+            # the toggle / CDK / fallback logic here.
+            patch.object(
+                StackManager, "_remove_api_gateway_analytics_dependency", return_value=True
+            ),
         ):
             # CDK destroy succeeds (because we enabled the toggle)
             mock_run.return_value = MagicMock(returncode=0)
@@ -2092,7 +2097,9 @@ class TestStackManagerDestroyExclusively:
         with (
             patch.object(StackManager, "_run_cdk") as mock_run,
             patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=False),
-            patch.object(StackManager, "_remove_api_gateway_analytics_dependency"),
+            patch.object(
+                StackManager, "_remove_api_gateway_analytics_dependency", return_value=True
+            ),
         ):
             mock_run.return_value = MagicMock(returncode=0)
 
@@ -2131,7 +2138,9 @@ class TestStackManagerDestroyExclusively:
         with (
             patch.object(StackManager, "_run_cdk") as mock_run,
             patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=False),
-            patch.object(StackManager, "_remove_api_gateway_analytics_dependency") as mock_remove,
+            patch.object(
+                StackManager, "_remove_api_gateway_analytics_dependency", return_value=True
+            ) as mock_remove,
         ):
             mock_run.return_value = MagicMock(returncode=0)
 
@@ -2149,7 +2158,9 @@ class TestStackManagerDestroyExclusively:
         with (
             patch.object(StackManager, "_run_cdk") as mock_run,
             patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=False),
-            patch.object(StackManager, "_remove_api_gateway_analytics_dependency") as mock_remove,
+            patch.object(
+                StackManager, "_remove_api_gateway_analytics_dependency", return_value=True
+            ) as mock_remove,
         ):
             mock_run.return_value = MagicMock(returncode=0)
 
@@ -2157,6 +2168,222 @@ class TestStackManagerDestroyExclusively:
             manager.destroy(stack_name="gco-us-east-1", force=True)
 
             mock_remove.assert_not_called()
+
+    def test_destroy_analytics_aborts_when_api_gateway_still_imports(self):
+        """If the api-gateway still imports analytics exports after the
+        redeploy attempt, the destroy must abort instead of cascading
+        into a guaranteed-fail CloudFormation delete."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        config.api_gateway_region = "us-east-2"
+
+        with (
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=False),
+            patch.object(
+                StackManager, "_remove_api_gateway_analytics_dependency", return_value=False
+            ) as mock_remove,
+        ):
+            manager = StackManager(config)
+            result = manager.destroy(stack_name="gco-analytics", force=True)
+
+            # Short-circuits before invoking cdk destroy.
+            assert result is False
+            mock_remove.assert_called_once()
+            mock_run.assert_not_called()
+
+
+class TestRemoveApiGatewayAnalyticsDependency:
+    """Tests for the redeploy/skip logic in _remove_api_gateway_analytics_dependency."""
+
+    def test_skips_redeploy_when_api_gateway_does_not_exist(self):
+        """If gco-api-gateway isn't in CloudFormation, no consumer can
+        exist, so the expensive redeploy is skipped and the destroy is
+        marked safe."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        config.api_gateway_region = "us-east-2"
+
+        with (
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=False),
+            patch.object(StackManager, "deploy") as mock_deploy,
+        ):
+            manager = StackManager(config)
+            result = manager._remove_api_gateway_analytics_dependency()
+
+            assert result is True
+            mock_deploy.assert_not_called()
+
+    def test_skips_redeploy_when_no_analytics_imports(self):
+        """If gco-api-gateway exists but doesn't import from gco-analytics
+        (e.g. analytics was never fully wired up), skip the redeploy."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        config.api_gateway_region = "us-east-2"
+
+        with (
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=True),
+            patch.object(
+                StackManager, "_api_gateway_imports_from_analytics", return_value=False
+            ),
+            patch.object(StackManager, "deploy") as mock_deploy,
+        ):
+            manager = StackManager(config)
+            result = manager._remove_api_gateway_analytics_dependency()
+
+            assert result is True
+            mock_deploy.assert_not_called()
+
+    def test_redeploy_failure_is_fatal_when_imports_remain(self):
+        """If the redeploy fails and api-gateway still imports analytics
+        exports, the destroy must be blocked."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        config.api_gateway_region = "us-east-2"
+
+        # The second call (post-redeploy recheck) also reports imports.
+        with (
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=True),
+            patch.object(
+                StackManager, "_api_gateway_imports_from_analytics", return_value=True
+            ),
+            patch.object(StackManager, "deploy", return_value=False),
+            patch("cli.stacks.get_analytics_config", return_value={"enabled": True}),
+            patch("cli.stacks.update_analytics_config"),
+        ):
+            manager = StackManager(config)
+            result = manager._remove_api_gateway_analytics_dependency()
+
+            assert result is False
+
+    def test_redeploy_failure_is_tolerated_when_consumer_vanished(self):
+        """If the redeploy failed because api-gateway was auto-deleted
+        by the ROLLBACK_COMPLETE cleanup, the post-redeploy recheck
+        finds no imports and the destroy is allowed to proceed."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        config.api_gateway_region = "us-east-2"
+
+        import_results = iter([True, False])
+
+        with (
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=True),
+            patch.object(
+                StackManager,
+                "_api_gateway_imports_from_analytics",
+                side_effect=lambda: next(import_results),
+            ),
+            patch.object(StackManager, "deploy", return_value=False),
+            patch("cli.stacks.get_analytics_config", return_value={"enabled": True}),
+            patch("cli.stacks.update_analytics_config"),
+        ):
+            manager = StackManager(config)
+            result = manager._remove_api_gateway_analytics_dependency()
+
+            assert result is True
+
+
+class TestApiGatewayImportsFromAnalytics:
+    """Tests for the CloudFormation-based export/import detection helper."""
+
+    def test_returns_false_when_no_analytics_exports(self):
+        """If no exports are owned by gco-analytics, no imports can exist."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        config.api_gateway_region = "us-east-2"
+
+        mock_cfn = MagicMock()
+        mock_paginator = MagicMock()
+        mock_paginator.paginate.return_value = [
+            {
+                "Exports": [
+                    {
+                        "Name": "other-export",
+                        "ExportingStackId": (
+                            "arn:aws:cloudformation:us-east-2:111:stack/gco-global/abc"
+                        ),
+                    }
+                ]
+            }
+        ]
+        mock_cfn.get_paginator.return_value = mock_paginator
+
+        with patch("boto3.client", return_value=mock_cfn):
+            manager = StackManager(config)
+            assert manager._api_gateway_imports_from_analytics() is False
+
+    def test_returns_true_when_api_gateway_is_importer(self):
+        """If gco-api-gateway appears in the Imports list for any
+        gco-analytics export, return True."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        config.api_gateway_region = "us-east-2"
+
+        mock_cfn = MagicMock()
+        export_paginator = MagicMock()
+        export_paginator.paginate.return_value = [
+            {
+                "Exports": [
+                    {
+                        "Name": "gco-analytics:CognitoPoolArn",
+                        "ExportingStackId": (
+                            "arn:aws:cloudformation:us-east-2:111:stack/gco-analytics/abc"
+                        ),
+                    }
+                ]
+            }
+        ]
+        import_paginator = MagicMock()
+        import_paginator.paginate.return_value = [{"Imports": ["gco-api-gateway"]}]
+
+        def get_paginator(op_name):
+            return export_paginator if op_name == "list_exports" else import_paginator
+
+        mock_cfn.get_paginator.side_effect = get_paginator
+
+        with patch("boto3.client", return_value=mock_cfn):
+            manager = StackManager(config)
+            assert manager._api_gateway_imports_from_analytics() is True
+
+    def test_returns_false_when_no_importers(self):
+        """Export exists but has no consumers yet."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        config.api_gateway_region = "us-east-2"
+
+        mock_cfn = MagicMock()
+        export_paginator = MagicMock()
+        export_paginator.paginate.return_value = [
+            {
+                "Exports": [
+                    {
+                        "Name": "gco-analytics:CognitoPoolArn",
+                        "ExportingStackId": (
+                            "arn:aws:cloudformation:us-east-2:111:stack/gco-analytics/abc"
+                        ),
+                    }
+                ]
+            }
+        ]
+        import_paginator = MagicMock()
+        import_paginator.paginate.return_value = [{"Imports": []}]
+
+        def get_paginator(op_name):
+            return export_paginator if op_name == "list_exports" else import_paginator
+
+        mock_cfn.get_paginator.side_effect = get_paginator
+
+        with patch("boto3.client", return_value=mock_cfn):
+            manager = StackManager(config)
+            assert manager._api_gateway_imports_from_analytics() is False
 
 
 class TestStackManagerDeployAnalyticsAutoApiGateway:

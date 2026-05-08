@@ -740,7 +740,16 @@ class StackManager:
         # with consumed exports. To break the dependency, redeploy the API
         # gateway with analytics disabled first, then destroy analytics.
         if stack_name and not all_stacks and "analytics" in stack_name:
-            self._remove_api_gateway_analytics_dependency()
+            safe_to_destroy = self._remove_api_gateway_analytics_dependency()
+            if not safe_to_destroy:
+                # Restore analytics toggle before bailing out.
+                if toggle_restored:
+                    self._restore_analytics_disabled()
+                print(
+                    "  Aborting gco-analytics destroy: gco-api-gateway still "
+                    "imports analytics exports. Fix the API gateway and retry."
+                )
+                return False
 
         cmd = ["destroy"]
 
@@ -841,7 +850,7 @@ class StackManager:
                 exc_info=True,
             )
 
-    def _remove_api_gateway_analytics_dependency(self) -> None:
+    def _remove_api_gateway_analytics_dependency(self) -> bool:
         """Redeploy gco-api-gateway with analytics disabled to drop cross-stack imports.
 
         The analytics stack exports values (Cognito pool ARN, presigned-URL
@@ -850,7 +859,33 @@ class StackManager:
         disabling analytics and redeploying the API gateway, the /studio/*
         routes are removed and the imports are dropped, unblocking the
         analytics stack deletion.
+
+        Returns:
+            True if the analytics stack is safe to destroy (either because
+            no consumer remains or because the redeploy successfully
+            dropped the imports). False if a consumer of the analytics
+            exports still exists and the analytics destroy will fail.
         """
+        # Fast path: if gco-api-gateway doesn't exist (or has already been
+        # deleted/rolled-back into a non-consuming state), there's nothing
+        # importing the analytics exports. Skip the redeploy entirely.
+        if not self._stack_exists_in_cloudformation("gco-api-gateway"):
+            logger.info(
+                "gco-api-gateway does not exist in CloudFormation; "
+                "skipping redeploy before analytics destroy."
+            )
+            return True
+
+        # Second fast path: if the deployed api-gateway isn't actually
+        # importing anything from the analytics stack, we don't need to
+        # touch it. This happens when analytics was never fully wired up.
+        if not self._api_gateway_imports_from_analytics():
+            logger.info(
+                "gco-api-gateway does not import any gco-analytics exports; "
+                "skipping redeploy before analytics destroy."
+            )
+            return True
+
         try:
             # Temporarily disable analytics so CDK drops the /studio/* routes.
             current = get_analytics_config()
@@ -868,19 +903,105 @@ class StackManager:
                     exclusively=True,
                     output_dir=tmp_out,
                 )
-            if not success:
-                logger.warning("Failed to redeploy gco-api-gateway before analytics destroy")
 
             # Re-enable analytics so CDK can synthesize the analytics stack
             # for the destroy operation (custom resources need to fire).
             if was_enabled:
                 update_analytics_config({"enabled": True})
+
+            if not success:
+                # The redeploy failed. That's only a real problem if the
+                # api-gateway still imports analytics exports. Recheck:
+                # the auto-cleanup of ROLLBACK_COMPLETE stacks may have
+                # deleted the consumer entirely, in which case the destroy
+                # can still proceed.
+                if not self._api_gateway_imports_from_analytics():
+                    logger.info(
+                        "gco-api-gateway redeploy failed, but the stack no "
+                        "longer imports analytics exports (likely deleted "
+                        "during cleanup). Analytics destroy can proceed."
+                    )
+                    return True
+                logger.error(
+                    "Failed to redeploy gco-api-gateway to drop analytics "
+                    "imports, and the stack still consumes analytics exports. "
+                    "Destroying gco-analytics will fail with "
+                    "'Export ... cannot be deleted as it is in use'. Fix "
+                    "gco-api-gateway first (see events above) and retry."
+                )
+                return False
+
+            return True
         except Exception as exc:
             logger.warning(
                 "Failed to remove API gateway analytics dependency: %s",
                 exc,
                 exc_info=True,
             )
+            # On unexpected exceptions, recheck whether imports remain.
+            # Be permissive only if we can confirm the destroy is safe.
+            try:
+                return not self._api_gateway_imports_from_analytics()
+            except Exception:
+                return False
+
+    def _api_gateway_imports_from_analytics(self) -> bool:
+        """Return True if gco-api-gateway imports any exports from gco-analytics.
+
+        Uses CloudFormation's ``list_exports`` + ``list_imports`` to detect
+        cross-stack references at runtime. This is more reliable than
+        inspecting the CDK app because it reflects what's actually
+        deployed.
+        """
+        import boto3
+
+        region = self._get_deploy_region("gco-analytics")
+        if not region:
+            return False
+
+        try:
+            cfn = boto3.client("cloudformation", region_name=region)
+            # Collect every export whose owning stack is gco-analytics.
+            analytics_exports: list[str] = []
+            paginator = cfn.get_paginator("list_exports")
+            for page in paginator.paginate():
+                for export in page.get("Exports", []):
+                    owner = export.get("ExportingStackId", "")
+                    # ExportingStackId is a full ARN; match by stack name.
+                    if ":stack/gco-analytics/" in owner:
+                        analytics_exports.append(export["Name"])
+
+            if not analytics_exports:
+                return False
+
+            # For each export, check whether gco-api-gateway is listed
+            # as an importer. ``list_imports`` returns the stack names
+            # that currently import the given export.
+            import_paginator = cfn.get_paginator("list_imports")
+            for export_name in analytics_exports:
+                try:
+                    for page in import_paginator.paginate(ExportName=export_name):
+                        for importer in page.get("Imports", []):
+                            if importer == "gco-api-gateway":
+                                return True
+                except Exception as exc:
+                    # ``list_imports`` raises when an export has zero
+                    # consumers — treat that as "not imported" and move on.
+                    logger.debug(
+                        "list_imports(%s) failed (likely no consumers): %s",
+                        export_name,
+                        exc,
+                    )
+            return False
+        except Exception as exc:
+            logger.debug(
+                "Failed to check analytics imports for gco-api-gateway: %s",
+                exc,
+                exc_info=True,
+            )
+            # On failure to check, err on the side of attempting the
+            # redeploy so we don't skip necessary cleanup.
+            return True
 
     def bootstrap(
         self,
