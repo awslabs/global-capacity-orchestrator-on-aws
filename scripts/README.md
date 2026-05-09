@@ -2,6 +2,16 @@
 
 Utility scripts for development, testing, and operations.
 
+## Table of Contents
+
+- [Contents](#contents)
+- [Usage](#usage)
+  - [Setup Cluster Access](#setup-cluster-access)
+  - [Bump Version](#bump-version)
+  - [Test CDK Synthesis](#test-cdk-synthesis)
+  - [Dump cdk-nag Findings](#dump-cdk-nag-findings)
+  - [Test Webhook Delivery](#test-webhook-delivery)
+
 ## Contents
 
 | Script | Description |

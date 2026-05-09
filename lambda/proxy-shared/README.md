@@ -2,6 +2,12 @@
 
 Shared utility library used by the `api-gateway-proxy` and `regional-api-proxy` Lambda functions. Not deployed as a standalone Lambda.
 
+## Table of Contents
+
+- [Contents](#contents)
+- [Provided Utilities](#provided-utilities)
+- [Usage](#usage)
+
 ## Contents
 
 - `proxy_utils.py` — Thread-safe secret caching and HTTP forwarding with retry logic

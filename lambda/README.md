@@ -2,6 +2,13 @@
 
 AWS Lambda functions that power GCO's infrastructure layer. These are deployed as part of the CDK stacks and handle cluster operations, API routing, security, and cross-region coordination.
 
+## Table of Contents
+
+- [Contents](#contents)
+- [Build](#build)
+- [Architecture](#architecture)
+- [Control-Flow Diagrams](#control-flow-diagrams)
+
 ## Contents
 
 | Directory | Description |

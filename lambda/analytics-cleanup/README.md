@@ -2,6 +2,16 @@
 
 CloudFormation custom resource handler that runs during `gco-analytics` stack deletion. Removes resources that CloudFormation can't delete on its own because they were created at runtime (not in the template).
 
+## Table of Contents
+
+- [What it does](#what-it-does)
+- [Why it's needed](#why-its-needed)
+- [Environment variables](#environment-variables)
+- [IAM permissions required](#iam-permissions-required)
+- [Error handling](#error-handling)
+- [Dependencies](#dependencies)
+- [Tests](#tests)
+
 ## What it does
 
 On stack **Delete**:
