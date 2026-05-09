@@ -20,7 +20,7 @@ We appreciate responsible disclosure and will credit reporters who request it on
 
 ## Supported versions
 
-GCO is pre-1.0. The current minor version (`0.x`) is the only supported line. Security fixes are published on the `main` branch and tagged as patch releases (`0.x.y`). Older `0.x` lines do not receive backports.
+Security fixes are published on the `main` branch and tagged as patch releases (`x.y.z`). Older `x.y` lines do not receive backports.
 
 ## Scope
 
