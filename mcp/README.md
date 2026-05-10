@@ -16,7 +16,7 @@
 > }
 > ```
 
-An MCP (Model Context Protocol) server that exposes the GCO CLI as tools for LLM interaction. This lets you manage your multi-region EKS infrastructure through natural language in an AI-powered IDE with MCP support like [Cursor](https://cursor.com) or [Kiro](https://kiro.dev).
+An MCP (Model Context Protocol) server that exposes the GCO CLI as tools for LLM interaction. This lets you manage your multi-region EKS infrastructure through natural language in an AI-powered IDE with MCP support like [Kiro](https://kiro.dev).
 
 ## Table of Contents
 

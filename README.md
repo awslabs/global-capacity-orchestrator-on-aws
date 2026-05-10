@@ -91,7 +91,7 @@ cd global-capacity-orchestrator-on-aws && pipx install -e .
 
 See the [Quick Start](#quick-start) for the full install + first-job walkthrough, or [`docs/CLI.md`](docs/CLI.md) for every CLI command.
 
-> **💡 New to the codebase?** GCO ships with an [MCP server](mcp/) exposing 44 tools that index the whole project — docs, examples, source code, K8s manifests, scripts. Connect it to an AI-powered IDE (like [Cursor](https://cursor.com) or [Kiro](https://kiro.dev)) and ask in natural language: *"How does region recommendation work?"*, *"Walk me through the inference deployment flow"*. See [mcp/README.md](mcp/README.md).
+> **💡 New to the codebase?** GCO ships with an [MCP server](mcp/) exposing 44 tools that index the whole project — docs, examples, source code, K8s manifests, scripts. Connect it to an AI-powered IDE (like [Kiro](https://kiro.dev)) and ask in natural language: *"How does region recommendation work?"*, *"Walk me through the inference deployment flow"*. See [mcp/README.md](mcp/README.md).
 
 <details>
 <summary><b>Table of contents</b></summary>
