@@ -1,8 +1,17 @@
 # GCO Development Container
 # Use this container to run CDK and CLI commands with all dependencies pre-installed
 #
+# Multi-arch: builds natively on linux/amd64 (CI on x86_64 GitHub runners,
+# Docker Desktop on Intel Macs / Linux) and linux/arm64 (Apple Silicon
+# Macs running Docker Desktop, Finch, Colima, or any arm64 Linux host).
+# kubectl, the AWS CLI v2, and the Docker static client all publish both
+# arch builds; we pick the right one via BuildKit's $TARGETARCH.
+#
 # Build:
 #   docker build -f Dockerfile.dev -t gco-dev .
+#
+# To cross-build, pass --platform explicitly:
+#   docker build --platform linux/amd64 -f Dockerfile.dev -t gco-dev .
 #
 # Run (interactive):
 #   docker run -it --rm \
@@ -57,6 +66,21 @@
 
 FROM python:3.14.4-slim
 
+# Multi-arch build args. BuildKit auto-populates TARGETARCH with the build
+# platform's Go-style arch name (`amd64` / `arm64`). We additionally derive
+# the GNU/Linux arch tag (`x86_64` / `aarch64`) for tools whose download
+# URLs use that convention (AWS CLI v2, Docker static binaries).
+#
+# Building natively for the host arch is the default (`finch build .` on
+# Apple Silicon → arm64; CI on x86_64 runners → amd64). To cross-build,
+# pass `--platform linux/amd64` or `--platform linux/arm64`.
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+        amd64)  echo "x86_64"  > /tmp/gnu_arch ;; \
+        arm64)  echo "aarch64" > /tmp/gnu_arch ;; \
+        *)      echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -89,8 +113,11 @@ RUN npm install -g "aws-cdk@${CDK_VERSION}" \
 # Install kubectl — pinned to the EKS cluster's minor line (see
 # ``cdk.json::kubernetes_version``). The kubectl + apiserver skew policy
 # allows ±1 minor, so this pin can lag or lead the cluster by one.
+# kubectl publishes both linux/amd64 and linux/arm64 binaries, so we
+# pass ${TARGETARCH} straight through.
 ARG KUBECTL_VERSION=v1.35.4
-RUN curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+ARG TARGETARCH
+RUN curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
     && chmod +x kubectl \
     && mv kubectl /usr/local/bin/ \
     && kubectl version --client=true
@@ -98,8 +125,10 @@ RUN curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubec
 # Install AWS CLI v2 — pinned to a specific release so reproducibility is
 # preserved across rebuilds. Bump when a new feature or bugfix is needed
 # (see https://github.com/aws/aws-cli/blob/v2/CHANGELOG.rst).
+# AWS CLI v2 uses GNU arch tags (x86_64 / aarch64) in the install URL.
 ARG AWSCLI_VERSION=2.34.42
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWSCLI_VERSION}.zip" -o "awscliv2.zip" \
+RUN GNU_ARCH=$(cat /tmp/gnu_arch) \
+    && curl "https://awscli.amazonaws.com/awscli-exe-linux-${GNU_ARCH}-${AWSCLI_VERSION}.zip" -o "awscliv2.zip" \
     && unzip awscliv2.zip \
     && ./aws/install \
     && rm -rf awscliv2.zip aws \
@@ -111,14 +140,18 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWSCLI_VERSION}
 # container talks to the host Docker daemon through the bind-mounted
 # socket documented in the header, so only the client binary is needed
 # here. Pinned to a specific version to keep the image reproducible —
-# bump intentionally when testing against a new Docker release.
-# Latest stable at pin time (see https://download.docker.com/linux/static/stable/x86_64/):
+# bump intentionally when testing against a new Docker release. Docker
+# static binaries also use GNU arch tags (x86_64 / aarch64) in the URL.
+# Latest stable at pin time:
+#   https://download.docker.com/linux/static/stable/x86_64/
+#   https://download.docker.com/linux/static/stable/aarch64/
 ARG DOCKER_VERSION=29.4.2
-RUN curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz" \
+RUN GNU_ARCH=$(cat /tmp/gnu_arch) \
+    && curl -fsSL "https://download.docker.com/linux/static/stable/${GNU_ARCH}/docker-${DOCKER_VERSION}.tgz" \
       -o /tmp/docker.tgz \
     && tar -xzf /tmp/docker.tgz -C /tmp \
     && mv /tmp/docker/docker /usr/local/bin/ \
-    && rm -rf /tmp/docker /tmp/docker.tgz \
+    && rm -rf /tmp/docker /tmp/docker.tgz /tmp/gnu_arch \
     && docker --version
 
 # Set working directory

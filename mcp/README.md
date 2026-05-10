@@ -7,8 +7,7 @@
 >   "mcpServers": {
 >     "gco": {
 >       "command": "python3",
->       "args": ["mcp/run_mcp.py"],
->       "cwd": "/path/to/GCO",
+>       "args": ["/path/to/global-capacity-orchestrator-on-aws/mcp/run_mcp.py"],
 >       "env": {
 >         "GCO_ENABLE_CAPACITY_PURCHASE": "true"
 >       }
@@ -17,7 +16,7 @@
 > }
 > ```
 
-An MCP (Model Context Protocol) server that exposes the GCO CLI as tools for LLM interaction. This lets you manage your multi-region EKS infrastructure through natural language in an AI-powered IDE with MCP support like [Kiro](https://kiro.dev).
+An MCP (Model Context Protocol) server that exposes the GCO CLI as tools for LLM interaction. This lets you manage your multi-region EKS infrastructure through natural language in an AI-powered IDE with MCP support like [Cursor](https://cursor.com) or [Kiro](https://kiro.dev).
 
 ## Table of Contents
 
@@ -105,16 +104,41 @@ The MCP server wraps the `gco` CLI, exposing 44 tools that cover the full lifecy
 
 ## Prerequisites
 
+The simplest setup is to use GCO's [dev container](../QUICKSTART.md#step-1-clone-and-build-the-dev-container) — it has the `gco` CLI and the `[mcp]` extras (including `fastmcp`) pre-installed at the right versions, so you only need to point your MCP client at `python3 mcp/run_mcp.py` running inside the container. This avoids the dependency-resolver issues that often hit users installing GCO's many pinned packages on top of an existing Python environment.
+
+If you'd rather install on your host:
+
 - Python 3.10+
 - GCO CLI installed (`pipx install -e .` from the project root)
 - AWS credentials configured (the CLI handles SigV4 auth)
-- `fastmcp` package (`pip install -e ".[mcp]"` from the project root)
+- `fastmcp` package (`pip install -e ".[mcp]"` from the project root, in a fresh venv if possible)
+
+> If `pip install -e ".[mcp]"` errors out with `ResolutionImpossible`, see [Troubleshooting → Installation Issues](../docs/TROUBLESHOOTING.md#pip-install-fails-with-dependency-conflicts).
 
 ## Setup
 
+The most portable config — works across Cursor, Kiro, Claude Desktop, and anything else that speaks stdio MCP — passes the **absolute path** to `run_mcp.py` directly in `args`. This avoids relying on any client-specific `cwd` handling.
+
+### Cursor
+
+Add to your MCP config at `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "gco": {
+      "command": "python3",
+      "args": ["/path/to/global-capacity-orchestrator-on-aws/mcp/run_mcp.py"]
+    }
+  }
+}
+```
+
+Replace `/path/to/global-capacity-orchestrator-on-aws` with the absolute path to your GCO clone. After saving, hit the reload icon next to the `gco` server in Cursor → Settings → MCP so the tool descriptors get picked up.
+
 ### Kiro
 
-Add to your MCP config at `~/.kiro/settings/mcp.json`:
+Add to your MCP config at `~/.kiro/settings/mcp.json`. Kiro additionally honors a `cwd` field, so you can either use the absolute-path form above or the `cwd` shorthand:
 
 ```json
 {
@@ -122,20 +146,20 @@ Add to your MCP config at `~/.kiro/settings/mcp.json`:
     "gco": {
       "command": "python3",
       "args": ["mcp/run_mcp.py"],
-      "cwd": "/path/to/GCO"
+      "cwd": "/path/to/global-capacity-orchestrator-on-aws"
     }
   }
 }
 ```
 
-Replace `/path/to/GCO` with the absolute path to your GCO project root.
+If the server fails to start in Kiro, switch to the absolute-path form — `cwd` handling differs between clients.
 
 ### Other MCP Clients
 
-The server uses stdio transport (the MCP default). Any MCP client that supports stdio can use it by running:
+The server uses stdio transport (the MCP default). Any MCP client that supports stdio can launch it with:
 
 ```bash
-python3 mcp/run_mcp.py
+python3 /absolute/path/to/global-capacity-orchestrator-on-aws/mcp/run_mcp.py
 ```
 
 ## Available Tools

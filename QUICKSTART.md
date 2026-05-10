@@ -3,12 +3,14 @@
 Get GCO (Global Capacity Orchestrator on AWS) running in under 60 minutes.
 
 > **💡 Tip:** GCO includes an [MCP server](mcp/) you can connect to an agent for guided exploration. Ask questions like *"What do I need to deploy?"* or *"Explain the architecture"* and the agent will pull from the docs and source code. See [mcp/README.md](mcp/README.md) for setup.
+>
+> **🐳 Use the dev container.** GCO pins exact versions of a lot of Python packages so CI is reproducible. That makes installing on top of an existing Python environment a frequent source of `ResolutionImpossible` / dependency-resolver errors. **The supported, fast path is the [dev container](#step-1-clone-and-build-the-dev-container)** — it ships Python, Node.js, CDK, kubectl, AWS CLI, and every Python dep at the exact versions CI uses. The host-install path is kept for contributors who specifically want to develop on their host; if you just want to deploy GCO, skip it.
 
 ## Table of Contents
 
 - [Prerequisites Check](#prerequisites-check)
-- [Step 1: Clone and Install](#step-1-clone-and-install)
-- [Step 2: Install GCO CLI](#step-2-install-gco-cli)
+- [Step 1: Clone and Build the Dev Container](#step-1-clone-and-build-the-dev-container)
+- [Step 2: Run the GCO CLI](#step-2-run-the-gco-cli)
 - [Step 3: Bootstrap CDK](#step-3-bootstrap-cdk-optional)
 - [Step 4: Deploy Infrastructure](#step-4-deploy-infrastructure)
 - [Step 5: Configure Cluster Access](#step-5-configure-cluster-access)
@@ -20,65 +22,104 @@ Get GCO (Global Capacity Orchestrator on AWS) running in under 60 minutes.
 
 ## Prerequisites Check
 
+The only host-side requirements for the recommended (container) path are AWS credentials and Docker:
+
 ```bash
-# Verify AWS CLI
+# Verify AWS CLI is configured (or just have ~/.aws populated to mount in)
 aws --version
 aws sts get-caller-identity
 
-# Verify CDK
-cdk --version
-
-# Verify Python
-python3 --version
-
-# Verify Docker/Finch
-finch version  # or: docker --version
-
-# Verify Node.js (LTS version recommended)
-node --version
+# Verify Docker/Finch is running (Colima also works — see Dockerfile.dev)
+docker --version    # or: finch version
+docker info         # confirms the daemon is running
 ```
 
-## Step 1: Clone and Install
+<details>
+<summary>Installing on your host instead? (advanced)</summary>
+
+You'll additionally need:
+
+```bash
+# Python 3.10+ (3.14 used in CI)
+python3 --version
+
+# Node.js LTS (v24) and CDK CLI
+node --version
+cdk --version    # npm install -g aws-cdk if missing
+```
+
+You should install GCO into a **fresh** virtual environment or via pipx. Mixing it into an existing Python environment will frequently fail dependency resolution because of the project's pinned versions.
+</details>
+
+## Step 1: Clone and Build the Dev Container
 
 ```bash
 # Clone repository
 git clone <repository-url>
-cd GCO
+cd global-capacity-orchestrator-on-aws
 
-# Install CDK globally (if not already installed)
-npm install -g aws-cdk
+# Build the dev container (cached on subsequent runs; ~2 min the first time)
+docker build -f Dockerfile.dev -t gco-dev .
 ```
 
-## Step 2: Install GCO CLI
+The image bundles Python 3.14, Node.js 24, CDK, kubectl, AWS CLI, and all GCO Python dependencies at the exact versions CI uses. The Dockerfile is multi-arch — it builds natively on both `linux/amd64` (Intel/x86_64 hosts and CI) and `linux/arm64` (Apple Silicon Macs, Graviton Linux, etc.) by selecting the right kubectl / AWS CLI / Docker CLI binary via `$TARGETARCH`. No `--platform` flag needed.
 
-Pick one of the following methods:
+## Step 2: Run the GCO CLI
 
-**Option A: Using pip with virtual environment (recommended for development):**
+The `gco` CLI is pre-installed inside the container. The `docker.sock` mount lets `cdk deploy` bundle Lambda assets through your host's Docker daemon.
 
 ```bash
-# Create and activate virtual environment
+# Drop into an interactive shell with everything wired up
+docker run -it --rm \
+  -v ~/.aws:/root/.aws:ro \
+  -v $(pwd):/workspace \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -w /workspace \
+  gco-dev
+
+# From inside the container
+gco --version
+```
+
+> **Tip:** save yourself some typing with an alias on the host:
+>
+> ```bash
+> alias gco-dev='docker run --rm -v ~/.aws:/root/.aws:ro -v $(pwd):/workspace -v /var/run/docker.sock:/var/run/docker.sock -w /workspace gco-dev'
+> # Then run any command directly: gco-dev gco stacks list
+> ```
+>
+> **Colima/Finch users:** the host Docker socket may live somewhere other than `/var/run/docker.sock` — see the header of [`Dockerfile.dev`](Dockerfile.dev) for the right `-v` flag.
+>
+> **Security note:** mounting `/var/run/docker.sock` gives the container root-equivalent access to your host's Docker daemon. Only use this on trusted hosts.
+
+<details>
+<summary>Installing the CLI on your host instead (advanced)</summary>
+
+If you've decided you really want to install on your host (e.g., you're contributing changes to the CLI itself), use a clean isolated environment.
+
+**Option A: pipx (CLI-only):**
+
+```bash
+brew install pipx && pipx ensurepath  # macOS
+
+pipx install -e .
+
+gco --version
+```
+
+**Option B: pip in a fresh virtualenv (development):**
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install the CLI with all dev tools
 pip install -e ".[dev]"
 
-# Verify
 gco --version
 ```
 
-**Option B: Using pipx (recommended for CLI-only usage):**
-
-```bash
-# Install pipx if you don't have it
-brew install pipx && pipx ensurepath  # macOS
-
-# Install GCO CLI (from the project directory)
-pipx install -e .
-
-# Verify installation
-gco --version
-```
+If pip fails with `ResolutionImpossible` or similar resolver errors, this is the pinned-versions issue called out at the top of this guide. Either start from a fresh venv or switch to the dev container — please don't try to relax the pins on your end.
+</details>
 
 ## Step 3: Bootstrap CDK (Optional)
 
@@ -93,8 +134,10 @@ gco stacks bootstrap -r us-east-1
 
 ## Step 4: Deploy Infrastructure
 
+Run this from inside the dev container shell you started in [Step 2](#step-2-run-the-gco-cli) (or non-interactively, e.g. `gco-dev gco stacks deploy-all -y` using the alias from Step 2):
+
 ```bash
-# Start Finch VM (if using Finch)
+# Start Finch VM (if using Finch on the host — Docker Desktop & Colima need no equivalent)
 finch vm start
 
 # Deploy all stacks
@@ -229,26 +272,31 @@ The inference_monitor in each target region automatically creates the Kubernetes
 - Review [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for architecture details
 - Enable [Regional API](docs/CUSTOMIZATION.md#regional-api-gateway-private-access) for private cluster access
 
-### MCP Server (for Kiro / LLM integration)
+### MCP Server (for Cursor / Kiro / LLM integration)
 
-GCO includes an MCP server with 44 tools that wrap the CLI. To use it with Kiro:
+GCO includes an MCP server with 44 tools that wrap the CLI. The dev container already has the `[mcp]` extras installed, so all you need is the client-side config. The most portable form passes an absolute path in `args` (works in Cursor, Kiro, Claude Desktop, etc.):
 
-```bash
-# Install MCP dependencies
-pip install -e ".[mcp]"
-
-# Add to your Kiro MCP config (~/.kiro/settings/mcp.json):
-# {
-#   "mcpServers": {
-#     "gco": {
-#       "command": "python3",
-#       "args": ["mcp/run_mcp.py"]
-#     }
-#   }
-# }
+```jsonc
+// ~/.cursor/mcp.json  (or ~/.kiro/settings/mcp.json)
+{
+  "mcpServers": {
+    "gco": {
+      "command": "python3",
+      "args": ["/absolute/path/to/global-capacity-orchestrator-on-aws/mcp/run_mcp.py"]
+    }
+  }
+}
 ```
 
+After saving, reload the `gco` server in your MCP client's settings UI so the tool descriptors get picked up. If you're running outside the dev container, install the MCP extras into your venv first: `pip install -e ".[mcp]"`. See [`mcp/README.md`](mcp/README.md) for the full setup including a `cwd`-shorthand variant for Kiro.
+
 ## Common Issues
+
+### `pip install` fails with `ResolutionImpossible` or dependency conflicts
+
+GCO pins exact versions of many Python packages (CDK, AWS SDKs, FastAPI, mypy, Ruff, etc.) so CI is reproducible. Installing on top of an existing Python environment frequently triggers resolver errors.
+
+**Fix:** use the [dev container](#step-1-clone-and-build-the-dev-container) — it ships every dep at the correct version and has no overlap with your host Python. If you must install on the host, start from a brand-new virtual environment or use `pipx install -e .` (which gives the CLI its own isolated env).
 
 ### CDK CLI version mismatch
 

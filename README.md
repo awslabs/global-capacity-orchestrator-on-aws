@@ -60,15 +60,38 @@ gco stacks destroy-all -y     # destroy every stack across every region — no o
 
 **Why it's different.** Capacity-aware routing across regions out of the box, full-stack observability (CloudWatch dashboards, alarms, SNS), and a CDK app validated across 20+ config matrix combinations in CI.
 
+**Recommended: run everything from the dev container.** GCO pins exact versions of a lot of Python packages (CDK, AWS SDKs, FastAPI, mypy, Ruff, etc.), and installing them on top of an existing Python environment is the most common source of "it doesn't install" reports. The dev container ships a fully resolved environment (Python 3.14, Node.js 24, CDK, kubectl, AWS CLI, all Python deps) so you skip the whole problem.
+
 ```bash
-# Clone and install the CLI (macOS/Linux)
+git clone git@github.com:awslabs/global-capacity-orchestrator-on-aws.git
+cd global-capacity-orchestrator-on-aws
+
+docker build -f Dockerfile.dev -t gco-dev .
+docker run -it --rm \
+  -v ~/.aws:/root/.aws:ro \
+  -v $(pwd):/workspace \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -w /workspace \
+  gco-dev
+```
+
+The `docker.sock` mount lets `gco stacks deploy-all` bundle Lambda assets through your host Docker daemon. See [Prerequisites](#prerequisites) for Colima/Finch socket paths and the security note about host-socket pass-through.
+
+<details>
+<summary>Prefer to install on your host? (advanced)</summary>
+
+This path requires Python 3.10+ and works best in a fresh virtual environment. With a lot of pinned dependencies, mixing GCO into an existing environment will frequently produce resolver conflicts — use a clean venv or pipx.
+
+```bash
 git clone git@github.com:awslabs/global-capacity-orchestrator-on-aws.git
 cd global-capacity-orchestrator-on-aws && pipx install -e .
 ```
 
+</details>
+
 See the [Quick Start](#quick-start) for the full install + first-job walkthrough, or [`docs/CLI.md`](docs/CLI.md) for every CLI command.
 
-> **💡 New to the codebase?** GCO ships with an [MCP server](mcp/) exposing 44 tools that index the whole project — docs, examples, source code, K8s manifests, scripts. Connect it to an AI-powered IDE (like [Kiro](https://kiro.dev)) and ask in natural language: *"How does region recommendation work?"*, *"Walk me through the inference deployment flow"*. See [mcp/README.md](mcp/README.md).
+> **💡 New to the codebase?** GCO ships with an [MCP server](mcp/) exposing 44 tools that index the whole project — docs, examples, source code, K8s manifests, scripts. Connect it to an AI-powered IDE (like [Cursor](https://cursor.com) or [Kiro](https://kiro.dev)) and ask in natural language: *"How does region recommendation work?"*, *"Walk me through the inference deployment flow"*. See [mcp/README.md](mcp/README.md).
 
 <details>
 <summary><b>Table of contents</b></summary>
@@ -110,19 +133,27 @@ Running GPU workloads at scale is hard. You need to find regions with available 
 
 ### Install and Deploy
 
+The fastest, most reliable path is the dev container — it sidesteps the dependency-conflict issues that come with installing GCO's pinned Python packages on top of your existing Python environment.
+
 ```bash
-# Install the CLI
-brew install pipx && pipx ensurepath  # macOS
-pipx install -e .
+# Build the dev container (Python, Node.js, CDK, kubectl, AWS CLI all pinned & pre-installed)
+docker build -f Dockerfile.dev -t gco-dev .
 
-# Deploy everything (CDK bootstrap runs automatically)
+# Drop into a shell with the gco CLI already installed
+docker run -it --rm \
+  -v ~/.aws:/root/.aws:ro \
+  -v $(pwd):/workspace \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -w /workspace \
+  gco-dev
+
+# From inside the container — deploy everything (CDK bootstrap runs automatically)
 gco stacks deploy-all -y
-
-# Optional: configure kubectl access (requires PUBLIC_AND_PRIVATE endpoint mode)
-# The default endpoint mode is PRIVATE — see docs/CUSTOMIZATION.md for details.
-# Most users don't need this; submit jobs via SQS or API Gateway instead.
-# gco stacks access -r us-east-1
 ```
+
+If you'd rather install on your host, use a clean virtual environment or pipx — see the [Prerequisites](#prerequisites) and [QUICKSTART.md](QUICKSTART.md) for the details and known caveats.
+
+> **Optional:** configure kubectl access (requires `PUBLIC_AND_PRIVATE` endpoint mode). The default endpoint mode is `PRIVATE` — see [docs/CUSTOMIZATION.md](docs/CUSTOMIZATION.md) for details. Most users don't need this; submit jobs via SQS or API Gateway instead.
 
 ### Submit Your First Job
 
@@ -303,12 +334,10 @@ See [Architecture Details](docs/ARCHITECTURE.md) for the full deep dive.
 
 ### Prerequisites
 
-- AWS CLI configured with appropriate credentials
-- Python 3.10+ and Node.js LTS (v24)
-- AWS CDK CLI (`npm install -g aws-cdk`)
-- Docker or Finch (for building container images)
+**Recommended path — dev container only:**
 
-Or skip local setup entirely with the dev container:
+- AWS CLI configured with appropriate credentials (or `~/.aws` to mount in)
+- Docker (or Finch / Colima) — that's it. The container ships Python 3.14, Node.js 24, CDK, kubectl, and AWS CLI at pinned versions.
 
 ```bash
 docker build -f Dockerfile.dev -t gco-dev .
@@ -327,6 +356,14 @@ docker run --rm -it \
 ```
 
 This is host-socket pass-through, not true Docker-in-Docker. Anyone with access to the container has root-equivalent access to the host Docker daemon, so keep the container on a trusted host.
+
+**Host install path (advanced):**
+
+- AWS CLI configured with appropriate credentials
+- Python 3.10+ and Node.js LTS (v24)
+- AWS CDK CLI (`npm install -g aws-cdk`)
+- Docker or Finch (for building container images)
+- A **clean** Python virtual environment or pipx — GCO pins exact versions of many packages, so installing it into an existing environment will commonly fail with dependency-resolver errors. If you hit `ResolutionImpossible`, switch to the dev container instead of debugging your local env.
 
 ## Project Structure
 
@@ -369,13 +406,22 @@ This is host-socket pass-through, not true Docker-in-Docker. Anyone with access 
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, the GitHub Actions CI/CD layout, release process, and dependency scanning schedules.
 
-Quick start for contributors:
+Quick start for contributors (dev container — recommended):
+
+```bash
+docker build -f Dockerfile.dev -t gco-dev .
+docker run --rm -v $(pwd):/workspace -w /workspace gco-dev pytest tests/ -v --cov=gco --cov=cli
+```
+
+Or, in a clean virtual environment on your host:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest tests/ -v --cov=gco --cov=cli
 ```
+
+> If `pip install -e ".[dev]"` fails with dependency-resolver errors, that's the pinned-versions issue mentioned in [Prerequisites](#prerequisites). Use the dev container instead — it ships everything at the exact versions CI uses.
 
 ## License
 

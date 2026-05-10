@@ -4,6 +4,9 @@ Common issues and their solutions.
 
 ## Table of Contents
 
+- [Installation Issues](#installation-issues)
+  - [`pip install` fails with dependency conflicts](#pip-install-fails-with-dependency-conflicts)
+  - [`gco: command not found`](#gco-command-not-found)
 - [Deployment Issues](#deployment-issues)
   - [Stack Creation Fails](#stack-creation-fails)
   - [Stack Stuck in DELETE_FAILED](#stack-stuck-in-delete_failed)
@@ -34,6 +37,73 @@ Common issues and their solutions.
   - [EFS Mount Failures](#efs-mount-failures)
   - [FSx for Lustre Issues](#fsx-for-lustre-issues)
 - [Getting Help](#getting-help)
+
+## Installation Issues
+
+### `pip install` fails with dependency conflicts
+
+**Symptom**: `pip install -e .` (or `pip install -e ".[dev]"`) fails with one of:
+
+- `ERROR: ResolutionImpossible: ...`
+- `The conflict is caused by: ... requires X, but you'll have Y which is incompatible.`
+- `Cannot install -e . because these package versions have conflicting dependencies.`
+
+**Cause**: GCO pins exact versions of many Python packages (CDK, AWS SDKs, FastAPI, mypy, Ruff, pre-commit, etc.) so CI builds are reproducible. When you install on top of an existing Python environment that already has any of those packages at different versions, pip's resolver gives up.
+
+**Recommended fix — use the dev container.** It ships every dependency at the exact version CI uses, so the resolver never has to do any work:
+
+```bash
+docker build -f Dockerfile.dev -t gco-dev .
+docker run -it --rm \
+  -v ~/.aws:/root/.aws:ro \
+  -v $(pwd):/workspace \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -w /workspace \
+  gco-dev
+```
+
+The container has the `gco` CLI, AWS CLI, kubectl, CDK, and Node.js pre-installed. See [QUICKSTART.md](../QUICKSTART.md#step-1-clone-and-build-the-dev-container) for the full setup.
+
+**If you really need a host install:**
+
+1. Use a brand-new virtual environment — don't reuse one that already has CDK / boto3 / FastAPI installed at different versions.
+
+   ```bash
+   python3 -m venv .venv-fresh
+   source .venv-fresh/bin/activate
+   pip install -e ".[dev]"
+   ```
+
+2. Or use `pipx` to give the CLI its own isolated env:
+
+   ```bash
+   brew install pipx && pipx ensurepath
+   pipx install -e .
+   ```
+
+3. Confirm Python ≥ 3.10 (`python3 --version`) — the codebase uses 3.10+ syntax.
+
+Don't loosen the pins in `pyproject.toml` or `requirements-lock.txt` to make local install work — CI's lockfile-staleness check will reject the change.
+
+### `gco: command not found`
+
+**Symptom**: After installing, `gco` isn't on your `PATH`.
+
+**Cause**: Either pip installed it into a venv that isn't currently active, or pipx's bin directory isn't on your `PATH`.
+
+**Solution**:
+
+```bash
+# pipx users — make sure the bin dir is on PATH
+pipx ensurepath
+exec $SHELL  # reload your shell
+
+# venv users — activate the env first
+source .venv/bin/activate
+which gco
+```
+
+If you're using the dev container, the CLI is always available — just exec into the container shell from the README and call `gco` directly.
 
 ## Deployment Issues
 

@@ -6,7 +6,8 @@ Thank you for contributing to GCO (Global Capacity Orchestrator on AWS)! This gu
 
 - [Development Setup](#development-setup)
   - [Prerequisites](#prerequisites)
-  - [Local Development Environment](#local-development-environment)
+  - [Using the Dev Container (Recommended)](#using-the-dev-container-recommended)
+  - [Local Development Environment (Advanced)](#local-development-environment-advanced)
 - [Development Workflow](#development-workflow)
   - [Dependency Management](#dependency-management)
   - [Type Checking](#type-checking)
@@ -30,36 +31,30 @@ Thank you for contributing to GCO (Global Capacity Orchestrator on AWS)! This gu
 
 ### Prerequisites
 
+**Recommended path — the dev container only needs:**
+
 - AWS account with appropriate permissions
+- Docker (or Finch / Colima) and Git
+
+The container itself ships Python 3.14, Node.js 24, CDK, kubectl, AWS CLI, and every Python dependency at the exact versions CI uses, so you don't need any of them on your host.
+
+**Host development path additionally needs:**
+
 - Python 3.10+ (required for type union syntax `str | None`)
 - Node.js 24+ (for CDK)
-- Docker or Finch
 - kubectl
-- Git
+- A clean virtualenv (or pipx) for the GCO Python deps — see the warning under [Local Development Environment (Advanced)](#local-development-environment-advanced).
 
-**Alternative: Use the Dev Container** (Python 3.14, Node.js 24, CDK, kubectl, AWS CLI) to avoid local dependency issues (see below).
-
-### Local Development Environment
-
-```bash
-# Clone repository
-git clone <repository-url>
-cd GCO
-
-# Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
-pip install -e ".[dev]"
-```
+> **Strong recommendation:** use the dev container. GCO pins many exact package versions (FastAPI, mypy, Ruff, AWS SDKs, CDK, etc.) so CI is reproducible. Installing those on top of an existing Python environment frequently triggers `ResolutionImpossible` / resolver errors. The dev container sidesteps this entirely and matches CI bit-for-bit.
 
 ### Using the Dev Container (Recommended)
 
-The dev container includes all dependencies pre-installed (Python 3.14, Node.js 24, CDK, kubectl, AWS CLI). This avoids "works on my machine" issues.
+The dev container includes all dependencies pre-installed (Python 3.14, Node.js 24, CDK, kubectl, AWS CLI). This avoids "works on my machine" issues and is the supported path for everything from running tests to deploying stacks.
+
+The image is **multi-arch** — Apple Silicon (`linux/arm64`), Intel/x86_64 hosts, and CI all build natively from the same `Dockerfile.dev` because every baked-in binary (kubectl, AWS CLI v2, Docker static client) is selected by `$TARGETARCH`. Native builds on Apple Silicon take ~2 min; emulated cross-builds (e.g. `--platform linux/amd64` on an arm64 host) take ~7-8 min and are only needed when you specifically want to test the amd64 image.
 
 ```bash
-# Build the container
+# Build the container (cached on subsequent runs; ~2 min the first time)
 docker build -f Dockerfile.dev -t gco-dev .
 
 # Run an interactive shell
@@ -123,6 +118,26 @@ alias gco-dev='docker run --rm -v ~/.aws:/root/.aws:ro -v $(pwd):/workspace -w /
 # Then use: gco-dev gco stacks list
 ```
 
+### Local Development Environment (Advanced)
+
+Use this path only if you specifically want to develop on your host (e.g., editor integrations like the Pyright/mypy LSP). It is not the supported path for one-off deploys or running tests — those should go through the dev container above.
+
+```bash
+# Clone repository
+git clone <repository-url>
+cd GCO
+
+# Create a *fresh* virtual environment — do not reuse one that already has
+# AWS CDK, FastAPI, mypy, or other commonly-pinned packages installed.
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
+pip install -e ".[dev]"
+```
+
+If `pip install` fails with `ResolutionImpossible` or "the conflict is caused by..." messages, your venv is not actually clean (or you're on a Python version older than 3.10). Recreate the venv from scratch or switch to the dev container — please don't loosen the pins in `pyproject.toml` or `requirements-lock.txt` to make local install work, since CI will reject the lockfile drift.
+
 ## Development Workflow
 
 ### Dependency Management
@@ -148,7 +163,7 @@ produces a deterministic, Linux-targeted lockfile that matches CI, avoids
 host-specific path leakage, and doesn't require `pip-tools` on your machine.
 
 ```bash
-# Build the dev image once (cached between runs, ~5 minutes the first time)
+# Build the dev image once (cached between runs, ~2 minutes the first time)
 docker build -f Dockerfile.dev -t gco-dev .
 
 # Regenerate the lockfile and strip the project self-reference
