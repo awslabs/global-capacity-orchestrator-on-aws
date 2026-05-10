@@ -81,10 +81,27 @@ docker run -it --rm \
 gco --version
 ```
 
-> **Tip:** save yourself some typing with an alias on the host:
+> **Tip:** save yourself some typing with a shell function on the host. We use a function (rather than a plain alias mounting `$(pwd)`) so that the GCO clone is always mounted at `/workspace` no matter where you call it from — `gco stacks *` and other commands that need `cdk.json` / `app.py` / `gco/` at the workspace root will keep working from any subdirectory of the repo, and from anywhere on disk if you `export GCO_HOME=/path/to/your/clone`:
 >
 > ```bash
-> alias gco-dev='docker run --rm -v ~/.aws:/root/.aws:ro -v $(pwd):/workspace -v /var/run/docker.sock:/var/run/docker.sock -w /workspace gco-dev'
+> gco-dev() {
+>     local project_root="${GCO_HOME:-$(git rev-parse --show-toplevel 2>/dev/null)}"
+>     # Check for both Dockerfile.dev *and* the gco/ namespace package
+>     # so we don't accidentally bind-mount an unrelated repo that
+>     # happens to have a Dockerfile.dev at its root.
+>     if [[ -z "$project_root" \
+>         || ! -f "$project_root/Dockerfile.dev" \
+>         || ! -d "$project_root/gco" ]]; then
+>         echo "gco-dev: not inside the GCO repo. cd into your clone, or set GCO_HOME." >&2
+>         return 1
+>     fi
+>     docker run --rm \
+>         -v ~/.aws:/root/.aws:ro \
+>         -v "$project_root:/workspace" \
+>         -v /var/run/docker.sock:/var/run/docker.sock \
+>         -w /workspace \
+>         gco-dev "$@"
+> }
 > # Then run any command directly: gco-dev gco stacks list
 > ```
 >

@@ -111,10 +111,26 @@ host-socket pass-through, not true Docker-in-Docker — do not add
 root-equivalent access to the host Docker daemon through the mounted
 socket, so only use this on trusted hosts.
 
-**Tip**: Create a shell alias for convenience:
+**Tip**: Create a shell function for convenience. Using a function (rather than an alias that hardcodes `$(pwd)`) means it auto-resolves your GCO clone via `git rev-parse`, so `gco stacks *` and other source-tree-dependent commands work regardless of which subdirectory you call it from. Set `GCO_HOME` in your shell to use it from anywhere on disk:
 
 ```bash
-alias gco-dev='docker run --rm -v ~/.aws:/root/.aws:ro -v $(pwd):/workspace -w /workspace gco-dev'
+gco-dev() {
+    local project_root="${GCO_HOME:-$(git rev-parse --show-toplevel 2>/dev/null)}"
+    # Check for both Dockerfile.dev *and* the gco/ namespace package
+    # so we don't accidentally bind-mount an unrelated repo that
+    # happens to have a Dockerfile.dev at its root.
+    if [[ -z "$project_root" \
+        || ! -f "$project_root/Dockerfile.dev" \
+        || ! -d "$project_root/gco" ]]; then
+        echo "gco-dev: not inside the GCO repo. cd into your clone, or set GCO_HOME." >&2
+        return 1
+    fi
+    docker run --rm \
+        -v ~/.aws:/root/.aws:ro \
+        -v "$project_root:/workspace" \
+        -w /workspace \
+        gco-dev "$@"
+}
 # Then use: gco-dev gco stacks list
 ```
 
