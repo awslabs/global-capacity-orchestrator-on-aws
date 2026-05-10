@@ -362,7 +362,8 @@ jobs:
     runs-on: ubuntu-latest
     # Bumped from 25→40 to accommodate the linux/arm64 cross-build, which
     # runs every Dockerfile.dev RUN step under QEMU emulation on the
-    # amd64 runner (~10-15 minutes vs. <1 minute native).
+    # amd64 runner (vs. ~20 min for the native amd64 build on a standard
+    # 2-vCPU runner — pip-install of all the pinned deps dominates).
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
@@ -459,16 +460,16 @@ jobs:
       #      no pinned package has silently become amd64-only since the
       #      lockfile was regenerated.
       #
-      # Cross-build under QEMU is ~10× slower than native; if this step
-      # becomes a bottleneck, consider gating it on `paths` for
-      # Dockerfile.dev and pyproject.toml only.
+      # Cross-build under QEMU is meaningfully slower than the native
+      # amd64 build above; if this step becomes a bottleneck, consider
+      # gating it on `paths` for Dockerfile.dev and pyproject.toml only.
       # ----------------------------------------------------------------------
       - name: Set up QEMU (for linux/arm64 emulation)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
       - name: Set up Buildx (enables --platform)
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Cross-build dev container for linux/arm64
         run: |
           docker buildx build \
