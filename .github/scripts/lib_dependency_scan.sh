@@ -294,3 +294,134 @@ except ImportError:
             print(m.group(1))
 " "$file" 2>/dev/null
 }
+
+# extract_constant_value <name> [constants_path]
+#
+# Reads a single string-valued top-level constant from the constants
+# module by regex (does *not* import ``gco.stacks``, which would pull
+# in the full CDK stack package). Used by the CDK-enum drift checks
+# below to look up ``LAMBDA_PYTHON_RUNTIME`` and ``AURORA_POSTGRES_VERSION``
+# without assuming the rest of the project is installable.
+#
+# Example:
+#   extract_constant_value LAMBDA_PYTHON_RUNTIME
+#   # → PYTHON_3_14
+extract_constant_value() {
+  local name="$1"
+  local file="${2:-gco/stacks/constants.py}"
+  [ -f "$file" ] || return 0
+  python3 -c "
+import re, sys
+name = sys.argv[1]
+with open(sys.argv[2]) as f:
+    text = f.read()
+m = re.search(r'^' + re.escape(name) + r'\s*=\s*\"([^\"]+)\"', text, re.MULTILINE)
+if m:
+    print(m.group(1))
+" "$name" "$file" 2>/dev/null
+}
+
+# get_latest_lambda_python_runtime
+#
+# Imports ``aws_cdk.aws_lambda`` and prints the highest ``PYTHON_X_Y``
+# enum member of ``Runtime`` (e.g. ``PYTHON_3_14``). Empty output when
+# aws-cdk-lib isn't importable — callers treat this as "skip".
+#
+# Used by the CDK-enum drift check in ``dependency-scan.sh`` to compare
+# the ``LAMBDA_PYTHON_RUNTIME`` constant against the newest Lambda
+# Python runtime the installed CDK can construct. The dep-scan workflow
+# installs the latest ``aws-cdk-lib`` for this; locally the helper just
+# reflects whatever is on the active interpreter.
+#
+# Suffixed members (``PYTHON_3_14_PROVIDED`` if it ever exists) are
+# ignored — the regex anchor on ``$`` keeps the result aligned with the
+# canonical "X.Y" runtime CDK exposes today.
+get_latest_lambda_python_runtime() {
+  python3 -c "
+import re
+try:
+    from aws_cdk import aws_lambda
+except Exception:
+    raise SystemExit(0)
+versions = []
+for name in dir(aws_lambda.Runtime):
+    m = re.match(r'^PYTHON_(\d+)_(\d+)$', name)
+    if m:
+        versions.append((int(m.group(1)), int(m.group(2)), name))
+if versions:
+    print(max(versions)[2])
+" 2>/dev/null
+}
+
+# get_latest_aurora_postgres_version
+#
+# Imports ``aws_cdk.aws_rds`` and prints the highest ``VER_X_Y`` enum
+# member of ``AuroraPostgresEngineVersion`` (e.g. ``VER_17_9``). Empty
+# output when aws-cdk-lib isn't importable.
+#
+# Skips suffixed variants such as ``VER_17_9_LIMITLESS`` and
+# ``VER_15_4_R2`` — those aren't the canonical "latest minor" engine
+# version we pin, and including them would cause the comparison to
+# flap whenever AWS publishes a sidecar release line.
+get_latest_aurora_postgres_version() {
+  python3 -c "
+import re
+try:
+    from aws_cdk import aws_rds
+except Exception:
+    raise SystemExit(0)
+versions = []
+for name in dir(aws_rds.AuroraPostgresEngineVersion):
+    m = re.match(r'^VER_(\d+)_(\d+)$', name)
+    if m:
+        versions.append((int(m.group(1)), int(m.group(2)), name))
+if versions:
+    print(max(versions)[2])
+" 2>/dev/null
+}
+
+# get_latest_python_release
+#
+# Queries https://endoflife.date/api/python.json and prints the
+# highest ``cycle`` (e.g. ``3.14``) that's already shipped and still
+# under standard support. Empty output on network failure or schema
+# change — callers treat this as "skip" rather than as drift.
+#
+# We pick endoflife.date because it's a clean, unauthenticated JSON
+# endpoint that already filters out prerelease/EOL cycles via its
+# ``releaseDate`` and ``eol`` fields. Going through python.org or the
+# python/cpython GitHub API would either rate-limit (no token) or
+# require us to hand-roll prerelease-tag filtering.
+get_latest_python_release() {
+  curl -fsSL --max-time 15 "https://endoflife.date/api/python.json" 2>/dev/null \
+    | python3 -c "
+import datetime, json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+today = datetime.date.today().isoformat()
+candidates = []
+for entry in data:
+    cycle = entry.get('cycle', '')
+    release = entry.get('releaseDate', '') or ''
+    eol = entry.get('eol', '')
+    if not cycle or '.' not in cycle:
+        continue
+    # Skip prereleases (release date in the future).
+    if isinstance(release, str) and release > today:
+        continue
+    # Skip end-of-life cycles. ``eol`` may be a string date or False
+    # when EOL hasn't been announced yet — treat False/empty as still
+    # supported.
+    if isinstance(eol, str) and eol and eol < today:
+        continue
+    try:
+        parts = tuple(int(p) for p in cycle.split('.'))
+    except ValueError:
+        continue
+    candidates.append((parts, cycle))
+if candidates:
+    print(max(candidates)[1])
+" 2>/dev/null
+}

@@ -16,6 +16,9 @@
 #   - EMR Serverless release labels (AWS creds via OIDC)
 #   - Dockerfile.dev ARG pins (NODE_MAJOR, CDK_VERSION, KUBECTL_VERSION,
 #     AWSCLI_VERSION, DOCKER_VERSION) — public endpoints, no AWS creds needed
+#   - CDK enum constants in gco/stacks/constants.py compared against the
+#     latest aws-cdk-lib (LAMBDA_PYTHON_RUNTIME, AURORA_POSTGRES_VERSION)
+#   - Latest stable Python release from endoflife.date
 #
 # If any are outdated, opens a GitHub issue with the details. Uses the
 # built-in GITHUB_TOKEN with `issues: write` — no long-lived PAT needed.
@@ -63,6 +66,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[security]"
           pip install awscli
+      - name: Install latest aws-cdk-lib (for CDK enum drift check)
+        # The CDK-enum section of dependency-scan.sh introspects
+        # ``aws_cdk.aws_lambda.Runtime`` and
+        # ``aws_cdk.aws_rds.AuroraPostgresEngineVersion`` to find the
+        # newest enum members shipped by the library, then compares them
+        # against the constants pinned in ``gco/stacks/constants.py``.
+        # We install ``--upgrade`` (no version pin) on purpose so the
+        # check reflects the absolute latest enums available, even when
+        # ``aws-cdk-lib`` itself is also drifting (which is reported
+        # separately by the Python-deps section). When this step is
+        # skipped or fails, the scan logs a one-line note and the rest
+        # of the surfaces still report drift.
+        run: |
+          pip install --upgrade aws-cdk-lib
       - name: Install pinned Helm
         run: |
           curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar xz -C /tmp

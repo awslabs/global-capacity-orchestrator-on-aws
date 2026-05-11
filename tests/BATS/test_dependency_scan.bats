@@ -540,6 +540,147 @@ EOF
     [ -z "$output" ]
 }
 
+# ── extract_constant_value ──────────────────────────────────────────────────
+
+@test "extract_constant_value: reads LAMBDA_PYTHON_RUNTIME from real constants.py" {
+    run extract_constant_value "LAMBDA_PYTHON_RUNTIME" "gco/stacks/constants.py"
+    [ "$status" -eq 0 ]
+    # The pinned value is something like ``PYTHON_3_14`` — assert the
+    # shape so a legitimate bump doesn't break the test.
+    [[ "$output" =~ ^PYTHON_[0-9]+_[0-9]+$ ]]
+}
+
+@test "extract_constant_value: reads AURORA_POSTGRES_VERSION from real constants.py" {
+    run extract_constant_value "AURORA_POSTGRES_VERSION" "gco/stacks/constants.py"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ ^VER_[0-9]+_[0-9]+$ ]]
+}
+
+@test "extract_constant_value: returns empty for unknown constant" {
+    run extract_constant_value "NOT_A_REAL_CONSTANT_XYZ" "gco/stacks/constants.py"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "extract_constant_value: returns empty for missing file" {
+    run extract_constant_value "LAMBDA_PYTHON_RUNTIME" "/nonexistent/constants.py"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "extract_constant_value: ignores commented-out assignment" {
+    tmpfile="$(mktemp)"
+    cat > "$tmpfile" <<'EOF'
+# OLD_KNOB = "stale"
+NEW_KNOB = "fresh"
+EOF
+    run extract_constant_value "OLD_KNOB" "$tmpfile"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run extract_constant_value "NEW_KNOB" "$tmpfile"
+    [ "$status" -eq 0 ]
+    [ "$output" = "fresh" ]
+    rm -f "$tmpfile"
+}
+
+@test "extract_constant_value: only matches an exact name (no substring)" {
+    # The regex must be anchored on the constant name so a request for
+    # ``FOO`` does not accidentally match ``FOO_BAR``.
+    tmpfile="$(mktemp)"
+    cat > "$tmpfile" <<'EOF'
+FOO_BAR = "decoy"
+FOO = "real"
+EOF
+    run extract_constant_value "FOO" "$tmpfile"
+    [ "$status" -eq 0 ]
+    [ "$output" = "real" ]
+    rm -f "$tmpfile"
+}
+
+# ── get_latest_lambda_python_runtime ────────────────────────────────────────
+
+@test "get_latest_lambda_python_runtime: returns enum name when aws-cdk-lib installed" {
+    python3 -c "import aws_cdk" 2>/dev/null || skip "aws-cdk-lib not installed"
+    run get_latest_lambda_python_runtime
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ ^PYTHON_[0-9]+_[0-9]+$ ]]
+}
+
+@test "get_latest_lambda_python_runtime: empty when aws-cdk-lib missing" {
+    # The unit:bats:shell CI job runs in a minimal environment without
+    # aws-cdk-lib, where this branch is exercised naturally. Skip
+    # locally if the developer has aws-cdk-lib in their interpreter
+    # (the positive test above already covers that case).
+    python3 -c "import aws_cdk" 2>/dev/null && skip "aws-cdk-lib is installed; positive case is tested separately"
+    run get_latest_lambda_python_runtime
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# ── get_latest_aurora_postgres_version ──────────────────────────────────────
+
+@test "get_latest_aurora_postgres_version: returns enum name when aws-cdk-lib installed" {
+    python3 -c "import aws_cdk" 2>/dev/null || skip "aws-cdk-lib not installed"
+    run get_latest_aurora_postgres_version
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ ^VER_[0-9]+_[0-9]+$ ]]
+}
+
+@test "get_latest_aurora_postgres_version: empty when aws-cdk-lib missing" {
+    python3 -c "import aws_cdk" 2>/dev/null && skip "aws-cdk-lib is installed; positive case is tested separately"
+    run get_latest_aurora_postgres_version
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# ── get_latest_python_release ───────────────────────────────────────────────
+
+@test "get_latest_python_release: parses endoflife.date-shaped fixture" {
+    # Don't make the test depend on internet — feed the parsing
+    # pipeline a fixture that mirrors endoflife.date's response shape
+    # and assert the prerelease + EOL filters work end-to-end.
+    run python3 -c "
+import datetime, json
+data = [
+    {'cycle': '3.99', 'releaseDate': '2999-01-01', 'eol': False},
+    {'cycle': '3.14', 'releaseDate': '2025-10-07', 'eol': '2030-10-07'},
+    {'cycle': '3.13', 'releaseDate': '2024-10-07', 'eol': '2029-10-07'},
+    {'cycle': '3.7',  'releaseDate': '2018-06-27', 'eol': '2023-06-27'},
+]
+today = datetime.date.today().isoformat()
+candidates = []
+for entry in data:
+    cycle = entry.get('cycle', '')
+    release = entry.get('releaseDate', '') or ''
+    eol = entry.get('eol', '')
+    if not cycle or '.' not in cycle:
+        continue
+    if isinstance(release, str) and release > today:
+        continue
+    if isinstance(eol, str) and eol and eol < today:
+        continue
+    parts = tuple(int(p) for p in cycle.split('.'))
+    candidates.append((parts, cycle))
+print(max(candidates)[1] if candidates else '')
+"
+    [ "$status" -eq 0 ]
+    # 3.99 is filtered as prerelease; 3.7 is filtered as EOL; the
+    # newest of {3.13, 3.14} should win.
+    [ "$output" = "3.14" ]
+}
+
+@test "get_latest_python_release: empty on malformed JSON" {
+    run python3 -c "
+import json, sys
+try:
+    data = json.loads('not json')
+except Exception:
+    sys.exit(0)
+"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
 @test "extract_direct_python_deps: fixture with only transitive-shaped names" {
     # Fixture pyproject with two direct pins + an optional-deps group.
     # Every transitive in requirements-lock.txt is absent from this

@@ -17,6 +17,9 @@
 #   - EMR Serverless release labels (AWS creds)
 #   - Dockerfile.dev ARG pins (Node LTS major, CDK CLI, kubectl, AWS CLI v2,
 #     Docker CLI) — public endpoints, no AWS creds needed
+#   - CDK enum constants from gco/stacks/constants.py compared against the
+#     installed aws-cdk-lib (LAMBDA_PYTHON_RUNTIME, AURORA_POSTGRES_VERSION)
+#   - Latest stable Python release from endoflife.date — public endpoint
 #
 # Ports the `.dependency-scan-script` YAML anchor from the retired
 # GitLab pipeline into a standalone shell script. Two behavior changes:
@@ -602,6 +605,106 @@ DOCKERFILE_COUNT="$(wc -l < "$DOCKERFILE_RESULTS" 2>/dev/null | tr -d ' ')"
 [ -z "$DOCKERFILE_COUNT" ] && DOCKERFILE_COUNT=0
 
 # ---------------------------------------------------------------------------
+# CDK enum constants
+#
+# Compares the CDK-enum-name constants pinned in
+# ``gco/stacks/constants.py`` against the highest enum members exposed
+# by the installed ``aws-cdk-lib``. This catches the case where
+# aws-cdk-lib already supports a newer enum (because we bumped the
+# library, or simply because the latest published release added one)
+# but ``constants.py`` still pins an older one.
+#
+# Two enums are tracked today:
+#
+#   - ``LAMBDA_PYTHON_RUNTIME`` → ``aws_cdk.aws_lambda.Runtime.PYTHON_X_Y``
+#   - ``AURORA_POSTGRES_VERSION`` → ``aws_cdk.aws_rds.AuroraPostgresEngineVersion.VER_X_Y``
+#
+# The deps-scan workflow installs the latest ``aws-cdk-lib`` for this
+# section; locally the helper just reflects whatever's already on the
+# active interpreter. If aws-cdk-lib isn't importable we skip with a
+# one-line note (mirrors the AWS-creds skip pattern used elsewhere).
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Checking CDK enum constants ==="
+
+CDK_ENUM_RESULTS="$(mktemp)"
+CDK_ENUM_SKIP_REASON=""
+
+if ! python3 -c "import aws_cdk" 2>/dev/null; then
+  CDK_ENUM_SKIP_REASON="aws-cdk-lib not importable. Install with 'pip install aws-cdk-lib' to enable."
+  echo "  $CDK_ENUM_SKIP_REASON"
+else
+  # Lambda Python runtime enum
+  LAMBDA_RT_CURRENT="$(extract_constant_value LAMBDA_PYTHON_RUNTIME)"
+  LAMBDA_RT_LATEST="$(get_latest_lambda_python_runtime)"
+  if [ -n "$LAMBDA_RT_CURRENT" ] && [ -n "$LAMBDA_RT_LATEST" ] \
+     && [ "$LAMBDA_RT_CURRENT" != "$LAMBDA_RT_LATEST" ]; then
+    # Convert PYTHON_3_14 → 3.14 so compare_semver can rank them.
+    cur_v="$(echo "$LAMBDA_RT_CURRENT" | sed -E 's/^PYTHON_([0-9]+)_([0-9]+)$/\1.\2/')"
+    lat_v="$(echo "$LAMBDA_RT_LATEST"  | sed -E 's/^PYTHON_([0-9]+)_([0-9]+)$/\1.\2/')"
+    if [ "$(compare_semver "$cur_v" "$lat_v")" = "newer" ]; then
+      echo "  - LAMBDA_PYTHON_RUNTIME: ${LAMBDA_RT_CURRENT} -> ${LAMBDA_RT_LATEST}"
+      echo "LAMBDA_PYTHON_RUNTIME|aws_lambda.Runtime|${LAMBDA_RT_CURRENT}|${LAMBDA_RT_LATEST}" >> "$CDK_ENUM_RESULTS"
+    fi
+  fi
+
+  # Aurora PostgreSQL engine version enum
+  AURORA_ENUM_CURRENT="$(extract_constant_value AURORA_POSTGRES_VERSION)"
+  AURORA_ENUM_LATEST="$(get_latest_aurora_postgres_version)"
+  if [ -n "$AURORA_ENUM_CURRENT" ] && [ -n "$AURORA_ENUM_LATEST" ] \
+     && [ "$AURORA_ENUM_CURRENT" != "$AURORA_ENUM_LATEST" ]; then
+    cur_v="$(echo "$AURORA_ENUM_CURRENT" | sed -E 's/^VER_([0-9]+)_([0-9]+)$/\1.\2/')"
+    lat_v="$(echo "$AURORA_ENUM_LATEST"  | sed -E 's/^VER_([0-9]+)_([0-9]+)$/\1.\2/')"
+    if [ "$(compare_semver "$cur_v" "$lat_v")" = "newer" ]; then
+      echo "  - AURORA_POSTGRES_VERSION: ${AURORA_ENUM_CURRENT} -> ${AURORA_ENUM_LATEST}"
+      echo "AURORA_POSTGRES_VERSION|aws_rds.AuroraPostgresEngineVersion|${AURORA_ENUM_CURRENT}|${AURORA_ENUM_LATEST}" >> "$CDK_ENUM_RESULTS"
+    fi
+  fi
+fi
+
+CDK_ENUM_COUNT="$(wc -l < "$CDK_ENUM_RESULTS" 2>/dev/null | tr -d ' ')"
+[ -z "$CDK_ENUM_COUNT" ] && CDK_ENUM_COUNT=0
+
+# ---------------------------------------------------------------------------
+# Python release
+#
+# Compares the Lambda Python runtime constant (which encodes the major
+# Python version we standardise on across every Lambda in the project)
+# against the latest stable Python release on endoflife.date.
+#
+# This is informational drift — Lambda may not ship support for a brand-
+# new Python release for several months — but the signal is useful so
+# the operator knows when to start planning a runtime bump. It also
+# complements the CDK-enum check above: that check answers "what does
+# aws-cdk-lib expose?", this one answers "what has python.org actually
+# shipped?".
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Checking Python release ==="
+
+PYTHON_RELEASE_RESULTS="$(mktemp)"
+PYTHON_RELEASE_SKIP_REASON=""
+
+# Re-read in case the CDK section was skipped and never set the var.
+LAMBDA_RT_CURRENT="${LAMBDA_RT_CURRENT:-$(extract_constant_value LAMBDA_PYTHON_RUNTIME)}"
+LATEST_PYTHON="$(get_latest_python_release)"
+
+if [ -z "$LATEST_PYTHON" ]; then
+  PYTHON_RELEASE_SKIP_REASON="endoflife.date query failed (network or schema change)."
+  echo "  $PYTHON_RELEASE_SKIP_REASON"
+elif [ -n "$LAMBDA_RT_CURRENT" ]; then
+  cur_v="$(echo "$LAMBDA_RT_CURRENT" | sed -E 's/^PYTHON_([0-9]+)_([0-9]+)$/\1.\2/')"
+  if [ "$cur_v" != "$LATEST_PYTHON" ] \
+     && [ "$(compare_semver "$cur_v" "$LATEST_PYTHON")" = "newer" ]; then
+    echo "  - python (LAMBDA_PYTHON_RUNTIME): ${cur_v} -> ${LATEST_PYTHON}"
+    echo "python|${cur_v}|${LATEST_PYTHON}" >> "$PYTHON_RELEASE_RESULTS"
+  fi
+fi
+
+PYTHON_RELEASE_COUNT="$(wc -l < "$PYTHON_RELEASE_RESULTS" 2>/dev/null | tr -d ' ')"
+[ -z "$PYTHON_RELEASE_COUNT" ] && PYTHON_RELEASE_COUNT=0
+
+# ---------------------------------------------------------------------------
 # Summary + Markdown report
 # ---------------------------------------------------------------------------
 echo ""
@@ -630,12 +733,24 @@ else
   echo "EMR Serverless release:   $EMR_COUNT"
 fi
 echo "Dockerfile.dev pins:      $DOCKERFILE_COUNT"
+if [ -n "$CDK_ENUM_SKIP_REASON" ]; then
+  echo "CDK enum constants:       (skipped)"
+else
+  echo "CDK enum constants:       $CDK_ENUM_COUNT"
+fi
+if [ -n "$PYTHON_RELEASE_SKIP_REASON" ]; then
+  echo "Python release:           (skipped)"
+else
+  echo "Python release:           $PYTHON_RELEASE_COUNT"
+fi
 
 if [ "$PYTHON_COUNT" -eq 0 ] && [ "$DOCKER_COUNT" -eq 0 ] \
    && [ "$HELM_COUNT" -eq 0 ] && [ "$ADDON_COUNT" -eq 0 ] \
    && [ "$EKS_K8S_COUNT" -eq 0 ] \
    && [ "$AURORA_COUNT" -eq 0 ] && [ "$EMR_COUNT" -eq 0 ] \
-   && [ "$DOCKERFILE_COUNT" -eq 0 ]; then
+   && [ "$DOCKERFILE_COUNT" -eq 0 ] \
+   && [ "$CDK_ENUM_COUNT" -eq 0 ] \
+   && [ "$PYTHON_RELEASE_COUNT" -eq 0 ]; then
   echo ""
   SKIP_NOTES=""
   if [ -n "$ADDON_SKIP_REASON" ]; then
@@ -653,12 +768,20 @@ if [ "$PYTHON_COUNT" -eq 0 ] && [ "$DOCKER_COUNT" -eq 0 ] \
     [ -n "$SKIP_NOTES" ] && SKIP_NOTES="$SKIP_NOTES; "
     SKIP_NOTES="${SKIP_NOTES}EMR Serverless skipped: $EMR_SKIP_REASON"
   fi
+  if [ -n "$CDK_ENUM_SKIP_REASON" ]; then
+    [ -n "$SKIP_NOTES" ] && SKIP_NOTES="$SKIP_NOTES; "
+    SKIP_NOTES="${SKIP_NOTES}CDK enums skipped: $CDK_ENUM_SKIP_REASON"
+  fi
+  if [ -n "$PYTHON_RELEASE_SKIP_REASON" ]; then
+    [ -n "$SKIP_NOTES" ] && SKIP_NOTES="$SKIP_NOTES; "
+    SKIP_NOTES="${SKIP_NOTES}Python release skipped: $PYTHON_RELEASE_SKIP_REASON"
+  fi
   if [ -n "$SKIP_NOTES" ]; then
     echo "All scanned surfaces are up to date ($SKIP_NOTES)"
   else
     echo "All dependencies are up to date."
   fi
-  rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$EKS_K8S_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS"
+  rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$EKS_K8S_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS" "$CDK_ENUM_RESULTS" "$PYTHON_RELEASE_RESULTS"
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
     echo "has_drift=false" >> "$GITHUB_OUTPUT"
   fi
@@ -795,6 +918,53 @@ fi
     echo ""
   fi
 
+  if [ "$CDK_ENUM_COUNT" -gt 0 ]; then
+    echo "## CDK Enum Constants"
+    echo ""
+    echo "Enum-name constants in \`gco/stacks/constants.py\` are behind"
+    echo "the highest enum member exposed by the installed \`aws-cdk-lib\`."
+    echo "Update the constant in \`constants.py\` (and any related"
+    echo "deployment notes) so new stacks construct the latest CDK enum."
+    echo ""
+    echo "| Constant | CDK enum class | Current | Latest |"
+    echo "|----------|----------------|---------|--------|"
+    while IFS='|' read -r const cls cur lat; do
+      echo "| \`$const\` | \`$cls\` | \`$cur\` | \`$lat\` |"
+    done < "$CDK_ENUM_RESULTS"
+    echo ""
+  fi
+
+  if [ -n "$CDK_ENUM_SKIP_REASON" ]; then
+    echo "## CDK Enum Constants (skipped)"
+    echo ""
+    echo "> $CDK_ENUM_SKIP_REASON"
+    echo ""
+  fi
+
+  if [ "$PYTHON_RELEASE_COUNT" -gt 0 ]; then
+    echo "## Python Release"
+    echo ""
+    echo "A newer stable Python release is available on python.org than"
+    echo "the version encoded by \`LAMBDA_PYTHON_RUNTIME\`. AWS Lambda may"
+    echo "lag the upstream release by a few months — wait for the matching"
+    echo "\`Runtime.PYTHON_X_Y\` enum to appear in \`aws-cdk-lib\` (tracked"
+    echo "by the **CDK Enum Constants** section above) before bumping."
+    echo ""
+    echo "| Surface | Current | Latest |"
+    echo "|---------|---------|--------|"
+    while IFS='|' read -r surface cur lat; do
+      echo "| $surface | $cur | $lat |"
+    done < "$PYTHON_RELEASE_RESULTS"
+    echo ""
+  fi
+
+  if [ -n "$PYTHON_RELEASE_SKIP_REASON" ]; then
+    echo "## Python Release (skipped)"
+    echo ""
+    echo "> $PYTHON_RELEASE_SKIP_REASON"
+    echo ""
+  fi
+
   echo "## Action Required"
   echo ""
   echo "1. Review changelogs for breaking changes"
@@ -807,7 +977,7 @@ fi
   echo "_Automatically created by the \`deps-scan\` workflow._"
 } > "$REPORT_FILE"
 
-rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$EKS_K8S_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS"
+rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$EKS_K8S_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS" "$CDK_ENUM_RESULTS" "$PYTHON_RELEASE_RESULTS"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "has_drift=true"            >> "$GITHUB_OUTPUT"
