@@ -30,3 +30,24 @@
 # ALAS JSON feed: https://alas.aws.amazon.com/cve/json/v1/CVE-2026-4046.json
 # Upstream base image: public.ecr.aws/lambda/python:3.14
 CVE-2026-4046 exp:2026-05-22
+
+# CVE-2026-33811, CVE-2026-33814, CVE-2026-39820, CVE-2026-39836,
+# CVE-2026-42499 — Go stdlib vulnerabilities (net/http, crypto/tls, os/exec)
+# affecting three binaries in the helm-installer Lambda container:
+#   - aws-lambda-rie (Go 1.26.2, bundled in public.ecr.aws/lambda/python:3.14)
+#   - helm v4.1.4 (Go 1.25.9, latest release as of 2026-05-11)
+#   - kubectl v1.35.4 (Go 1.25.9, latest stable-1.35 as of 2026-05-11)
+#
+# Fix requires Go ≥1.25.10 or ≥1.26.3 in the compiled binaries. No upstream
+# releases are available yet:
+#   - Helm: v4.1.4 is latest (https://github.com/helm/helm/releases)
+#   - kubectl: v1.35.4 is latest stable-1.35 (https://dl.k8s.io/release/stable-1.35.txt)
+#   - aws-lambda-rie: AWS-controlled, no user-serviceable update path
+#
+# These CVEs pre-date this PR and would fail the scan on main today.
+# Re-evaluate when Helm v4.1.5+ or kubectl v1.35.5+ ships.
+CVE-2026-33811 exp:2026-06-11
+CVE-2026-33814 exp:2026-06-11
+CVE-2026-39820 exp:2026-06-11
+CVE-2026-39836 exp:2026-06-11
+CVE-2026-42499 exp:2026-06-11
