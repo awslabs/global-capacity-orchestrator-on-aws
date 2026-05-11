@@ -110,19 +110,25 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.14"
-          cache: "pip"
-          cache-dependency-path: "requirements-lock.txt"
-      - name: Install lint dependencies
-        run: |
-          pip install -e ".[lint]"
       - name: Run ruff
-        run: |
-          ruff check gco/ cli/ mcp/ tests/ \
-            --exclude lambda/kubectl-applier-simple-build \
-            --exclude lambda/helm-installer-build
+        # astral-sh/ruff-action ships a prebuilt ruff binary, skipping the
+        # ~30-40s setup-python + pip-install-e-[lint] overhead the other
+        # lint jobs pay. The version is pinned to match the ruff==0.15.7
+        # entry in pyproject.toml's [project.optional-dependencies] lint
+        # group so the pre-commit hook, developer installs, and CI stay
+        # in lockstep. Bump both together.
+        #
+        # The action invokes `ruff <args> <src>`, so `args` carries the
+        # command + flags and `src` carries the positional paths.
+        uses: astral-sh/ruff-action@v4
+        with:
+          version: "0.15.7"
+          args: "check --exclude lambda/kubectl-applier-simple-build --exclude lambda/helm-installer-build"
+          src: >-
+            gco/
+            cli/
+            mcp/
+            tests/
 
   lint-flake8-python:
     name: "lint:flake8:python"
