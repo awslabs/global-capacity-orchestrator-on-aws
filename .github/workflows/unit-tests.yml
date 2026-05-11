@@ -36,6 +36,34 @@ permissions:
   contents: read
 
 jobs:
+  # --------------------------------------------------------------------------
+  # Path filter used by the lockfile / fresh-install jobs below. Both of those
+  # only exercise pyproject.toml + requirements-lock.txt (plus the workflow
+  # file itself), so running them on every docs- or code-only PR is waste —
+  # especially unit:fresh-install, which intentionally disables the pip cache.
+  #
+  # On push to main and workflow_dispatch the filter is skipped and the
+  # dependent jobs always run: we want at least one guaranteed green run per
+  # merge. On PRs, dorny/paths-filter queries the GitHub API (no checkout
+  # needed) for the changed files and gates the jobs via their `if:`.
+  # --------------------------------------------------------------------------
+  changes:
+    name: "changes"
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: github.event_name == 'pull_request'
+    outputs:
+      deps: ${{ steps.filter.outputs.deps }}
+    steps:
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            deps:
+              - 'pyproject.toml'
+              - 'requirements-lock.txt'
+              - '.github/workflows/unit-tests.yml'
+
   unit-pytest-core:
     name: "unit:pytest:core"
     runs-on: ubuntu-latest
@@ -306,6 +334,16 @@ jobs:
     name: "unit:lockfile:freshness"
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Skip on PRs that don't touch pyproject.toml or the lockfile. The
+    # `needs: changes` only applies on pull_request (where the `changes`
+    # job itself runs) — on push/dispatch `changes` is skipped and this
+    # condition short-circuits to true so the job always runs.
+    needs: changes
+    if: |
+      always() && (
+        github.event_name != 'pull_request' ||
+        needs.changes.outputs.deps == 'true'
+      )
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -358,6 +396,17 @@ jobs:
     name: "unit:fresh-install"
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Same path-filter gate as unit:lockfile:freshness — the fresh install
+    # verifies a cold `pip install -e ".[cdk]"` succeeds and imports the
+    # expected modules. Only dependency/packaging changes can break it,
+    # and it's the most expensive small job in the workflow (no pip cache
+    # by design). Always runs on push to main / workflow_dispatch.
+    needs: changes
+    if: |
+      always() && (
+        github.event_name != 'pull_request' ||
+        needs.changes.outputs.deps == 'true'
+      )
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
