@@ -63,7 +63,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends jq skopeo curl
       - name: Install Python security tooling + AWS CLI
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[security]"
           pip install awscli
       - name: Install latest aws-cdk-lib (for CDK enum drift check)

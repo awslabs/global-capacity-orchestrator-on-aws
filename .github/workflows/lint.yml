@@ -75,7 +75,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install lint dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[lint]"
       - name: Run black --check
         run: |
@@ -96,7 +95,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install lint dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[lint]"
       - name: Run isort --check-only
         run: |
@@ -119,7 +117,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install lint dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[lint]"
       - name: Run ruff
         run: |
@@ -140,7 +137,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install lint dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[lint]"
       - name: Run flake8
         run: |
@@ -160,7 +156,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install yamllint
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[lint]"
       - name: Run yamllint
         run: yamllint --strict .
@@ -259,7 +254,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install typecheck dependencies
         run: |
-          python -m pip install --upgrade pip
           # Install full project + mcp extras so mypy can resolve real types
           # for boto3, kubernetes, fastapi, click, fastmcp. CDK is intentionally
           # NOT installed here — gco/stacks/ is checked in lint-mypy-stacks.
@@ -285,7 +279,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install typecheck + cdk dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[cdk,typecheck]"
       - name: Cache mypy results
         uses: actions/cache@v5
@@ -308,7 +301,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install typecheck dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[typecheck]"
       - name: Cache mypy results
         uses: actions/cache@v5

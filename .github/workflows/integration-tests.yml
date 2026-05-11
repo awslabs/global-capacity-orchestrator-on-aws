@@ -50,7 +50,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install project
         run: |
-          python -m pip install --upgrade pip
           pip install -e .
       - name: Validate Kubernetes manifest YAML syntax
         # Port of integration:k8s from the retired GitLab pipeline.
@@ -184,7 +183,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install project
         run: |
-          python -m pip install --upgrade pip
           pip install -e .
       - name: Import each Lambda handler
         run: |
@@ -221,7 +219,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install test dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[test]"
       - name: Run integration pytest
         run: |
@@ -248,7 +245,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install dev + mcp
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[dev,mcp]"
       - name: Run MCP integration tests
         run: |

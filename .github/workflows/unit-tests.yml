@@ -60,7 +60,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[dev,mcp]"
       - uses: ./.github/actions/build-lambda-package
       - name: Run pytest with coverage
@@ -182,7 +181,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install CLI
         run: |
-          python -m pip install --upgrade pip
           pip install -e .
       - name: Exercise CLI surface
         run: |
@@ -211,7 +209,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install CDK + dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[cdk]"
           npm install -g aws-cdk
       - uses: ./.github/actions/build-lambda-package
@@ -246,7 +243,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install CDK + dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[cdk]"
           npm install -g aws-cdk@2
       - uses: ./.github/actions/build-lambda-package
@@ -292,7 +288,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[dev,mcp]"
       - uses: ./.github/actions/build-lambda-package
       - name: Run cdk-nag compliance matrix
@@ -320,7 +315,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install pip-tools
         run: |
-          python -m pip install --upgrade pip
           pip install pip-tools
       - name: Verify lockfile is up to date
         # Pre-seed the candidate lockfile with the committed one so pip-compile
@@ -375,7 +369,6 @@ jobs:
           # Intentionally no pip cache — this job verifies a cold install.
       - name: Fresh install
         run: |
-          python -m pip install --upgrade pip
           pip install -e ".[cdk]"
       - name: Verify imports
         run: |
@@ -397,7 +390,6 @@ jobs:
           cache-dependency-path: "requirements-lock.txt"
       - name: Install core + inference-monitor extras
         run: |
-          python -m pip install --upgrade pip
           pip install -e .
           pip install -e ".[inference-monitor]"
       - name: Import health-monitor + manifest-processor
