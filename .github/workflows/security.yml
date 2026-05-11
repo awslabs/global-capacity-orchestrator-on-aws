@@ -172,17 +172,25 @@ jobs:
             context: lambda/helm-installer
     steps:
       - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
       - name: Install pinned Trivy
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
             | sudo sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
           trivy --version
       - name: Build image
-        env:
-          CONTEXT: ${{ matrix.context || '.' }}
-          DOCKERFILE: ${{ matrix.dockerfile }}
-          IMAGE: ${{ matrix.image }}
-        run: docker build -f "$DOCKERFILE" -t "${IMAGE}:scan" "$CONTEXT"
+        # Shared GHA layer cache (scope: ${{ matrix.image }}). Same scope
+        # is used by the integration:docker:* jobs and the kind E2E build,
+        # so each image's layers are built exactly once per commit and
+        # reused everywhere.
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context || '.' }}
+          file: ${{ matrix.dockerfile }}
+          tags: ${{ matrix.image }}:scan
+          load: true
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
       - name: Trivy image scan
         env:
           IMAGE: ${{ matrix.image }}

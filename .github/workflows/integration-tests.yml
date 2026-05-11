@@ -270,8 +270,20 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
       - name: Build image
-        run: docker build -f dockerfiles/health-monitor-dockerfile -t health-monitor:ci .
+        # Shared GHA layer cache (scope: health-monitor). Populated and
+        # reused by this job, integration:kind:cluster-e2e, and
+        # security:trivy:container-scan — all three build the same image
+        # from the same Dockerfile + context.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/health-monitor-dockerfile
+          tags: health-monitor:ci
+          load: true
+          cache-from: type=gha,scope=health-monitor
+          cache-to: type=gha,mode=max,scope=health-monitor
       - name: Verify image boots the module
         # The FastAPI app's lifespan() calls kubernetes.config.load_incluster_config()
         # / load_kube_config() on startup, both of which (correctly) fail without
@@ -287,8 +299,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
       - name: Build image
-        run: docker build -f dockerfiles/manifest-processor-dockerfile -t manifest-processor:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/manifest-processor-dockerfile
+          tags: manifest-processor:ci
+          load: true
+          cache-from: type=gha,scope=manifest-processor
+          cache-to: type=gha,mode=max,scope=manifest-processor
       - name: Verify image boots the module
         # Same rationale as integration:docker:health-monitor — the FastAPI
         # app fails fast without a real K8s API, so the image-level test
@@ -304,8 +324,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
       - name: Build image
-        run: docker build -f dockerfiles/inference-monitor-dockerfile -t inference-monitor:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/inference-monitor-dockerfile
+          tags: inference-monitor:ci
+          load: true
+          cache-from: type=gha,scope=inference-monitor
+          cache-to: type=gha,mode=max,scope=inference-monitor
       - name: Verify image runs and imports
         # inference-monitor needs a real Kubernetes API on startup, so we
         # don't run the reconciliation loop. The Dockerfile's HEALTHCHECK
@@ -322,8 +350,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
       - name: Build image
-        run: docker build -f dockerfiles/queue-processor-dockerfile -t queue-processor:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/queue-processor-dockerfile
+          tags: queue-processor:ci
+          load: true
+          cache-from: type=gha,scope=queue-processor
+          cache-to: type=gha,mode=max,scope=queue-processor
       - name: Verify image boots the module
         # queue-processor is a short-lived KEDA ScaledJob — it has no HTTP
         # endpoint. With no JOB_QUEUE_URL / SQS_QUEUE_URL set, the module
@@ -341,10 +377,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
       - name: Build image
-        run: |
-          docker build -f lambda/helm-installer/Dockerfile \
-            -t helm-installer:ci lambda/helm-installer
+        uses: docker/build-push-action@v6
+        with:
+          context: lambda/helm-installer
+          file: lambda/helm-installer/Dockerfile
+          tags: helm-installer:ci
+          load: true
+          cache-from: type=gha,scope=helm-installer
+          cache-to: type=gha,mode=max,scope=helm-installer
       - name: Verify helm + kubectl binaries
         # This is a Lambda container, not a server. The meaningful check is
         # that the image's helm and kubectl binaries are invocable at the
@@ -561,11 +603,38 @@ jobs:
           kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.5/manifests/calico.yaml
           kubectl -n kube-system rollout status daemonset/calico-node              --timeout=5m
           kubectl -n kube-system rollout status deployment/calico-kube-controllers --timeout=5m
-      - name: Build service images
-        run: |
-          docker build -f dockerfiles/health-monitor-dockerfile -t health-monitor:ci .
-          docker build -f dockerfiles/manifest-processor-dockerfile -t manifest-processor:ci .
-          docker build -f dockerfiles/inference-monitor-dockerfile -t inference-monitor:ci .
+      - name: Set up Buildx (enables shared GHA layer cache)
+        uses: docker/setup-buildx-action@v4
+      - name: Build health-monitor image
+        # Shares the same GHA cache scope as integration:docker:health-monitor
+        # and security:trivy:container-scan. All three build the same image
+        # from the same Dockerfile + context, so layer reuse is automatic.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/health-monitor-dockerfile
+          tags: health-monitor:ci
+          load: true
+          cache-from: type=gha,scope=health-monitor
+          cache-to: type=gha,mode=max,scope=health-monitor
+      - name: Build manifest-processor image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/manifest-processor-dockerfile
+          tags: manifest-processor:ci
+          load: true
+          cache-from: type=gha,scope=manifest-processor
+          cache-to: type=gha,mode=max,scope=manifest-processor
+      - name: Build inference-monitor image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/inference-monitor-dockerfile
+          tags: inference-monitor:ci
+          load: true
+          cache-from: type=gha,scope=inference-monitor
+          cache-to: type=gha,mode=max,scope=inference-monitor
       - name: Load images into kind
         run: |
           kind load docker-image health-monitor:ci --name gco-ci
