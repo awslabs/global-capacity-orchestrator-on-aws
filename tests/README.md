@@ -288,7 +288,7 @@ actually deploy anything, hit AWS, or spawn long-running subprocesses.
 |------|-------------------|----------------|
 | `test_bump_version.py` | `scripts/bump_version.py` | SemVer parsing, bump paths (major/minor/patch), dry-run mode, argparse dispatch, keeping `VERSION`, `gco/_version.py`, and `cli/__init__.py` in sync |
 | `test_webhook_delivery_script.py` | `scripts/test_webhook_delivery.py` | `WebhookHandler` do_POST capture and 200 response, silenced `log_message`, `start_local_server` port binding + daemon thread + clean shutdown, `create_mock_job` fixture shape, `main()` argparse branches between local-server and external-URL modes |
-| `test_cdk_synthesis_matrix.py` | full-app `app.synth()` validation across every entry in `tests/_cdk_config_matrix.CONFIGS`, parallelized via pytest-xdist. Pairs with `test_nag_compliance.py`, which runs the IAM-relevant subset through cdk-nag. |
+| `test_cdk_synthesis_matrix.py` | `tests/_cdk_config_matrix.CONFIGS` | Full-app `app.synth()` validation across every config in the shared matrix, parallelized via pytest-xdist. Pairs with `test_nag_compliance.py`, which runs the IAM-relevant subset through cdk-nag. |
 | `test_dump_nag_findings_script.py` | `scripts/dump_nag_findings.py` | `run_config` threads context overrides through to `_build_app_with_logger`, invokes `app.synth()` while the Docker-asset mock is live, returns `logger.findings` verbatim. `main()` aggregates by `(rule_id, resource_path, finding_id)`, deduplicates across configs, emits per-config and summary counts, exits 0 on clean and 1 otherwise |
 
 ### MCP Server Tests

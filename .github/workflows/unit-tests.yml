@@ -92,13 +92,20 @@ jobs:
       - uses: ./.github/actions/build-lambda-package
       - name: Run pytest with coverage
         # -n auto uses pytest-xdist to spread tests across all available CPU
-        # cores (2 on standard ubuntu-latest runners). The suite is xdist-safe:
-        # every test uses tmp_path / monkeypatch or a per-test _free_port()
-        # helper, and the one session-autouse fixture (ensure_lambda_build_dirs
-        # in tests/conftest.py) is idempotent. Coverage is collected per-worker
-        # and pytest-cov combines the results before the report threshold is
-        # checked. --maxfail=1 matches the previous -x behavior (stop after the
-        # first failure); the -x flag itself isn't compatible with xdist.
+        # cores (2 on standard ubuntu-latest runners). --dist=loadfile keeps
+        # all tests from the same file on one worker, which matters for the
+        # CDK-heavy stack tests: `Code.from_asset(...)` stages the same
+        # lambda/*-build directory to `cdk.out/asset.<hash>/` and CDK's
+        # in-process asset-staging cache is not xdist-safe — two workers
+        # copying the same asset tree race and one hits ENOENT mid-copy.
+        # Grouping per-file lets the in-process cache do its job. The
+        # suite is otherwise xdist-safe: every test uses tmp_path /
+        # monkeypatch or a per-test _free_port() helper, and the one
+        # session-autouse fixture (ensure_lambda_build_dirs in
+        # tests/conftest.py) is idempotent. Coverage is collected
+        # per-worker and pytest-cov combines the results before the
+        # report threshold is checked. --maxfail=1 matches the previous
+        # -x behavior; the -x flag itself isn't compatible with xdist.
         run: |
           pytest tests/ -v \
             --ignore=tests/test_integration.py \
@@ -109,7 +116,7 @@ jobs:
             --cov-report=term-missing \
             --cov-fail-under=90 \
             --junitxml=report.xml \
-            -n auto --maxfail=1
+            -n auto --dist=loadfile --maxfail=1
       - name: Upload coverage artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -287,10 +294,14 @@ jobs:
         # entry in tests/_cdk_config_matrix.CONFIGS and runs ``app.synth()``
         # in-process per config — no ``cdk synth`` subprocess, no cdk.json
         # mutation. pytest-xdist (``-n auto``) parallelizes across worker
-        # processes for a roughly N×-core speedup. The Node.js/CDK CLI is
+        # parallelizes across worker processes for a roughly N×-core
+        # speedup. --dist=loadfile keeps all parametrized cases of the
+        # same test file on one worker, so CDK's in-process asset-staging
+        # cache (which is not xdist-safe across processes copying the same
+        # `lambda/*-build/` tree) can do its job. The Node.js/CDK CLI is
         # no longer required, so the ``npm install -g aws-cdk`` step was
         # dropped alongside the subprocess loop.
-        run: pytest tests/test_cdk_synthesis_matrix.py -n auto -v
+        run: pytest tests/test_cdk_synthesis_matrix.py -n auto --dist=loadfile -v
 
   unit-cdk-nag-compliance-matrix:
     name: "unit:cdk:nag-compliance:list"
