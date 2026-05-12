@@ -7,7 +7,7 @@
 # Triggers: push: main, pull_request, workflow_dispatch.
 #
 # Jobs (alphabetical by display name):
-#   - integration:docker:dev-container       — Dockerfile.dev + `gco --help` + multi-arch (amd64 native, arm64 via QEMU)
+#   - integration:docker:dev-container       — Dockerfile.dev native-arch matrix (amd64 + arm64 runners)
 #   - integration:docker:health-monitor      — build + /healthz + /readyz
 #   - integration:docker:helm-installer      — build + `helm version`/`kubectl version`
 #   - integration:docker:inference-monitor   — build + import-based liveness
@@ -396,19 +396,39 @@ jobs:
           docker run --rm --entrypoint kubectl helm-installer:ci version --client=true
 
   integration-docker-dev-container:
-    name: "integration:docker:dev-container"
-    runs-on: ubuntu-latest
-    # Bumped from 25→40 to accommodate the linux/arm64 cross-build, which
-    # runs every Dockerfile.dev RUN step under QEMU emulation on the
-    # amd64 runner (vs. ~20 min for the native amd64 build on a standard
-    # 2-vCPU runner — pip-install of all the pinned deps dominates).
-    timeout-minutes: 40
+    name: "integration:docker:dev-container (${{ matrix.arch }})"
+    # Matrix over the two supported Dockerfile.dev target architectures.
+    # Each runner builds natively for its own arch — no QEMU emulation.
+    # GitHub provides ubuntu-24.04-arm as a standard public runner, so
+    # both paths run on native kernels instead of translating every RUN
+    # step through binfmt.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            expected-uname: x86_64
+            # AWS CLI v2 build identifier contains the GNU arch tag —
+            # grepping for it proves we downloaded the right tarball, not
+            # just that the binary happens to run.
+            awscli-arch-grep: "x86_64\\|amd64"
+            # ELF e_machine magic number for this architecture.
+            # 0x3E = EM_X86_64, 0xB7 = EM_AARCH64.
+            elf-e-machine: "0x3E"
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            expected-uname: aarch64
+            awscli-arch-grep: "aarch64"
+            elf-e-machine: "0xB7"
     steps:
       - uses: actions/checkout@v6
       - name: Build dev container
-        # Native amd64 build on the x86_64 GitHub runner — exercises the
-        # default code path operators hit on Intel/Linux and Docker Desktop
-        # / x86_64. The arm64 path is exercised in a later step.
+        # Native build on the matching host arch — no --platform or QEMU.
+        # Dockerfile.dev is parameterized on BuildKit's $TARGETARCH, which
+        # resolves to the host's arch by default.
         run: docker build -f Dockerfile.dev -t gco-dev .
       - name: Exercise CLI inside dev container
         run: |
@@ -428,19 +448,52 @@ jobs:
             aws --version
             docker --version
           '
-      - name: Verify amd64 image actually contains amd64 binaries
-        # The Dockerfile.dev is multi-arch via $TARGETARCH (see its header).
-        # On this x86_64 runner the default build above should produce an
-        # amd64 image — confirm the GNU-arch derivation picked the right
-        # tarballs by checking what the binaries themselves report.
+      - name: Verify image contains native ${{ matrix.arch }} binaries
+        # Two layers of verification:
+        #   1. `uname -m` inside the container reports the expected arch.
+        #   2. AWS CLI v2 build identifier contains the GNU arch tag,
+        #      proving we downloaded the right tarball rather than one
+        #      that just happens to run.
+        #   3. ELF e_machine header on kubectl + docker binaries confirms
+        #      we have architecture-native binaries end-to-end. This
+        #      catches Dockerfile regressions where a tool URL gets pinned
+        #      back to the wrong arch, or where the GNU-arch derivation
+        #      in the Dockerfile breaks for one side of the matrix.
         run: |
           set -euo pipefail
           arch=$(docker run --rm gco-dev uname -m)
-          [ "$arch" = "x86_64" ] || { echo "Expected x86_64, got: $arch"; exit 1; }
-          # AWS CLI v2 prints its build identifier (e.g. "exe/x86_64.debian.13")
-          # in --version output — the arch tag here proves we downloaded the
-          # right tarball, not just that the binary happens to run.
-          docker run --rm gco-dev aws --version | grep -q "x86_64\|amd64"
+          [ "$arch" = "${{ matrix.expected-uname }}" ] || {
+            echo "Expected ${{ matrix.expected-uname }}, got: $arch"
+            exit 1
+          }
+          docker run --rm gco-dev aws --version | grep -q "${{ matrix.awscli-arch-grep }}"
+          # `gco --version` actually loading proves no Python dependency
+          # fell back to an arch-incompatible sdist.
+          docker run --rm gco-dev gco --version
+          # `-i` attaches stdin so the heredoc reaches `python3 -` inside
+          # the container. Without it Docker drops stdin and the script
+          # runs with empty input → silent no-op (no failure, no output).
+          docker run --rm -i -e EXPECTED_E_MACHINE='${{ matrix.elf-e-machine }}' \
+            gco-dev python3 - <<'PY'
+          import os
+          import pathlib
+          import struct
+          import sys
+
+          expected = int(os.environ["EXPECTED_E_MACHINE"], 16)
+          for binary in ("/usr/local/bin/kubectl", "/usr/local/bin/docker"):
+              with pathlib.Path(binary).open("rb") as f:
+                  f.seek(0x12)  # ELF e_machine offset
+                  e_machine = struct.unpack("<H", f.read(2))[0]
+              if e_machine != expected:
+                  print(
+                      f"FAIL: {binary} e_machine=0x{e_machine:X} "
+                      f"(expected 0x{expected:X})",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+              print(f"OK: {binary} e_machine=0x{e_machine:X}")
+          PY
       - name: Verify Docker-in-Docker via host socket pass-through
         # `gco stacks deploy-all` drives `cdk deploy`, which shells out to
         # Docker to bundle Lambda assets. The dev container ships only the
@@ -462,9 +515,7 @@ jobs:
           CMD ["cat", "/ok"]
           DOCKERFILE
 
-          # Build from inside the dev container over the socket. --group-add
-          # ensures the container process can talk to the socket regardless
-          # of whether the runner's `docker` group GID matches root.
+          # Build from inside the dev container over the socket.
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v /tmp/dind-probe:/build \
@@ -478,85 +529,6 @@ jobs:
 
           # Clean up the probe image so this job leaves the runner tidy.
           docker image rm dind-probe:ci alpine:3.21 >/dev/null 2>&1 || true
-
-      # ----------------------------------------------------------------------
-      # Multi-arch cross-build verification.
-      #
-      # Dockerfile.dev is parameterized on BuildKit's $TARGETARCH so the
-      # image builds natively on both linux/amd64 (this runner, CI default)
-      # and linux/arm64 (Apple Silicon, Graviton, arm64 Linux). The amd64
-      # path is fully exercised above. The steps below cross-build the
-      # arm64 image under QEMU emulation and confirm:
-      #
-      #   1. The arm64 build succeeds (catches Dockerfile regressions where
-      #      a tool URL gets pinned back to amd64 or the GNU-arch derivation
-      #      breaks).
-      #   2. The resulting image actually contains aarch64 binaries (catches
-      #      "wrong tarball downloaded but binary happens to run under
-      #      emulation" type bugs).
-      #   3. Python dependencies still install from wheels on arm64 — i.e.
-      #      no pinned package has silently become amd64-only since the
-      #      lockfile was regenerated.
-      #
-      # Cross-build under QEMU is meaningfully slower than the native
-      # amd64 build above; if this step becomes a bottleneck, consider
-      # gating it on `paths` for Dockerfile.dev and pyproject.toml only.
-      # ----------------------------------------------------------------------
-      - name: Set up QEMU (for linux/arm64 emulation)
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
-      - name: Set up Buildx (enables --platform)
-        uses: docker/setup-buildx-action@v4
-      - name: Cross-build dev container for linux/arm64
-        run: |
-          docker buildx build \
-            --platform linux/arm64 \
-            --load \
-            -f Dockerfile.dev \
-            -t gco-dev:arm64 \
-            .
-      - name: Verify arm64 image contains native aarch64 binaries
-        run: |
-          set -euo pipefail
-          # Under QEMU's binfmt translation, /bin/bash's `uname -m` reports
-          # the binary's expected arch, not the host kernel's. A mismatched
-          # /bin/bash here would mean the image was tagged arm64 but the
-          # base layers actually pulled amd64.
-          arch=$(docker run --rm gco-dev:arm64 uname -m)
-          [ "$arch" = "aarch64" ] || { echo "Expected aarch64, got: $arch"; exit 1; }
-          # AWS CLI v2 prints its build identifier (e.g. "exe/aarch64.debian.13")
-          # in --version output. The arch tag here proves we downloaded the
-          # awscli-exe-linux-aarch64-*.zip tarball, not the x86_64 one.
-          docker run --rm gco-dev:arm64 aws --version | grep -q "aarch64"
-          # `gco --version` actually loading proves no Python dependency fell
-          # back to an amd64-only sdist (which would fail at install or
-          # import time on an arm64 base).
-          docker run --rm gco-dev:arm64 gco --version
-          # Inspect the ELF header e_machine field for the kubectl and
-          # Docker static client binaries. We can't rely on QEMU+binfmt to
-          # surface arch mismatches by failing to run — Docker images can
-          # contain mixed-arch binaries (e.g. an amd64 kubectl alongside
-          # arm64 system binaries), and the kernel happily picks the right
-          # QEMU translator per-binary. The only durable check is the ELF
-          # header itself (e_machine = 0xB7 → AArch64; 0x3E → x86_64). We
-          # use Python's stdlib because `file`, `readelf`, and `objdump`
-          # aren't in the slim base image.
-          # `-i` attaches stdin so the heredoc reaches `python3 -` inside
-          # the container. Without it Docker drops stdin and the script
-          # runs with empty input → silent no-op (no failure, no output).
-          docker run --rm -i gco-dev:arm64 python3 - <<'PY'
-          import struct, sys, pathlib
-          EM_AARCH64 = 0xB7
-          for binary in ("/usr/local/bin/kubectl", "/usr/local/bin/docker"):
-              with pathlib.Path(binary).open("rb") as f:
-                  f.seek(0x12)  # ELF e_machine offset
-                  e_machine = struct.unpack("<H", f.read(2))[0]
-              if e_machine != EM_AARCH64:
-                  print(f"FAIL: {binary} e_machine=0x{e_machine:X} (expected 0x{EM_AARCH64:X} aarch64)", file=sys.stderr)
-                  sys.exit(1)
-              print(f"OK: {binary} is aarch64 (e_machine=0x{e_machine:X})")
-          PY
 
   # --------------------------------------------------------------------------
   # Kind cluster E2E — verifies the Kubernetes manifests apply cleanly to a
