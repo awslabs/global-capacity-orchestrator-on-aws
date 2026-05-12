@@ -174,9 +174,9 @@ class TestStartLocalServer:
             new_threads = [
                 t for t in threading.enumerate() if t.ident and t.ident not in pre_threads
             ]
-            assert any(
-                t.daemon for t in new_threads
-            ), "expected start_local_server to spawn at least one daemon thread"
+            assert any(t.daemon for t in new_threads), (
+                "expected start_local_server to spawn at least one daemon thread"
+            )
         finally:
             server.shutdown()
             server.server_close()

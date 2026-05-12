@@ -94,7 +94,7 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
                             "detail": f"Request body exceeds maximum size of {self.max_body_bytes} bytes"
                         },
                     )
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 # Invalid Content-Length header — let the request proceed
                 # and let downstream validation handle it
                 pass

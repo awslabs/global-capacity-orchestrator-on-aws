@@ -99,9 +99,9 @@ def _find_cluster_shared_bucket(template: assertions.Template) -> tuple[str, Map
         for lid, res in buckets.items()
         if _bucket_name_starts_with_cluster_shared(res.get("Properties", {}).get("BucketName"))
     ]
-    assert (
-        len(matches) == 1
-    ), f"Expected exactly one bucket named gco-cluster-shared-*, found {len(matches)}"
+    assert len(matches) == 1, (
+        f"Expected exactly one bucket named gco-cluster-shared-*, found {len(matches)}"
+    )
     return matches[0]
 
 
@@ -117,18 +117,18 @@ def _find_cluster_shared_access_logs_bucket(
     """
     _, primary = _find_cluster_shared_bucket(template)
     logging_cfg = primary["Properties"].get("LoggingConfiguration")
-    assert (
-        isinstance(logging_cfg, dict) and "DestinationBucketName" in logging_cfg
-    ), f"Primary cluster_shared_bucket should have LoggingConfiguration, got {logging_cfg!r}"
+    assert isinstance(logging_cfg, dict) and "DestinationBucketName" in logging_cfg, (
+        f"Primary cluster_shared_bucket should have LoggingConfiguration, got {logging_cfg!r}"
+    )
     dest = logging_cfg["DestinationBucketName"]
-    assert (
-        isinstance(dest, dict) and "Ref" in dest
-    ), f"LoggingConfiguration.DestinationBucketName should be a Ref, got {dest!r}"
+    assert isinstance(dest, dict) and "Ref" in dest, (
+        f"LoggingConfiguration.DestinationBucketName should be a Ref, got {dest!r}"
+    )
     buckets = template.find_resources("AWS::S3::Bucket")
     dest_lid = dest["Ref"]
-    assert (
-        dest_lid in buckets
-    ), f"LoggingConfiguration references {dest_lid} but no such S3::Bucket exists"
+    assert dest_lid in buckets, (
+        f"LoggingConfiguration references {dest_lid} but no such S3::Bucket exists"
+    )
     return dest_lid, buckets[dest_lid]
 
 
@@ -145,9 +145,9 @@ def _find_cluster_shared_kms_key(template: assertions.Template) -> tuple[str, Ma
         for lid, res in keys.items()
         if "PendingWindowInDays" in res.get("Properties", {})
     ]
-    assert (
-        len(matches) == 1
-    ), f"Expected exactly one KMS key with PendingWindowInDays, found {len(matches)}"
+    assert len(matches) == 1, (
+        f"Expected exactly one KMS key with PendingWindowInDays, found {len(matches)}"
+    )
     return matches[0]
 
 
@@ -161,9 +161,9 @@ def _find_cluster_shared_bucket_policy(
         for res in policies.values()
         if res.get("Properties", {}).get("Bucket", {}).get("Ref") == bucket_logical_id
     ]
-    assert (
-        len(matches) == 1
-    ), f"Expected exactly one BucketPolicy for {bucket_logical_id}, found {len(matches)}"
+    assert len(matches) == 1, (
+        f"Expected exactly one BucketPolicy for {bucket_logical_id}, found {len(matches)}"
+    )
     return matches[0]
 
 
@@ -192,18 +192,18 @@ class TestClusterSharedBucket:
         assert len(cfgs) == 1, f"Expected one SSE configuration, got {len(cfgs)}"
 
         sse = cfgs[0]["ServerSideEncryptionByDefault"]
-        assert (
-            sse.get("SSEAlgorithm") == "aws:kms"
-        ), f"Cluster_Shared_Bucket should use SSE-KMS, got {sse!r}"
+        assert sse.get("SSEAlgorithm") == "aws:kms", (
+            f"Cluster_Shared_Bucket should use SSE-KMS, got {sse!r}"
+        )
 
         key_id = sse.get("KMSMasterKeyID")
-        assert (
-            isinstance(key_id, dict) and "Fn::GetAtt" in key_id
-        ), f"KMSMasterKeyID should be a Fn::GetAtt reference, got {key_id!r}"
+        assert isinstance(key_id, dict) and "Fn::GetAtt" in key_id, (
+            f"KMSMasterKeyID should be a Fn::GetAtt reference, got {key_id!r}"
+        )
         get_att = key_id["Fn::GetAtt"]
-        assert (
-            get_att[0] == kms_lid and get_att[1] == "Arn"
-        ), f"KMSMasterKeyID should GetAtt the cluster-shared KMS key ARN, got {get_att!r}"
+        assert get_att[0] == kms_lid and get_att[1] == "Arn", (
+            f"KMSMasterKeyID should GetAtt the cluster-shared KMS key ARN, got {get_att!r}"
+        )
 
     def test_primary_bucket_blocks_all_public_access(self):
         """Primary bucket sets all four PublicAccessBlockConfiguration flags to ``True``."""
@@ -216,18 +216,18 @@ class TestClusterSharedBucket:
             "RestrictPublicBuckets": True,
         }
         pab = primary["Properties"].get("PublicAccessBlockConfiguration")
-        assert (
-            pab == expected
-        ), f"Cluster_Shared_Bucket does not fully block public access; got {pab!r}"
+        assert pab == expected, (
+            f"Cluster_Shared_Bucket does not fully block public access; got {pab!r}"
+        )
 
     def test_primary_bucket_versioning_enabled(self):
         """Primary bucket has ``VersioningConfiguration.Status=Enabled``."""
         template = _synth(cdk.App())
         _, primary = _find_cluster_shared_bucket(template)
         versioning = primary["Properties"].get("VersioningConfiguration")
-        assert versioning == {
-            "Status": "Enabled"
-        }, f"Expected VersioningConfiguration.Status=Enabled, got {versioning!r}"
+        assert versioning == {"Status": "Enabled"}, (
+            f"Expected VersioningConfiguration.Status=Enabled, got {versioning!r}"
+        )
 
     def test_primary_bucket_and_access_logs_and_kms_key_deletion_policy_delete(self):
         """Primary bucket, access-logs bucket, and KMS key all carry ``DeletionPolicy=Delete``."""
@@ -310,12 +310,12 @@ class TestClusterSharedBucket:
         _, key = _find_cluster_shared_kms_key(template)
 
         props = key["Properties"]
-        assert (
-            props.get("EnableKeyRotation") is True
-        ), f"EnableKeyRotation should be True, got {props.get('EnableKeyRotation')!r}"
-        assert (
-            props.get("PendingWindowInDays") == 7
-        ), f"PendingWindowInDays should be 7, got {props.get('PendingWindowInDays')!r}"
+        assert props.get("EnableKeyRotation") is True, (
+            f"EnableKeyRotation should be True, got {props.get('EnableKeyRotation')!r}"
+        )
+        assert props.get("PendingWindowInDays") == 7, (
+            f"PendingWindowInDays should be 7, got {props.get('PendingWindowInDays')!r}"
+        )
 
     def test_access_logs_bucket_is_separate_and_kms_encrypted_with_cluster_shared_key(self):
         """Cluster-shared access-logs bucket is distinct from ``model_bucket_access_logs`` and KMS-encrypted with the cluster-shared key."""
@@ -326,9 +326,9 @@ class TestClusterSharedBucket:
         kms_lid, _ = _find_cluster_shared_kms_key(template)
 
         # Must be a different bucket than the primary.
-        assert (
-            access_logs_lid != primary_lid
-        ), "Access-logs bucket must be a distinct resource from the primary bucket"
+        assert access_logs_lid != primary_lid, (
+            "Access-logs bucket must be a distinct resource from the primary bucket"
+        )
 
         # Must also differ from the model-weights access-logs bucket, which is
         # SSE-S3-encrypted (SSEAlgorithm=AES256) and has no KMSMasterKeyID.
@@ -338,13 +338,13 @@ class TestClusterSharedBucket:
         cfgs = encryption["ServerSideEncryptionConfiguration"]
         assert len(cfgs) == 1, f"Expected one SSE configuration, got {len(cfgs)}"
         sse = cfgs[0]["ServerSideEncryptionByDefault"]
-        assert (
-            sse.get("SSEAlgorithm") == "aws:kms"
-        ), f"cluster_shared_access_logs_bucket should use SSE-KMS, got {sse!r}"
+        assert sse.get("SSEAlgorithm") == "aws:kms", (
+            f"cluster_shared_access_logs_bucket should use SSE-KMS, got {sse!r}"
+        )
         key_id = sse.get("KMSMasterKeyID")
-        assert (
-            isinstance(key_id, dict) and "Fn::GetAtt" in key_id
-        ), f"KMSMasterKeyID should be a Fn::GetAtt reference, got {key_id!r}"
+        assert isinstance(key_id, dict) and "Fn::GetAtt" in key_id, (
+            f"KMSMasterKeyID should be a Fn::GetAtt reference, got {key_id!r}"
+        )
         get_att = key_id["Fn::GetAtt"]
         assert get_att[0] == kms_lid and get_att[1] == "Arn", (
             "cluster_shared_access_logs_bucket should be encrypted with the "
@@ -360,6 +360,6 @@ class TestClusterSharedBucket:
             "RestrictPublicBuckets": True,
         }
         pab = access_logs["Properties"].get("PublicAccessBlockConfiguration")
-        assert (
-            pab == expected_pab
-        ), f"cluster_shared_access_logs_bucket does not fully block public access; got {pab!r}"
+        assert pab == expected_pab, (
+            f"cluster_shared_access_logs_bucket does not fully block public access; got {pab!r}"
+        )

@@ -53,7 +53,7 @@ def feature_toggles_resource() -> str:
     try:
         config = json.loads(path.read_text())
         context = config.get("context", {})
-    except (json.JSONDecodeError, KeyError):
+    except json.JSONDecodeError, KeyError:
         return "Could not parse cdk.json."
 
     lines = ["# GCO Feature Toggles\n"]

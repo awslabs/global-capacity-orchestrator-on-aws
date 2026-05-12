@@ -359,9 +359,9 @@ class TestResourceLimitPreservation:
         """Within-limits manifests still accepted."""
         manifest = _make_job_manifest(cpu=cpu, memory=memory)
         is_valid, error = manifest_processor.validate_manifest(manifest)
-        assert (
-            is_valid is True
-        ), f"Within-limits manifest rejected (cpu={cpu}, mem={memory}): {error}"
+        assert is_valid is True, (
+            f"Within-limits manifest rejected (cpu={cpu}, mem={memory}): {error}"
+        )
 
     def test_exceeds_cpu_limit_rejected(self, manifest_processor):
         """Over-limit CPU still rejected."""

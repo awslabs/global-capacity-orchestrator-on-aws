@@ -277,33 +277,33 @@ class TestImageSourceValidation:
 
     def test_docker_hub_allowed(self, processor, valid_deployment):
         """Test docker.io images are allowed."""
-        valid_deployment["spec"]["template"]["spec"]["containers"][0][
-            "image"
-        ] = "docker.io/nginx:latest"
+        valid_deployment["spec"]["template"]["spec"]["containers"][0]["image"] = (
+            "docker.io/nginx:latest"
+        )
         is_valid, error = processor.validate_manifest(valid_deployment)
         assert is_valid is True
 
     def test_gcr_allowed(self, processor, valid_deployment):
         """Test gcr.io images are allowed."""
-        valid_deployment["spec"]["template"]["spec"]["containers"][0][
-            "image"
-        ] = "gcr.io/project/image:v1"
+        valid_deployment["spec"]["template"]["spec"]["containers"][0]["image"] = (
+            "gcr.io/project/image:v1"
+        )
         is_valid, error = processor.validate_manifest(valid_deployment)
         assert is_valid is True
 
     def test_public_ecr_allowed(self, processor, valid_deployment):
         """Test public.ecr.aws images are allowed."""
-        valid_deployment["spec"]["template"]["spec"]["containers"][0][
-            "image"
-        ] = "public.ecr.aws/test/image:v1"
+        valid_deployment["spec"]["template"]["spec"]["containers"][0]["image"] = (
+            "public.ecr.aws/test/image:v1"
+        )
         is_valid, error = processor.validate_manifest(valid_deployment)
         assert is_valid is True
 
     def test_quay_allowed(self, processor, valid_deployment):
         """Test quay.io images are allowed."""
-        valid_deployment["spec"]["template"]["spec"]["containers"][0][
-            "image"
-        ] = "quay.io/test/image:v1"
+        valid_deployment["spec"]["template"]["spec"]["containers"][0]["image"] = (
+            "quay.io/test/image:v1"
+        )
         is_valid, error = processor.validate_manifest(valid_deployment)
         assert is_valid is True
 
@@ -315,9 +315,9 @@ class TestImageSourceValidation:
 
     def test_untrusted_registry_fails(self, processor, valid_deployment):
         """Test untrusted registry fails validation."""
-        valid_deployment["spec"]["template"]["spec"]["containers"][0][
-            "image"
-        ] = "evil-registry.com/malware:latest"
+        valid_deployment["spec"]["template"]["spec"]["containers"][0]["image"] = (
+            "evil-registry.com/malware:latest"
+        )
         is_valid, error = processor.validate_manifest(valid_deployment)
         assert is_valid is False
         assert "Untrusted image source" in error
@@ -1237,17 +1237,17 @@ class TestImageValidationEdgeCases:
 
     def test_registry_k8s_io_allowed(self, processor, valid_deployment):
         """Test registry.k8s.io images are allowed."""
-        valid_deployment["spec"]["template"]["spec"]["containers"][0][
-            "image"
-        ] = "registry.k8s.io/pause:3.9"
+        valid_deployment["spec"]["template"]["spec"]["containers"][0]["image"] = (
+            "registry.k8s.io/pause:3.9"
+        )
         is_valid, error = processor.validate_manifest(valid_deployment)
         assert is_valid is True
 
     def test_k8s_gcr_io_allowed(self, processor, valid_deployment):
         """Test k8s.gcr.io images are allowed."""
-        valid_deployment["spec"]["template"]["spec"]["containers"][0][
-            "image"
-        ] = "k8s.gcr.io/pause:3.9"
+        valid_deployment["spec"]["template"]["spec"]["containers"][0]["image"] = (
+            "k8s.gcr.io/pause:3.9"
+        )
         is_valid, error = processor.validate_manifest(valid_deployment)
         assert is_valid is True
 

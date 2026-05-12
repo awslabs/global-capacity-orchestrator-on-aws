@@ -165,7 +165,7 @@ def test_example_is_batch_job_in_gco_jobs_namespace(path: Path) -> None:
         assert job.get("kind") == "Job", f"{path.name}: expected kind=Job, got {job.get('kind')!r}"
         metadata = job.get("metadata", {})
         assert metadata.get("namespace") == "gco-jobs", (
-            f"{path.name}: expected namespace=gco-jobs, " f"got {metadata.get('namespace')!r}"
+            f"{path.name}: expected namespace=gco-jobs, got {metadata.get('namespace')!r}"
         )
         pod_spec = job["spec"]["template"]["spec"]
         assert pod_spec.get("serviceAccountName") == "gco-service-account", (

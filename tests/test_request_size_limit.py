@@ -278,9 +278,9 @@ class TestRequestBodySizeEnforcementProperty:
                 content=b"x",
                 headers={**_AUTH_HEADERS, "content-length": str(over_size)},
             )
-            assert (
-                response.status_code == 413
-            ), f"Expected 413 for Content-Length={over_size}, got {response.status_code}"
+            assert response.status_code == 413, (
+                f"Expected 413 for Content-Length={over_size}, got {response.status_code}"
+            )
             assert "exceeds maximum size" in response.json()["detail"]
 
     # --- Strategy: payload sizes at or below the limit ---
@@ -297,9 +297,9 @@ class TestRequestBodySizeEnforcementProperty:
             )
             # The request should proceed past the size middleware.
             # It may fail with 400/422 due to validation, but never 413.
-            assert (
-                response.status_code != 413
-            ), f"Got unexpected 413 for Content-Length={under_size} (limit={_LIMIT})"
+            assert response.status_code != 413, (
+                f"Got unexpected 413 for Content-Length={under_size} (limit={_LIMIT})"
+            )
 
     # --- Strategy: actual oversized bodies (no Content-Length reliance) ---
     # Generate body sizes just over the limit (limit+1 to limit+1024)
@@ -314,9 +314,9 @@ class TestRequestBodySizeEnforcementProperty:
                 content=body,
                 headers=_AUTH_HEADERS,
             )
-            assert (
-                response.status_code == 413
-            ), f"Expected 413 for body size {len(body)}, got {response.status_code}"
+            assert response.status_code == 413, (
+                f"Expected 413 for body size {len(body)}, got {response.status_code}"
+            )
 
     # --- Strategy: actual small bodies ---
     # Generate small body sizes (1 to 1024 bytes) that are well within the limit
@@ -331,6 +331,6 @@ class TestRequestBodySizeEnforcementProperty:
                 content=body,
                 headers=_AUTH_HEADERS,
             )
-            assert (
-                response.status_code != 413
-            ), f"Got unexpected 413 for body size {body_size} (limit={_LIMIT})"
+            assert response.status_code != 413, (
+                f"Got unexpected 413 for body size {body_size} (limit={_LIMIT})"
+            )

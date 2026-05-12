@@ -94,9 +94,9 @@ class TestHealthMonitorRole:
         """Health monitor should only have get, list, watch — no write verbs."""
         role = _find_doc(rbac_docs, "ClusterRole", "gco-health-monitor-role")
         all_verbs = _get_all_verbs(role)
-        assert all_verbs.issubset(
-            READ_ONLY_VERBS
-        ), f"Health monitor role has non-read verbs: {all_verbs - READ_ONLY_VERBS}"
+        assert all_verbs.issubset(READ_ONLY_VERBS), (
+            f"Health monitor role has non-read verbs: {all_verbs - READ_ONLY_VERBS}"
+        )
 
     def test_health_monitor_covers_expected_resources(self, rbac_docs):
         """Health monitor should cover pods, nodes, deployments, services, events, jobs, metrics."""
@@ -148,9 +148,9 @@ class TestManifestProcessorRole:
         role = _find_doc(rbac_docs, "Role", "gco-manifest-processor-role")
         resources = _get_all_resources(role)
         resource_names = {r[1] for r in resources}
-        assert (
-            "pods/log" in resource_names
-        ), "manifest-processor Role must grant pods/log for logs endpoint"
+        assert "pods/log" in resource_names, (
+            "manifest-processor Role must grant pods/log for logs endpoint"
+        )
 
     def test_manifest_processor_can_read_events(self, rbac_docs):
         """events must be in the manifest-processor Role so the events endpoint works.
@@ -161,9 +161,9 @@ class TestManifestProcessorRole:
         role = _find_doc(rbac_docs, "Role", "gco-manifest-processor-role")
         resources = _get_all_resources(role)
         resource_names = {r[1] for r in resources}
-        assert (
-            "events" in resource_names
-        ), "manifest-processor Role must grant events for events endpoint"
+        assert "events" in resource_names, (
+            "manifest-processor Role must grant events for events endpoint"
+        )
 
     def test_manifest_processor_has_patch_verb_on_workload_resources(self, rbac_docs):
         """patch must be granted on every resource the dynamic client might update.
@@ -185,9 +185,9 @@ class TestManifestProcessorRole:
             rule_resources = set(rule.get("resources", []))
             for write_set in write_resource_sets:
                 if rule_resources & write_set:
-                    assert "patch" in rule.get(
-                        "verbs", []
-                    ), f"Rule for {rule_resources} must include patch verb"
+                    assert "patch" in rule.get("verbs", []), (
+                        f"Rule for {rule_resources} must include patch verb"
+                    )
 
     def test_manifest_processor_cluster_read_exists(self, rbac_docs):
         """A separate ClusterRole for namespace/CRD reads should exist."""
@@ -198,9 +198,9 @@ class TestManifestProcessorRole:
         """The cluster-read role should only have read verbs."""
         role = _find_doc(rbac_docs, "ClusterRole", "gco-manifest-processor-cluster-read")
         all_verbs = _get_all_verbs(role)
-        assert all_verbs.issubset(
-            READ_ONLY_VERBS
-        ), f"Cluster-read role has non-read verbs: {all_verbs - READ_ONLY_VERBS}"
+        assert all_verbs.issubset(READ_ONLY_VERBS), (
+            f"Cluster-read role has non-read verbs: {all_verbs - READ_ONLY_VERBS}"
+        )
 
     def test_manifest_processor_cluster_read_includes_metrics(self, rbac_docs):
         """metrics.k8s.io must be readable for the /metrics job endpoint.
@@ -213,9 +213,9 @@ class TestManifestProcessorRole:
         api_groups_seen = set()
         for rule in role.get("rules", []):
             api_groups_seen.update(rule.get("apiGroups", []))
-        assert (
-            "metrics.k8s.io" in api_groups_seen
-        ), "cluster-read role must allow metrics.k8s.io for /metrics endpoint"
+        assert "metrics.k8s.io" in api_groups_seen, (
+            "cluster-read role must allow metrics.k8s.io for /metrics endpoint"
+        )
 
 
 # ─── Inference Monitor Role ─────────────────────────────────────────
@@ -254,9 +254,9 @@ class TestInferenceMonitorRole:
         for rule in role.get("rules", []):
             rule_resources = set(rule.get("resources", []))
             if rule_resources & patched_resources:
-                assert "patch" in rule.get(
-                    "verbs", []
-                ), f"inference-monitor rule for {rule_resources} must include patch"
+                assert "patch" in rule.get("verbs", []), (
+                    f"inference-monitor rule for {rule_resources} must include patch"
+                )
 
 
 # ─── Role Bindings ──────────────────────────────────────────────────
@@ -393,9 +393,9 @@ class TestDedicatedServiceAccounts:
         for sa in service_accounts:
             if sa["metadata"]["name"] in self.EXPECTED_SAS:
                 labels = sa["metadata"].get("labels", {})
-                assert (
-                    labels.get("project") == "gco"
-                ), f"SA {sa['metadata']['name']} missing project=gco label"
+                assert labels.get("project") == "gco", (
+                    f"SA {sa['metadata']['name']} missing project=gco label"
+                )
 
 
 # ── IRSA trust policy regression tests ─────────────────────────────────────

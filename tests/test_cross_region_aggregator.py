@@ -72,9 +72,7 @@ class TestGetSecretToken:
             patch.object(handler, "secrets_client", mock_secrets),
         ):
             token = get_secret_token()
-            assert (
-                token == "test-token-123"
-            )  # nosec B105 - test assertion against fixture value, not a real credential
+            assert token == "test-token-123"  # nosec B105 - test assertion against fixture value, not a real credential
 
     def test_get_secret_token_cached(self):
         """Test that secret is cached."""
@@ -82,9 +80,7 @@ class TestGetSecretToken:
         handler._cached_secret = "cached-token"  # nosec B105 - test fixture, not a real credential
 
         token = handler.get_secret_token()
-        assert (
-            token == "cached-token"
-        )  # nosec B105 - test assertion against fixture value, not a real credential
+        assert token == "cached-token"  # nosec B105 - test assertion against fixture value, not a real credential
 
 
 class TestGetRegionalEndpoints:

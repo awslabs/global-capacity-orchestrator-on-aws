@@ -15,9 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # Auth token used by all tests in this module.
-_TEST_AUTH_TOKEN = (
-    "test-queue-endpoints-token"  # nosec B105 - test fixture token, not a real credential
-)
+_TEST_AUTH_TOKEN = "test-queue-endpoints-token"  # nosec B105 - test fixture token, not a real credential
 _AUTH_HEADERS = {"x-gco-auth-token": _TEST_AUTH_TOKEN}
 
 

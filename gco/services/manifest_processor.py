@@ -128,7 +128,9 @@ def safe_load_all_yaml(stream: str | Any, *, allow_aliases: bool = False) -> lis
     # yaml.safe_load_all. Bandit's B506 check does not recognize the custom
     # loader as safe.
     return [
-        doc for doc in yaml.load_all(stream, Loader=loader_cls) if doc is not None  # nosec B506
+        doc
+        for doc in yaml.load_all(stream, Loader=loader_cls)
+        if doc is not None  # nosec B506
     ]
 
 
@@ -481,25 +483,19 @@ class ManifestProcessor:
                 limits = resources.get("limits", {})
 
                 # Check CPU (use limits if available, otherwise requests)
-                cpu = limits.get(
-                    "cpu"
-                ) or requests.get(  # nosec B113 - dict.get(), not HTTP requests
+                cpu = limits.get("cpu") or requests.get(  # nosec B113 - dict.get(), not HTTP requests
                     "cpu", "0"
                 )
                 total_cpu += self._parse_cpu_string(cpu)
 
                 # Check Memory
-                memory = limits.get(
-                    "memory"
-                ) or requests.get(  # nosec B113 - dict.get(), not HTTP requests
+                memory = limits.get("memory") or requests.get(  # nosec B113 - dict.get(), not HTTP requests
                     "memory", "0"
                 )
                 total_memory += self._parse_memory_string(memory)
 
                 # Check GPU
-                gpu = limits.get(
-                    "nvidia.com/gpu"
-                ) or requests.get(  # nosec B113 - dict.get(), not HTTP requests
+                gpu = limits.get("nvidia.com/gpu") or requests.get(  # nosec B113 - dict.get(), not HTTP requests
                     "nvidia.com/gpu", "0"
                 )
                 total_gpu += int(gpu)

@@ -1461,7 +1461,7 @@ class GCOAnalyticsStack(Stack):
                     ),
                     "appliesTo": [
                         "Resource::*",
-                        ("Resource::arn:aws:sagemaker:<AWS::Region>:" "<AWS::AccountId>:domain/*"),
+                        ("Resource::arn:aws:sagemaker:<AWS::Region>:<AWS::AccountId>:domain/*"),
                         (
                             "Resource::arn:aws:sagemaker:<AWS::Region>:"
                             "<AWS::AccountId>:user-profile/*/*"

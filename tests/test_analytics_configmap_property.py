@@ -239,7 +239,7 @@ class TestSagemakerGrantToggleInvariant:
 
         # enabled=True branch — the biconditional's positive direction.
         assert analytics_present, (
-            "When analytics is enabled, gco-analytics must be " "synthesized — but it was absent."
+            "When analytics is enabled, gco-analytics must be synthesized — but it was absent."
         )
         assert statements, (
             "When analytics is enabled, the SageMaker execution role "
@@ -275,12 +275,12 @@ class TestSagemakerGrantBidirectional:
         off_statements = _deserialize_statements(_cached_analytics_statements(False))
         on_statements = _deserialize_statements(_cached_analytics_statements(True))
 
-        assert not _has_cluster_shared_grant(
-            off_statements
-        ), "enabled=False must not produce a cluster-shared grant."
-        assert _has_cluster_shared_grant(
-            on_statements
-        ), "enabled=True must produce a cluster-shared grant."
+        assert not _has_cluster_shared_grant(off_statements), (
+            "enabled=False must not produce a cluster-shared grant."
+        )
+        assert _has_cluster_shared_grant(on_statements), (
+            "enabled=True must produce a cluster-shared grant."
+        )
 
     def test_enabled_then_disabled(self) -> None:
         # Exercising the same cached entries in reverse order — asserts

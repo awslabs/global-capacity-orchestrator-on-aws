@@ -532,7 +532,7 @@ class GCORegionalStack(Stack):
                 effect=iam.Effect.ALLOW,
                 actions=["ssm:GetParameter"],
                 resources=[
-                    f"arn:aws:ssm:{global_region}:{self.account}" f":parameter/{project_name}/*"
+                    f"arn:aws:ssm:{global_region}:{self.account}:parameter/{project_name}/*"
                 ],
             )
         )

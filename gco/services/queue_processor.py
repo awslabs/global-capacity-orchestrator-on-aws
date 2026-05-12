@@ -386,20 +386,14 @@ def validate_manifest(m: dict[str, Any]) -> tuple[bool, str]:
             res = c.get("resources", {}) or {}
             limits = res.get("limits", {}) or {}
             requests = res.get("requests", {}) or {}
-            gpu = limits.get("nvidia.com/gpu") or requests.get(
-                "nvidia.com/gpu", "0"
-            )  # nosec B113 - dict.get(), not HTTP requests
+            gpu = limits.get("nvidia.com/gpu") or requests.get("nvidia.com/gpu", "0")  # nosec B113 - dict.get(), not HTTP requests
             total_gpu += int(gpu)
-            cpu_str = limits.get("cpu") or requests.get(
-                "cpu", "0"
-            )  # nosec B113 - dict.get(), not HTTP requests
+            cpu_str = limits.get("cpu") or requests.get("cpu", "0")  # nosec B113 - dict.get(), not HTTP requests
             if isinstance(cpu_str, str) and cpu_str.endswith("m"):
                 total_cpu += int(cpu_str[:-1])
             else:
                 total_cpu += int(float(cpu_str) * 1000)
-            mem_str = limits.get("memory") or requests.get(
-                "memory", "0"
-            )  # nosec B113 - dict.get(), not HTTP requests
+            mem_str = limits.get("memory") or requests.get("memory", "0")  # nosec B113 - dict.get(), not HTTP requests
             if isinstance(mem_str, str):
                 if mem_str.endswith("Gi"):
                     total_memory += int(float(mem_str[:-2]) * 1024**3)

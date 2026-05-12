@@ -264,8 +264,7 @@ class TestUpsertMarkers:
         src_path = tmp_path / src_rel
         self._write_source(
             src_path,
-            '"""Multi-handler docstring."""\n\ndef alpha():\n    pass\n\n'
-            "def beta():\n    pass\n",
+            '"""Multi-handler docstring."""\n\ndef alpha():\n    pass\n\ndef beta():\n    pass\n',
         )
 
         results = [

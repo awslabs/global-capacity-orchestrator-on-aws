@@ -887,7 +887,7 @@ class GCOGlobalStack(Stack):
         )
 
         access_logs_is_self_target_reason = (
-            "This is the server access logs destination bucket for " "Cluster_Shared_Bucket."
+            "This is the server access logs destination bucket for Cluster_Shared_Bucket."
         )
         NagSuppressions.add_resource_suppressions(
             self.cluster_shared_access_logs_bucket,

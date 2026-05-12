@@ -249,7 +249,9 @@ class BedrockCapacityAdvisor:
                             "interpretation": (
                                 "capacity growing"
                                 if trend > 0.2
-                                else "capacity shrinking" if trend < -0.2 else "stable"
+                                else "capacity shrinking"
+                                if trend < -0.2
+                                else "stable"
                             ),
                         }
                 except Exception as e:

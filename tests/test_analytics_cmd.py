@@ -355,8 +355,7 @@ class TestUsers:
 
             match = re.search(r"Generated password[^:]*:\s*(\S.+)$", result.output, re.M)
             assert match, (
-                "expected a 'Generated password ...: <pw>' line in output; "
-                f"got {result.output!r}"
+                f"expected a 'Generated password ...: <pw>' line in output; got {result.output!r}"
             )
             generated = match.group(1).strip()
             assert len(generated) >= 16

@@ -92,9 +92,9 @@ def _find_drift_rule(template: assertions.Template) -> dict:
             ):
                 matches.append(rule)
                 break
-    assert (
-        len(matches) == 1
-    ), f"Expected exactly one EventBridge rule targeting the drift Lambda, found {len(matches)}"
+    assert len(matches) == 1, (
+        f"Expected exactly one EventBridge rule targeting the drift Lambda, found {len(matches)}"
+    )
     return matches[0]
 
 
@@ -137,12 +137,12 @@ class TestDriftDetection:
         _, drift_lambda = _find_drift_lambda(template)
         props = drift_lambda["Properties"]
 
-        assert (
-            props.get("Runtime") == "python3.14"
-        ), f"Expected drift Lambda runtime python3.14, got {props.get('Runtime')!r}"
-        assert (
-            props.get("Handler") == "handler.lambda_handler"
-        ), f"Expected handler 'handler.lambda_handler', got {props.get('Handler')!r}"
+        assert props.get("Runtime") == "python3.14", (
+            f"Expected drift Lambda runtime python3.14, got {props.get('Runtime')!r}"
+        )
+        assert props.get("Handler") == "handler.lambda_handler", (
+            f"Expected handler 'handler.lambda_handler', got {props.get('Handler')!r}"
+        )
 
     def test_drift_detection_sns_topic_exists(self):
         """An SNS topic with the drift-alerts display name is synthesized."""
@@ -154,15 +154,15 @@ class TestDriftDetection:
             for t in topics.values()
             if t.get("Properties", {}).get("DisplayName") == "GCO CloudFormation Drift Alerts"
         ]
-        assert (
-            len(drift_topics) == 1
-        ), f"Expected exactly one drift-alerts SNS topic, found {len(drift_topics)}"
+        assert len(drift_topics) == 1, (
+            f"Expected exactly one drift-alerts SNS topic, found {len(drift_topics)}"
+        )
 
         # Topic should be KMS-encrypted with a customer-managed key (KmsMasterKeyId set).
         topic_props = drift_topics[0]["Properties"]
-        assert (
-            "KmsMasterKeyId" in topic_props
-        ), "Drift SNS topic must be KMS-encrypted (KmsMasterKeyId property missing)"
+        assert "KmsMasterKeyId" in topic_props, (
+            "Drift SNS topic must be KMS-encrypted (KmsMasterKeyId property missing)"
+        )
 
     def test_drift_detection_eventbridge_rule_is_daily(self):
         """EventBridge rule fires on a 24-hour rate schedule by default.
@@ -231,9 +231,9 @@ class TestDriftDetection:
             for t in topics.values()
             if t.get("Properties", {}).get("DisplayName") == "GCO CloudFormation Drift Alerts"
         ]
-        assert (
-            drift_topics == []
-        ), f"Drift SNS topic should not be created when disabled; found {len(drift_topics)}"
+        assert drift_topics == [], (
+            f"Drift SNS topic should not be created when disabled; found {len(drift_topics)}"
+        )
 
         # No Lambda function carrying the drift-detection env vars.
         lambdas = template.find_resources("AWS::Lambda::Function")
@@ -244,9 +244,9 @@ class TestDriftDetection:
                 set(fn.get("Properties", {}).get("Environment", {}).get("Variables", {}).keys())
             )
         ]
-        assert (
-            drift_lambdas == []
-        ), f"Drift Lambda should not be created when disabled; found {len(drift_lambdas)}"
+        assert drift_lambdas == [], (
+            f"Drift Lambda should not be created when disabled; found {len(drift_lambdas)}"
+        )
 
         # No IAM policy containing the drift-specific CloudFormation actions.
         policies = template.find_resources("AWS::IAM::Policy")
@@ -263,9 +263,9 @@ class TestDriftDetection:
                 for s in p.get("Properties", {}).get("PolicyDocument", {}).get("Statement", [])
             )
         ]
-        assert (
-            drift_policies == []
-        ), "IAM policy with DetectStackDrift should not be created when disabled"
+        assert drift_policies == [], (
+            "IAM policy with DetectStackDrift should not be created when disabled"
+        )
 
     def test_drift_detection_custom_schedule_hours(self):
         """Custom drift_detection.schedule_hours context propagates to the rule."""
@@ -274,6 +274,6 @@ class TestDriftDetection:
 
         rule = _find_drift_rule(template)
         expr = rule["Properties"].get("ScheduleExpression")
-        assert (
-            expr == "rate(6 hours)"
-        ), f"Expected schedule 'rate(6 hours)' from context override, got {expr!r}"
+        assert expr == "rate(6 hours)", (
+            f"Expected schedule 'rate(6 hours)' from context override, got {expr!r}"
+        )

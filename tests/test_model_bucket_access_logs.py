@@ -88,13 +88,12 @@ def _find_access_logs_bucket(template: assertions.Template) -> Mapping[str, Any]
     model_bucket = _find_model_weights_bucket(template)
     dest_ref = model_bucket["Properties"]["LoggingConfiguration"]["DestinationBucketName"]
     assert isinstance(dest_ref, dict) and "Ref" in dest_ref, (
-        f"model_bucket LoggingConfiguration.DestinationBucketName should be a Ref, "
-        f"got {dest_ref!r}"
+        f"model_bucket LoggingConfiguration.DestinationBucketName should be a Ref, got {dest_ref!r}"
     )
     buckets = template.find_resources("AWS::S3::Bucket")
-    assert (
-        dest_ref["Ref"] in buckets
-    ), f"model_bucket logs to {dest_ref['Ref']} but no such S3::Bucket exists"
+    assert dest_ref["Ref"] in buckets, (
+        f"model_bucket logs to {dest_ref['Ref']} but no such S3::Bucket exists"
+    )
     return buckets[dest_ref["Ref"]]
 
 
@@ -110,9 +109,9 @@ class TestModelBucketAccessLogs:
         """Template has at least the model bucket and the access-logs bucket."""
         template = _synth(cdk.App())
         buckets = template.find_resources("AWS::S3::Bucket")
-        assert (
-            len(buckets) >= 2
-        ), f"Expected at least 2 S3 buckets (model + access logs), found {len(buckets)}"
+        assert len(buckets) >= 2, (
+            f"Expected at least 2 S3 buckets (model + access logs), found {len(buckets)}"
+        )
 
     def test_model_bucket_logs_to_access_logs_bucket(self):
         """Model weights bucket has LoggingConfiguration pointing at the access-logs bucket."""
@@ -123,14 +122,14 @@ class TestModelBucketAccessLogs:
 
         # Destination bucket must be a CFN reference to another S3::Bucket resource.
         dest = logging_cfg["DestinationBucketName"]
-        assert (
-            isinstance(dest, dict) and "Ref" in dest
-        ), f"LoggingConfiguration.DestinationBucketName should be a Ref, got {dest!r}"
+        assert isinstance(dest, dict) and "Ref" in dest, (
+            f"LoggingConfiguration.DestinationBucketName should be a Ref, got {dest!r}"
+        )
 
         buckets = template.find_resources("AWS::S3::Bucket")
-        assert (
-            dest["Ref"] in buckets
-        ), f"LoggingConfiguration references {dest['Ref']} but no such S3::Bucket exists"
+        assert dest["Ref"] in buckets, (
+            f"LoggingConfiguration references {dest['Ref']} but no such S3::Bucket exists"
+        )
 
         # Verify the referenced bucket is the access-logs bucket (i.e. the one
         # with LifecycleConfiguration).
@@ -172,9 +171,9 @@ class TestModelBucketAccessLogs:
             if r.get("Status") == "Enabled" and "ExpirationInDays" in r
         ]
         assert 30 in expiration_days, f"Expected custom 30-day expiration, got {expiration_days!r}"
-        assert (
-            90 not in expiration_days
-        ), "Default 90-day expiration should not be present when retention_days=30"
+        assert 90 not in expiration_days, (
+            "Default 90-day expiration should not be present when retention_days=30"
+        )
 
     def test_both_buckets_block_public_access(self):
         """Both the model weights bucket and the access-logs bucket block all public access."""

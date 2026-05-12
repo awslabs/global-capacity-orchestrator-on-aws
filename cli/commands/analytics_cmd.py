@@ -546,7 +546,7 @@ def studio_login(
         elif not url:
             click.echo("")
             formatter.print_error(
-                "User profile did not become ready within " f"{max_wait}s. Try again in a minute."
+                f"User profile did not become ready within {max_wait}s. Try again in a minute."
             )
             sys.exit(2)
     except urllib.error.HTTPError as exc:

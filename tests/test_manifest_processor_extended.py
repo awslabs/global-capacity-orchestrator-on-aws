@@ -1206,14 +1206,14 @@ class TestYamlDepthLimitEnforcementProperty:
         processor = _make_processor_with_depth_limit(max_depth)
 
         nested_dict = _build_nested_dict(safe_depth)
-        assert (
-            processor._check_yaml_depth(nested_dict) is True
-        ), f"Nested dict at depth {safe_depth} should be accepted with max_depth={max_depth}"
+        assert processor._check_yaml_depth(nested_dict) is True, (
+            f"Nested dict at depth {safe_depth} should be accepted with max_depth={max_depth}"
+        )
 
         nested_list = _build_nested_list(safe_depth)
-        assert (
-            processor._check_yaml_depth(nested_list) is True
-        ), f"Nested list at depth {safe_depth} should be accepted with max_depth={max_depth}"
+        assert processor._check_yaml_depth(nested_list) is True, (
+            f"Nested list at depth {safe_depth} should be accepted with max_depth={max_depth}"
+        )
 
     # -----------------------------------------------------------------
     # Property: documents exceeding the depth limit are rejected
@@ -1234,14 +1234,14 @@ class TestYamlDepthLimitEnforcementProperty:
         processor = _make_processor_with_depth_limit(max_depth)
 
         nested_dict = _build_nested_dict(excessive_depth)
-        assert (
-            processor._check_yaml_depth(nested_dict) is False
-        ), f"Nested dict at depth {excessive_depth} should be rejected with max_depth={max_depth}"
+        assert processor._check_yaml_depth(nested_dict) is False, (
+            f"Nested dict at depth {excessive_depth} should be rejected with max_depth={max_depth}"
+        )
 
         nested_list = _build_nested_list(excessive_depth)
-        assert (
-            processor._check_yaml_depth(nested_list) is False
-        ), f"Nested list at depth {excessive_depth} should be rejected with max_depth={max_depth}"
+        assert processor._check_yaml_depth(nested_list) is False, (
+            f"Nested list at depth {excessive_depth} should be rejected with max_depth={max_depth}"
+        )
 
     # -----------------------------------------------------------------
     # Property: mixed dict/list nesting beyond limit is rejected
@@ -1305,9 +1305,9 @@ class TestYamlDepthLimitEnforcementProperty:
             f"with max_depth={max_depth}"
         )
         assert error is not None
-        assert (
-            "nesting depth" in error.lower() or "depth" in error.lower()
-        ), f"Error message should mention depth limit, got: {error}"
+        assert "nesting depth" in error.lower() or "depth" in error.lower(), (
+            f"Error message should mention depth limit, got: {error}"
+        )
 
     # -----------------------------------------------------------------
     # Property: validate_manifest accepts manifests within depth limit
@@ -1429,9 +1429,9 @@ class TestYamlAnchorAliasRejectionProperty:
         # YAML 1.1 coerces bare scalars like "yes"/"no"/"true"/"null" into
         # booleans / None, so the alias value equals whatever the parser
         # produced for the anchor — not necessarily the source string.
-        assert (
-            result[key2] == result[key1]
-        ), f"Alias *{anchor} should resolve to same value as anchor but got '{result[key2]}'"
+        assert result[key2] == result[key1], (
+            f"Alias *{anchor} should resolve to same value as anchor but got '{result[key2]}'"
+        )
 
     @given(
         anchor=_anchor_name,

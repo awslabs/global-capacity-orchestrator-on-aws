@@ -128,9 +128,9 @@ class TestAnalyticsApiConfigAbsent:
             for logical_id, res in resources.items()
             if res.get("Properties", {}).get("PathPart") in studio_parts
         ]
-        assert (
-            offending == []
-        ), f"Expected no studio path parts in analytics-absent template, found: {offending}"
+        assert offending == [], (
+            f"Expected no studio path parts in analytics-absent template, found: {offending}"
+        )
 
     def test_no_cognito_authorizer(self, absent_template: assertions.Template) -> None:
         """No ``AWS::ApiGateway::Authorizer`` resource at all."""
@@ -158,8 +158,7 @@ class TestAnalyticsApiConfigAbsent:
         # not added by this stack). Assert via set membership so future
         # additions of unrelated IAM methods don't break the test.
         assert auth_types == {"AWS_IAM"}, (
-            f"Expected all methods to use AWS_IAM in analytics-absent template, "
-            f"found: {auth_types}"
+            f"Expected all methods to use AWS_IAM in analytics-absent template, found: {auth_types}"
         )
 
 
@@ -203,12 +202,12 @@ class TestAnalyticsApiConfigPresent:
     def test_cfn_outputs_present(self, present_template: assertions.Template) -> None:
         """Both ``CognitoAuthorizerId`` and ``StudioLoginUrl`` outputs exist."""
         outputs = present_template.find_outputs("*")
-        assert (
-            "CognitoAuthorizerId" in outputs
-        ), f"Expected CognitoAuthorizerId output, got: {list(outputs.keys())}"
-        assert (
-            "StudioLoginUrl" in outputs
-        ), f"Expected StudioLoginUrl output, got: {list(outputs.keys())}"
+        assert "CognitoAuthorizerId" in outputs, (
+            f"Expected CognitoAuthorizerId output, got: {list(outputs.keys())}"
+        )
+        assert "StudioLoginUrl" in outputs, (
+            f"Expected StudioLoginUrl output, got: {list(outputs.keys())}"
+        )
 
     def test_api_v1_methods_still_iam(self, present_template: assertions.Template) -> None:
         """Cognito coexistence — ``/api/v1/*`` methods still declare ``AWS_IAM``.
@@ -235,9 +234,9 @@ class TestAnalyticsApiConfigPresent:
         # /studio/login GET) should have been added.
         assert iam_methods, "Expected at least one IAM-authorized method to remain."
         assert cognito_methods, "Expected at least one COGNITO-authorized method."
-        assert iam_methods.isdisjoint(
-            cognito_methods
-        ), "IAM and COGNITO methods must be disjoint sets."
+        assert iam_methods.isdisjoint(cognito_methods), (
+            "IAM and COGNITO methods must be disjoint sets."
+        )
 
     def test_request_validator_created(self, present_template: assertions.Template) -> None:
         """A ``RequestValidator`` with ``ValidateRequestParameters=true`` exists."""

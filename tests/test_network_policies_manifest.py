@@ -94,9 +94,9 @@ class TestVpcEndpointEgressPolicy:
     def test_old_unrestricted_https_egress_removed(self, netpol_docs):
         """The old unrestricted allow-https-egress policy must not exist in gco-jobs."""
         policy = _find_netpol(netpol_docs, "allow-https-egress", "gco-jobs")
-        assert (
-            policy is None
-        ), "Old unrestricted allow-https-egress policy must be removed from gco-jobs"
+        assert policy is None, (
+            "Old unrestricted allow-https-egress policy must be removed from gco-jobs"
+        )
 
     def test_vpc_endpoint_egress_has_egress_policy_type(self, netpol_docs):
         policy = _find_netpol(netpol_docs, "allow-vpc-endpoint-egress", "gco-jobs")
@@ -115,9 +115,9 @@ class TestVpcEndpointEgressPolicy:
             if to_peers and all("ipBlock" in peer for peer in to_peers):
                 found_ip_block_rule = True
                 break
-        assert (
-            found_ip_block_rule
-        ), "allow-vpc-endpoint-egress must restrict egress via ipBlock peers"
+        assert found_ip_block_rule, (
+            "allow-vpc-endpoint-egress must restrict egress via ipBlock peers"
+        )
 
     def test_vpc_endpoint_egress_not_open_to_world(self, netpol_docs):
         """No CIDR should be 0.0.0.0/0 or ::/0 — that would be unrestricted."""
@@ -245,9 +245,9 @@ class TestCdkSubstitutionLogic:
 
     def test_raw_manifest_contains_placeholder(self, raw_manifest):
         """Sanity check — the raw manifest should still have the placeholder."""
-        assert (
-            CIDR_PLACEHOLDER in raw_manifest
-        ), "Raw manifest must contain {{VPC_ENDPOINT_CIDR_BLOCKS}} placeholder"
+        assert CIDR_PLACEHOLDER in raw_manifest, (
+            "Raw manifest must contain {{VPC_ENDPOINT_CIDR_BLOCKS}} placeholder"
+        )
 
     def test_raw_manifest_is_not_valid_yaml(self, raw_manifest):
         """

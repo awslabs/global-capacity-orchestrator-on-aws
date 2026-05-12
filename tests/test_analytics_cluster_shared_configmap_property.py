@@ -195,7 +195,7 @@ def _assert_replacement_value_is_structurally_valid(key: str, value: Any) -> Non
     resolve at deploy time, not synth time.
     """
     assert value not in (None, "", {}), (
-        f"ImageReplacements[{key!r}] must be non-empty (string or token " f"dict). Got: {value!r}"
+        f"ImageReplacements[{key!r}] must be non-empty (string or token dict). Got: {value!r}"
     )
     if isinstance(value, str):
         assert value, f"ImageReplacements[{key!r}] is a string but empty. Got: {value!r}"
@@ -216,11 +216,11 @@ def _assert_replacement_value_is_structurally_valid(key: str, value: Any) -> Non
             )
             logical_id, attr = getatt
             assert isinstance(logical_id, str) and logical_id, (
-                f"Fn::GetAtt target logical id must be a non-empty string; " f"got {logical_id!r}"
+                f"Fn::GetAtt target logical id must be a non-empty string; got {logical_id!r}"
             )
-            assert (
-                isinstance(attr, str) and attr
-            ), f"Fn::GetAtt attribute must be a non-empty string; got {attr!r}"
+            assert isinstance(attr, str) and attr, (
+                f"Fn::GetAtt attribute must be a non-empty string; got {attr!r}"
+            )
     else:
         pytest.fail(
             f"ImageReplacements[{key!r}] has unexpected type "

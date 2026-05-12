@@ -238,18 +238,18 @@ class TestKubernetesManifests:
 
                 # Check base required fields
                 for field in REQUIRED_FIELDS["all"]:
-                    assert (
-                        field in doc
-                    ), f"{filepath.name} doc {i}: missing required field '{field}'"
+                    assert field in doc, (
+                        f"{filepath.name} doc {i}: missing required field '{field}'"
+                    )
 
                 # Check kind-specific required fields
                 kind = doc.get("kind", "")
                 if kind in REQUIRED_FIELDS:
                     for field_path in REQUIRED_FIELDS[kind]:
                         value = get_nested(doc, field_path)
-                        assert (
-                            value is not None
-                        ), f"{filepath.name} doc {i} ({kind}): missing required field '{field_path}'"
+                        assert value is not None, (
+                            f"{filepath.name} doc {i} ({kind}): missing required field '{field_path}'"
+                        )
 
     def test_manifests_have_valid_api_versions(self, manifest_files):
         """Test that manifests use valid API versions."""
@@ -276,9 +276,9 @@ class TestKubernetesManifests:
                 # Allow template placeholders
                 if "{{" in api_version or api_version == "TEMPLATE_PLACEHOLDER":
                     continue
-                assert (
-                    api_version in valid_api_versions
-                ), f"{filepath.name} doc {i}: invalid apiVersion '{api_version}'"
+                assert api_version in valid_api_versions, (
+                    f"{filepath.name} doc {i}: invalid apiVersion '{api_version}'"
+                )
 
     def test_manifests_have_metadata_name(self, manifest_files):
         """Test that all manifests have metadata.name."""
@@ -326,9 +326,9 @@ class TestKubernetesManifests:
                     # Skip template placeholders
                     if "{{" in image or image == "TEMPLATE_PLACEHOLDER":
                         continue
-                    assert is_trusted_image(
-                        image
-                    ), f"{filepath.name} doc {i}: untrusted image '{image}'"
+                    assert is_trusted_image(image), (
+                        f"{filepath.name} doc {i}: untrusted image '{image}'"
+                    )
 
     def test_no_privileged_containers(self, manifest_files):
         """Test that no containers are privileged."""
@@ -352,9 +352,9 @@ class TestKubernetesManifests:
                 if doc.get("kind") == "NetworkPolicy":
                     network_policies.append(doc)
 
-        assert (
-            len(network_policies) > 0
-        ), "No NetworkPolicy manifests found - consider adding network policies"
+        assert len(network_policies) > 0, (
+            "No NetworkPolicy manifests found - consider adding network policies"
+        )
 
     def test_pod_disruption_budgets_exist(self, manifest_files):
         """Test that PodDisruptionBudget manifests exist for availability."""
@@ -494,9 +494,9 @@ class TestKubernetesManifests:
 
                 ns = doc.get("metadata", {}).get("namespace", "default")
                 annotations = doc.get("metadata", {}).get("annotations", {})
-                assert (
-                    "eks.amazonaws.com/role-arn" in annotations
-                ), f"{sa_name} in {ns} missing eks.amazonaws.com/role-arn annotation for IRSA"
+                assert "eks.amazonaws.com/role-arn" in annotations, (
+                    f"{sa_name} in {ns} missing eks.amazonaws.com/role-arn annotation for IRSA"
+                )
 
     def test_sqs_consumer_has_irsa_credentials(self, manifest_files):
         """Test that the SQS queue processor ScaledJob has IRSA credential config."""
@@ -513,9 +513,9 @@ class TestKubernetesManifests:
 
                 # Check service account
                 sa = template_spec.get("serviceAccountName", "")
-                assert (
-                    sa == "gco-manifest-processor-sa"
-                ), f"ScaledJob '{name}' should use gco-manifest-processor-sa, got '{sa}'"
+                assert sa == "gco-manifest-processor-sa", (
+                    f"ScaledJob '{name}' should use gco-manifest-processor-sa, got '{sa}'"
+                )
 
                 # Check for projected token volume
                 volumes = template_spec.get("volumes", [])
@@ -604,9 +604,9 @@ class TestExampleJobs:
             docs = load_yaml_file(filepath)
             for i, doc in enumerate(docs):
                 for field in REQUIRED_FIELDS["all"]:
-                    assert (
-                        field in doc
-                    ), f"{filepath.name} doc {i}: missing required field '{field}'"
+                    assert field in doc, (
+                        f"{filepath.name} doc {i}: missing required field '{field}'"
+                    )
 
     def test_job_examples_have_restart_policy(self, example_files):
         """Test that Job examples have restartPolicy set."""
@@ -745,13 +745,13 @@ class TestLambdaHandlers:
                 del sys.modules["handler"]
             import handler
 
-            assert hasattr(
-                handler, "apply_manifests"
-            ), "handler should have apply_manifests function"
+            assert hasattr(handler, "apply_manifests"), (
+                "handler should have apply_manifests function"
+            )
             assert hasattr(handler, "get_eks_token"), "handler should have get_eks_token function"
-            assert hasattr(
-                handler, "configure_k8s_client"
-            ), "handler should have configure_k8s_client function"
+            assert hasattr(handler, "configure_k8s_client"), (
+                "handler should have configure_k8s_client function"
+            )
             assert hasattr(handler, "send_response"), "handler should have send_response function"
         finally:
             sys.path.remove(str(handler_path))
@@ -802,9 +802,9 @@ class TestLambdaHandlers:
             import handler
 
             importlib.reload(handler)
-            assert hasattr(
-                handler, "get_secret_token"
-            ), "handler should have get_secret_token function"
+            assert hasattr(handler, "get_secret_token"), (
+                "handler should have get_secret_token function"
+            )
             assert callable(handler.get_secret_token), "get_secret_token should be callable"
         finally:
             sys.path.remove(str(handler_path))
@@ -891,14 +891,14 @@ class TestLambdaHandlers:
             import handler
 
             importlib.reload(handler)
-            assert hasattr(
-                handler, "handle_create_update"
-            ), "handler should have handle_create_update function"
+            assert hasattr(handler, "handle_create_update"), (
+                "handler should have handle_create_update function"
+            )
             assert hasattr(handler, "handle_delete"), "handler should have handle_delete function"
             assert hasattr(handler, "send_response"), "handler should have send_response function"
-            assert hasattr(
-                handler, "register_alb_with_ga"
-            ), "handler should have register_alb_with_ga function"
+            assert hasattr(handler, "register_alb_with_ga"), (
+                "handler should have register_alb_with_ga function"
+            )
         finally:
             sys.path.remove(str(handler_path))
             if "handler" in sys.modules:
@@ -1176,9 +1176,9 @@ class TestDocumentation:
             content = f.read()
 
         assert len(content) > 1000, "README.md should have substantial content"
-        assert (
-            "<h1>Global Capacity Orchestrator (GCO)</h1>" in content
-        ), "README.md should have project title"
+        assert "<h1>Global Capacity Orchestrator (GCO)</h1>" in content, (
+            "README.md should have project title"
+        )
 
     def test_architecture_doc_exists(self):
         """Test that architecture documentation exists."""
@@ -1241,9 +1241,9 @@ class TestDependencyVersionConsistency:
                         f"!= pyproject.toml {pkg}=={pyproject_deps[pkg]}"
                     )
 
-        assert (
-            not mismatches
-        ), "Lambda requirements.txt versions don't match pyproject.toml:\n" + "\n".join(mismatches)
+        assert not mismatches, (
+            "Lambda requirements.txt versions don't match pyproject.toml:\n" + "\n".join(mismatches)
+        )
 
     def test_kubectl_version_matches_eks_version(self):
         """kubectl version in helm-installer Dockerfile should match EKS version in cdk.json."""
@@ -1457,18 +1457,18 @@ class TestNewSchedulerChartIntegration:
         charts = self._load_charts()
         for name in ("slinky-slurm-operator", "slinky-slurm"):
             assert charts[name].get("use_oci") is True, f"{name} should have use_oci: true"
-            assert charts[name]["repo_url"].startswith(
-                "oci://ghcr.io/"
-            ), f"{name} repo_url should start with oci://ghcr.io/"
+            assert charts[name]["repo_url"].startswith("oci://ghcr.io/"), (
+                f"{name} repo_url should start with oci://ghcr.io/"
+            )
 
     def test_slinky_operator_and_cluster_versions_match(self):
         """The Slurm operator and cluster chart versions should be the same release."""
         charts = self._load_charts()
         op_ver = charts["slinky-slurm-operator"]["version"]
         cl_ver = charts["slinky-slurm"]["version"]
-        assert (
-            op_ver == cl_ver
-        ), f"Slurm operator version ({op_ver}) and cluster version ({cl_ver}) should match"
+        assert op_ver == cl_ver, (
+            f"Slurm operator version ({op_ver}) and cluster version ({cl_ver}) should match"
+        )
 
     def test_kueue_installed_last(self):
         """Kueue must be the last chart because its webhook intercepts all Job/Deployment mutations."""
@@ -1663,9 +1663,9 @@ class TestHelmToggleBehavior:
         handler_path = PROJECT_ROOT / "lambda" / "helm-installer" / "handler.py"
         content = handler_path.read_text()
         assert "uninstall_chart" in content, "handler.py should contain uninstall_chart function"
-        assert (
-            "uninstalled (disabled)" in content
-        ), "handler.py should mark disabled charts as 'uninstalled (disabled)'"
+        assert "uninstalled (disabled)" in content, (
+            "handler.py should mark disabled charts as 'uninstalled (disabled)'"
+        )
 
     def test_disabled_charts_uninstalled_before_enabled_installed(self):
         """Disabled charts should be uninstalled before enabled charts are installed."""
@@ -1674,14 +1674,14 @@ class TestHelmToggleBehavior:
         # The uninstall pass should come before the install pass
         uninstall_pos = content.find("uninstall disabled charts")
         install_pos = content.find("install/upgrade enabled charts")
-        assert (
-            uninstall_pos < install_pos
-        ), "Disabled chart uninstall should happen before enabled chart install"
+        assert uninstall_pos < install_pos, (
+            "Disabled chart uninstall should happen before enabled chart install"
+        )
 
     def test_uninstall_chart_handles_not_found(self):
         """uninstall_chart should succeed gracefully when chart was never installed."""
         handler_path = PROJECT_ROOT / "lambda" / "helm-installer" / "handler.py"
         content = handler_path.read_text()
-        assert (
-            "not found" in content.lower()
-        ), "uninstall_chart should handle 'not found' errors gracefully"
+        assert "not found" in content.lower(), (
+            "uninstall_chart should handle 'not found' errors gracefully"
+        )

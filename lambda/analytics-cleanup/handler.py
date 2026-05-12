@@ -331,7 +331,7 @@ def _delete_user_profiles(region: str, domain_id: str) -> list[str]:
             )
             time.sleep(DRAIN_POLL_INTERVAL_SECONDS)
         else:
-            msg = f"Timed out waiting for user profiles to delete in " f"{domain_id}: {remaining}"
+            msg = f"Timed out waiting for user profiles to delete in {domain_id}: {remaining}"
             logger.error(msg)
             errors.append(msg)
     except ClientError as e:

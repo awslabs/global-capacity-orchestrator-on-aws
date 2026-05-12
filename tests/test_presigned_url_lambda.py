@@ -261,7 +261,7 @@ class TestPresignedUrlCreatesResources:
         efs_mock.describe_access_points.return_value = {"AccessPoints": []}
         efs_mock.create_access_point.return_value = {
             "AccessPointArn": (
-                "arn:aws:elasticfilesystem:us-east-2:123456789012:" "access-point/fsap-newabc"
+                "arn:aws:elasticfilesystem:us-east-2:123456789012:access-point/fsap-newabc"
             )
         }
 
@@ -461,7 +461,7 @@ class TestPresignedUrlResponseShapeProperty:
         }
         sagemaker_mock.create_presigned_domain_url.return_value = {
             "AuthorizedUrl": (
-                f"https://d-propcheck.studio.us-east-2.sagemaker.aws/" f"auth?user={username}"
+                f"https://d-propcheck.studio.us-east-2.sagemaker.aws/auth?user={username}"
             ),
         }
         efs_mock.describe_access_points.return_value = {

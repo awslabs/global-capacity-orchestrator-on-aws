@@ -207,8 +207,7 @@ def _build_all_stacks(app: cdk.App) -> None:
             config=config,
             env=cdk.Environment(region=api_gateway_region),
             description=(
-                "Optional ML and analytics environment "
-                "(SageMaker Studio, EMR Serverless, Cognito)"
+                "Optional ML and analytics environment (SageMaker Studio, EMR Serverless, Cognito)"
             ),
         )
         analytics_stack.add_dependency(global_stack)

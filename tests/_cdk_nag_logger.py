@@ -201,7 +201,7 @@ class CapturingCdkNagLogger:
                 self.findings,
                 key=lambda x: (x["nag_pack_name"], x["rule_id"], x["resource_path"]),
             ):
-                lines.append(f"  [{f['nag_pack_name']}] {f['rule_id']} " f"at {f['resource_path']}")
+                lines.append(f"  [{f['nag_pack_name']}] {f['rule_id']} at {f['resource_path']}")
                 # Truncate very long rule_info strings — the rule id
                 # is what you'll cross-reference with cdk-nag's docs
                 # and the path is what tells you where to fix it.
@@ -214,7 +214,7 @@ class CapturingCdkNagLogger:
                 lines.append("")
             lines.append(f"Captured {len(self.errors)} rule evaluation error(s):")
             for e in self.errors:
-                lines.append(f"  {e['rule_id']} at {e['resource_path']}: " f"{e['error_message']}")
+                lines.append(f"  {e['rule_id']} at {e['resource_path']}: {e['error_message']}")
         if not lines:
             return "(no findings)"
         return "\n".join(lines)

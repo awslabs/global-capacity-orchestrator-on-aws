@@ -1353,16 +1353,13 @@ def add_presigned_url_lambda_suppressions(
                 ),
                 applies_to=[
                     "Resource::*",
-                    (f"Resource::arn:aws:sagemaker:{region}:" "<AWS::AccountId>:domain/*"),
-                    (f"Resource::arn:aws:sagemaker:{region}:" "<AWS::AccountId>:user-profile/*/*"),
+                    (f"Resource::arn:aws:sagemaker:{region}:<AWS::AccountId>:domain/*"),
+                    (f"Resource::arn:aws:sagemaker:{region}:<AWS::AccountId>:user-profile/*/*"),
                     # Generic shapes — catch tokenized-region variants
                     # (``<AWS::Region>``) produced when CDK synthesizes
                     # the policy without pinning the stack's env region.
-                    ("Resource::arn:aws:sagemaker:<AWS::Region>:" "<AWS::AccountId>:domain/*"),
-                    (
-                        "Resource::arn:aws:sagemaker:<AWS::Region>:"
-                        "<AWS::AccountId>:user-profile/*/*"
-                    ),
+                    ("Resource::arn:aws:sagemaker:<AWS::Region>:<AWS::AccountId>:domain/*"),
+                    ("Resource::arn:aws:sagemaker:<AWS::Region>:<AWS::AccountId>:user-profile/*/*"),
                 ],
             ),
         ],

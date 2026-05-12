@@ -171,9 +171,9 @@ class TestEnhancedExampleResources:
 
         examples_dir = Path(__file__).parent.parent / "examples"
         for f in examples_dir.glob("*.yaml"):
-            assert (
-                f.stem in EXAMPLE_METADATA
-            ), f"Example {f.stem} missing from EXAMPLE_METADATA in mcp/resources/docs.py"
+            assert f.stem in EXAMPLE_METADATA, (
+                f"Example {f.stem} missing from EXAMPLE_METADATA in mcp/resources/docs.py"
+            )
 
 
 class TestDocsIndexNewGroups:

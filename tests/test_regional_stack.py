@@ -303,9 +303,7 @@ class TestMonitoringStackMethods:
         mock_api_gw_stack.api.rest_api_name = "test-api"
         mock_api_gw_stack.proxy_lambda.function_name = "test-proxy"
         mock_api_gw_stack.rotation_lambda.function_name = "test-rotation"
-        mock_api_gw_stack.secret.secret_name = (
-            "test-secret"  # nosec B105 - test fixture mock value, not a real secret
-        )
+        mock_api_gw_stack.secret.secret_name = "test-secret"  # nosec B105 - test fixture mock value, not a real secret
 
         mock_regional_stack = MagicMock()
         mock_regional_stack.deployment_region = "us-east-1"
@@ -561,7 +559,9 @@ class TestRegionalStackSynthesis:
         """Set up mock attributes for helm installer."""
         stack.helm_installer_lambda = MagicMock()
         stack.helm_installer_provider = MagicMock()
-        stack.helm_installer_provider.service_token = "arn:aws:lambda:us-east-1:123456789012:function:mock"  # nosec B106 - test fixture ARN with fake account ID, not a real credential
+        stack.helm_installer_provider.service_token = (
+            "arn:aws:lambda:us-east-1:123456789012:function:mock"  # nosec B106 - test fixture ARN with fake account ID, not a real credential
+        )
 
     def test_regional_stack_creates_vpc(self):
         """Test that RegionalStack creates a VPC."""
@@ -1291,7 +1291,9 @@ class TestRegionalStackFsxConfigurations:
         """Set up mock attributes for helm installer."""
         stack.helm_installer_lambda = MagicMock()
         stack.helm_installer_provider = MagicMock()
-        stack.helm_installer_provider.service_token = "arn:aws:lambda:us-east-1:123456789012:function:mock"  # nosec B106 - test fixture ARN with fake account ID, not a real credential
+        stack.helm_installer_provider.service_token = (
+            "arn:aws:lambda:us-east-1:123456789012:function:mock"  # nosec B106 - test fixture ARN with fake account ID, not a real credential
+        )
 
     def test_fsx_with_persistent_deployment_type(self):
         """Test FSx with PERSISTENT_1 deployment type includes throughput."""
@@ -1934,9 +1936,9 @@ class TestAuroraPgvector:
         for _lid, instance in instances.items():
             props = instance.get("Properties", {})
             interval = props.get("MonitoringInterval")
-            assert (
-                interval == 60
-            ), f"Writer instance MonitoringInterval should be 60, got {interval}"
+            assert interval == 60, (
+                f"Writer instance MonitoringInterval should be 60, got {interval}"
+            )
 
     def test_aurora_has_reader_instance(self):
         """Aurora cluster has both a writer and a reader instance for HA."""
@@ -2086,7 +2088,7 @@ class TestClusterSharedBucketRegionalIntegration:
             # They are "non-empty" in the structural sense: neither None
             # nor an empty string nor an empty dict.
             assert value not in (None, "", {}), (
-                f"ImageReplacements[{key!r}] must be non-empty at synth time; " f"got {value!r}"
+                f"ImageReplacements[{key!r}] must be non-empty at synth time; got {value!r}"
             )
 
     def test_iam_policy_grants_s3_rw_on_cluster_shared_bucket_when_disabled(self):
@@ -2265,7 +2267,7 @@ class TestClusterSharedBucketRegionalIntegration:
         # same in both synths, so a direct key-by-key dict comparison works.
         kubectl_logical_ids = sorted(lid for lid in resources_off if "KubectlApply" in lid)
         assert kubectl_logical_ids, (
-            "Expected at least one KubectlApply* CustomResource in the " "regional template."
+            "Expected at least one KubectlApply* CustomResource in the regional template."
         )
 
         for lid in kubectl_logical_ids:
@@ -2281,9 +2283,9 @@ class TestClusterSharedBucketRegionalIntegration:
         policy_logical_ids = sorted(
             lid for lid, res in resources_off.items() if res.get("Type") == "AWS::IAM::Policy"
         )
-        assert (
-            policy_logical_ids
-        ), "Expected at least one AWS::IAM::Policy in the regional template."
+        assert policy_logical_ids, (
+            "Expected at least one AWS::IAM::Policy in the regional template."
+        )
         for lid in policy_logical_ids:
             off_json = self._canonicalize_resource(resources_off[lid], off_prefix, on_prefix)
             on_json = self._canonicalize_resource(resources_on.get(lid, {}), off_prefix, on_prefix)

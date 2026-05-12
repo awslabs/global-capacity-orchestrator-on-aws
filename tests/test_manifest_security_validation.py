@@ -148,9 +148,9 @@ class TestCapabilitiesAdd:
         is_valid, error = manifest_processor.validate_manifest(manifest)
         assert is_valid is False, "capabilities.add was accepted but should be rejected"
         assert error is not None
-        assert (
-            "capabilities" in error.lower() or "capabilit" in error.lower()
-        ), f"Error should mention capabilities, got: {error}"
+        assert "capabilities" in error.lower() or "capabilit" in error.lower(), (
+            f"Error should mention capabilities, got: {error}"
+        )
 
 
 class TestRunAsUserZeroConfigurable:
@@ -262,9 +262,9 @@ class TestInitContainerUntrustedImage:
             },
         }
         is_valid, error = manifest_processor.validate_manifest(manifest)
-        assert (
-            is_valid is False
-        ), "initContainer with untrusted image was accepted but should be rejected"
+        assert is_valid is False, (
+            "initContainer with untrusted image was accepted but should be rejected"
+        )
         assert error is not None
 
 
@@ -296,9 +296,9 @@ class TestEphemeralContainerPrivileged:
             },
         }
         is_valid, error = manifest_processor.validate_manifest(manifest)
-        assert (
-            is_valid is False
-        ), "Privileged ephemeralContainer was accepted but should be rejected"
+        assert is_valid is False, (
+            "Privileged ephemeralContainer was accepted but should be rejected"
+        )
         assert error is not None
 
 
@@ -332,9 +332,9 @@ class TestInitContainerResourceLimits:
             },
         }
         is_valid, error = manifest_processor.validate_manifest(manifest)
-        assert (
-            is_valid is False
-        ), "initContainer exceeding GPU limit was accepted but should be rejected"
+        assert is_valid is False, (
+            "initContainer exceeding GPU limit was accepted but should be rejected"
+        )
         assert error is not None
 
 
@@ -362,9 +362,9 @@ class TestDisallowedKinds:
         is_valid, error = manifest_processor.validate_manifest(manifest)
         assert is_valid is False, f"kind '{kind}' was accepted but should be rejected"
         assert error is not None
-        assert (
-            "not allowed" in error.lower() or "allowed" in error.lower()
-        ), f"Error should mention 'allowed', got: {error}"
+        assert "not allowed" in error.lower() or "allowed" in error.lower(), (
+            f"Error should mention 'allowed', got: {error}"
+        )
 
 
 # ===========================================================================

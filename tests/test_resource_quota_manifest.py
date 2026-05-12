@@ -74,9 +74,9 @@ class TestManifestStructure:
         """Every placeholder we substitute in code must actually appear in the file."""
         raw = MANIFEST_PATH.read_text()
         for placeholder in PLACEHOLDERS:
-            assert (
-                "{{" + placeholder + "}}" in raw
-            ), f"Placeholder {placeholder} missing from manifest"
+            assert "{{" + placeholder + "}}" in raw, (
+                f"Placeholder {placeholder} missing from manifest"
+            )
 
     def test_manifest_has_exactly_two_documents(self):
         docs = _parse(DEFAULT_SUBSTITUTIONS)

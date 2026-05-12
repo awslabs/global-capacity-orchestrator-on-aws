@@ -734,9 +734,9 @@ class GCOApiGatewayGlobalStack(Stack):
           constructed at deploy time via ``Fn.sub`` because the REST API
           id is a deploy-time token.
         """
-        assert (
-            self.analytics_config is not None
-        ), "_wire_studio_routes called without an AnalyticsApiConfig attached."
+        assert self.analytics_config is not None, (
+            "_wire_studio_routes called without an AnalyticsApiConfig attached."
+        )
         analytics_config = self.analytics_config
 
         # Build the authorizer against the Cognito user pool that owns

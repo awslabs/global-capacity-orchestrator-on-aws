@@ -602,12 +602,8 @@ class TestRegionalApiClientIntegration:
             patch.object(client, "_session") as mock_session,
         ):
             mock_creds = MagicMock()
-            mock_creds.access_key = (
-                "test"  # nosec B105 - test fixture mock credential, not a real key
-            )
-            mock_creds.secret_key = (
-                "test"  # nosec B105 - test fixture mock credential, not a real key
-            )
+            mock_creds.access_key = "test"  # nosec B105 - test fixture mock credential, not a real key
+            mock_creds.secret_key = "test"  # nosec B105 - test fixture mock credential, not a real key
             mock_creds.token = None
             mock_session.get_credentials.return_value = mock_creds
 

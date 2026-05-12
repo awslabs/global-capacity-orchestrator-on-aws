@@ -111,6 +111,6 @@ class TestHealthCheckPathCoverage:
     def test_unauthenticated_paths_includes_standard_probes(self):
         """Standard Kubernetes probe paths must always be unauthenticated."""
         for path in ["/healthz", "/readyz"]:
-            assert (
-                path in UNAUTHENTICATED_PATHS
-            ), f"Standard probe path '{path}' missing from UNAUTHENTICATED_PATHS"
+            assert path in UNAUTHENTICATED_PATHS, (
+                f"Standard probe path '{path}' missing from UNAUTHENTICATED_PATHS"
+            )

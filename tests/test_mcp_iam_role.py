@@ -68,9 +68,9 @@ def _find_mcp_role(template: assertions.Template) -> tuple[str, dict]:
         description = resource.get("Properties", {}).get("Description", "")
         if "MCP server" in description:
             matches.append((logical_id, resource))
-    assert (
-        len(matches) == 1
-    ), f"Expected exactly one IAM role with 'MCP server' in description, found {len(matches)}"
+    assert len(matches) == 1, (
+        f"Expected exactly one IAM role with 'MCP server' in description, found {len(matches)}"
+    )
     return matches[0]
 
 
@@ -113,9 +113,9 @@ class TestMcpIamRole:
 
         _, role = _find_mcp_role(template)
         props = role["Properties"]
-        assert "MCP server" in props.get(
-            "Description", ""
-        ), f"Expected 'MCP server' in role description, got {props.get('Description')!r}"
+        assert "MCP server" in props.get("Description", ""), (
+            f"Expected 'MCP server' in role description, got {props.get('Description')!r}"
+        )
 
     def test_mcp_role_has_describe_cluster_scoped_to_cluster_arn(self):
         """eks:DescribeCluster is present and scoped to the cluster ARN (not '*')."""
@@ -132,9 +132,9 @@ class TestMcpIamRole:
             resources = stmt.get("Resource")
             if isinstance(resources, str):
                 resources = [resources]
-            assert resources != [
-                "*"
-            ], "eks:DescribeCluster must be scoped to the cluster ARN, not wildcard"
+            assert resources != ["*"], (
+                "eks:DescribeCluster must be scoped to the cluster ARN, not wildcard"
+            )
             # Resource should be a Fn::GetAtt or a Ref to the cluster, not a
             # bare wildcard string.
             for r in resources:
@@ -259,16 +259,16 @@ class TestMcpIamRole:
             actions = _actions_as_set(stmt)
 
             for action in actions:
-                assert (
-                    action not in forbidden_exact
-                ), f"MCP role must not grant forbidden action {action!r}; statement: {stmt!r}"
-                assert not action.startswith(
-                    "iam:"
-                ), f"MCP role must not grant any iam:* action, got {action!r}"
+                assert action not in forbidden_exact, (
+                    f"MCP role must not grant forbidden action {action!r}; statement: {stmt!r}"
+                )
+                assert not action.startswith("iam:"), (
+                    f"MCP role must not grant any iam:* action, got {action!r}"
+                )
                 for prefix in forbidden_iam_prefixes:
-                    assert not action.startswith(
-                        prefix
-                    ), f"MCP role must not grant {prefix}*, got {action!r}"
+                    assert not action.startswith(prefix), (
+                        f"MCP role must not grant {prefix}*, got {action!r}"
+                    )
 
     def test_mcp_role_cfn_output_present(self):
         """A CfnOutput named McpServerRoleArn must be exported."""
@@ -277,9 +277,9 @@ class TestMcpIamRole:
         outputs = template.find_outputs("McpServerRoleArn")
         assert outputs, "Expected a CfnOutput named 'McpServerRoleArn'"
         # There should be exactly one such output.
-        assert (
-            len(outputs) == 1
-        ), f"Expected exactly one McpServerRoleArn output, found {len(outputs)}"
+        assert len(outputs) == 1, (
+            f"Expected exactly one McpServerRoleArn output, found {len(outputs)}"
+        )
 
     def test_mcp_role_disabled_via_context(self):
         """Setting mcp_server.enabled=false skips role creation entirely."""
@@ -292,9 +292,9 @@ class TestMcpIamRole:
             for r in roles.values()
             if "MCP server" in r.get("Properties", {}).get("Description", "")
         ]
-        assert (
-            mcp_roles == []
-        ), f"MCP role should not be created when mcp_server.enabled=false; found {len(mcp_roles)}"
+        assert mcp_roles == [], (
+            f"MCP role should not be created when mcp_server.enabled=false; found {len(mcp_roles)}"
+        )
 
         # The CfnOutput should also be absent.
         outputs = template.find_outputs("McpServerRoleArn")

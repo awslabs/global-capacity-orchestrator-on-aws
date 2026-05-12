@@ -432,15 +432,15 @@ class TestMcpAuditLogSanitizationProperty:
         result = run_mcp._sanitize_arguments(args)
 
         # The sanitized value must be "[REDACTED]"
-        assert (
-            result[sensitive_key] == "[REDACTED]"
-        ), f"Key '{sensitive_key}' with value '{sensitive_value}' was not redacted"
+        assert result[sensitive_key] == "[REDACTED]", (
+            f"Key '{sensitive_key}' with value '{sensitive_value}' was not redacted"
+        )
         # Verify the original value doesn't appear as any dict value in the result
         for v in result.values():
             if isinstance(v, str) and v != "[REDACTED]":
-                assert (
-                    sensitive_value != v
-                ), f"Original sensitive value leaked as a dict value for key '{sensitive_key}'"
+                assert sensitive_value != v, (
+                    f"Original sensitive value leaked as a dict value for key '{sensitive_key}'"
+                )
 
     @settings(max_examples=100)
     @given(
@@ -457,20 +457,20 @@ class TestMcpAuditLogSanitizationProperty:
 
         sanitized_val = result[normal_key]
         # Must end with "[truncated]"
-        assert isinstance(
-            sanitized_val, str
-        ), f"Expected string result for truncated value, got {type(sanitized_val)}"
-        assert sanitized_val.endswith(
-            "[truncated]"
-        ), f"Large value for key '{normal_key}' (len={len(large_value)}) was not truncated"
+        assert isinstance(sanitized_val, str), (
+            f"Expected string result for truncated value, got {type(sanitized_val)}"
+        )
+        assert sanitized_val.endswith("[truncated]"), (
+            f"Large value for key '{normal_key}' (len={len(large_value)}) was not truncated"
+        )
         # Truncated output should be first 100 chars + "[truncated]"
-        assert len(sanitized_val) == 100 + len(
-            "[truncated]"
-        ), f"Truncated value has unexpected length: {len(sanitized_val)}"
+        assert len(sanitized_val) == 100 + len("[truncated]"), (
+            f"Truncated value has unexpected length: {len(sanitized_val)}"
+        )
         # The full original value must not appear in the output
-        assert (
-            large_value not in sanitized_val
-        ), "Full original large value leaked in sanitized output"
+        assert large_value not in sanitized_val, (
+            "Full original large value leaked in sanitized output"
+        )
 
     @settings(max_examples=100)
     @given(
@@ -485,11 +485,11 @@ class TestMcpAuditLogSanitizationProperty:
         result = run_mcp._sanitize_arguments(args)
 
         # Must be redacted, not truncated
-        assert (
-            result[sensitive_key] == "[REDACTED]"
-        ), f"Sensitive key '{sensitive_key}' with large value was not redacted"
+        assert result[sensitive_key] == "[REDACTED]", (
+            f"Sensitive key '{sensitive_key}' with large value was not redacted"
+        )
         # Original value must not appear anywhere
         sanitized_str = json.dumps(result)
-        assert (
-            large_sensitive_value not in sanitized_str
-        ), "Original large sensitive value leaked in sanitized output"
+        assert large_sensitive_value not in sanitized_str, (
+            "Original large sensitive value leaked in sanitized output"
+        )

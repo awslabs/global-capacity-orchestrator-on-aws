@@ -302,10 +302,7 @@ class TestAnalyticsKmsKey:
         )
         assert any(
             s.startswith("logs.") and s.endswith(".amazonaws.com") for s in referenced_services
-        ), (
-            f"expected a logs.<region>.amazonaws.com principal, "
-            f"got {sorted(referenced_services)!r}"
-        )
+        ), f"expected a logs.<region>.amazonaws.com principal, got {sorted(referenced_services)!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -405,8 +402,7 @@ class TestAnalyticsVpc:
 
         # Exactly nine — no extras, no accidental duplicates.
         assert len(interface_endpoints) == 9, (
-            f"expected 9 interface endpoints, got {len(interface_endpoints)} "
-            f"({sorted(suffixes)!r})"
+            f"expected 9 interface endpoints, got {len(interface_endpoints)} ({sorted(suffixes)!r})"
         )
 
 
@@ -471,9 +467,9 @@ class TestStudioOnlyBucket:
         template = _synth_analytics()
         _, bucket = self._find_studio_only_bucket(template)
         name = bucket["Properties"].get("BucketName")
-        assert isinstance(name, str) and name.startswith(
-            "gco-analytics-studio-"
-        ), f"expected BucketName to start with gco-analytics-studio-, got {name!r}"
+        assert isinstance(name, str) and name.startswith("gco-analytics-studio-"), (
+            f"expected BucketName to start with gco-analytics-studio-, got {name!r}"
+        )
 
     def test_studio_only_bucket_is_kms_encrypted_with_analytics_key(self) -> None:
         """``BucketEncryption`` references ``Analytics_KMS_Key`` via
@@ -489,15 +485,15 @@ class TestStudioOnlyBucket:
         cfgs = encryption["ServerSideEncryptionConfiguration"]
         assert len(cfgs) == 1
         sse = cfgs[0]["ServerSideEncryptionByDefault"]
-        assert (
-            sse.get("SSEAlgorithm") == "aws:kms"
-        ), f"Studio_Only_Bucket should use SSE-KMS, got {sse!r}"
+        assert sse.get("SSEAlgorithm") == "aws:kms", (
+            f"Studio_Only_Bucket should use SSE-KMS, got {sse!r}"
+        )
         key_id = sse.get("KMSMasterKeyID")
         assert isinstance(key_id, dict) and "Fn::GetAtt" in key_id
         get_att = key_id["Fn::GetAtt"]
-        assert (
-            get_att[0] == kms_lid and get_att[1] == "Arn"
-        ), f"KMSMasterKeyID should GetAtt the analytics KMS key ARN, got {get_att!r}"
+        assert get_att[0] == kms_lid and get_att[1] == "Arn", (
+            f"KMSMasterKeyID should GetAtt the analytics KMS key ARN, got {get_att!r}"
+        )
 
     def test_both_buckets_block_all_public_access(self) -> None:
         """Studio_Only_Bucket and access-logs bucket both have all four
@@ -523,12 +519,12 @@ class TestStudioOnlyBucket:
         template = _synth_analytics()
         _, bucket = self._find_studio_only_bucket(template)
         versioning = bucket["Properties"].get("VersioningConfiguration")
-        assert versioning == {
-            "Status": "Enabled"
-        }, f"expected VersioningConfiguration.Status=Enabled, got {versioning!r}"
-        assert (
-            bucket.get("DeletionPolicy") == "Delete"
-        ), f"expected DeletionPolicy=Delete, got {bucket.get('DeletionPolicy')!r}"
+        assert versioning == {"Status": "Enabled"}, (
+            f"expected VersioningConfiguration.Status=Enabled, got {versioning!r}"
+        )
+        assert bucket.get("DeletionPolicy") == "Delete", (
+            f"expected DeletionPolicy=Delete, got {bucket.get('DeletionPolicy')!r}"
+        )
         assert bucket.get("UpdateReplacePolicy") == "Delete"
 
     def test_studio_only_bucket_policy_denies_insecure_transport(self) -> None:
@@ -549,7 +545,7 @@ class TestStudioOnlyBucket:
             if res["Properties"].get("Bucket", {}).get("Ref") == bucket_lid
         ]
         assert len(matches) == 1, (
-            f"expected exactly one BucketPolicy for Studio_Only_Bucket, " f"got {len(matches)}"
+            f"expected exactly one BucketPolicy for Studio_Only_Bucket, got {len(matches)}"
         )
         statements = matches[0]["Properties"]["PolicyDocument"]["Statement"]
         deny_insecure = [
@@ -585,9 +581,9 @@ class TestStudioEfs:
         assert len(fses) == 1
         fs = next(iter(fses.values()))
 
-        assert (
-            fs["Properties"].get("Encrypted") is True
-        ), f"expected Encrypted=true, got {fs['Properties'].get('Encrypted')!r}"
+        assert fs["Properties"].get("Encrypted") is True, (
+            f"expected Encrypted=true, got {fs['Properties'].get('Encrypted')!r}"
+        )
 
         keys = template.find_resources("AWS::KMS::Key")
         assert len(keys) == 1
@@ -599,9 +595,9 @@ class TestStudioEfs:
             f"got {kms_key_id!r}"
         )
         get_att = kms_key_id["Fn::GetAtt"]
-        assert (
-            get_att[0] == kms_lid and get_att[1] == "Arn"
-        ), f"expected KmsKeyId to GetAtt analytics key ARN, got {get_att!r}"
+        assert get_att[0] == kms_lid and get_att[1] == "Arn", (
+            f"expected KmsKeyId to GetAtt analytics key ARN, got {get_att!r}"
+        )
 
     def test_efs_deletion_policy_is_delete_by_default(self) -> None:
         """Default ``efs_removal="destroy"`` yields
@@ -610,9 +606,9 @@ class TestStudioEfs:
         fses = template.find_resources("AWS::EFS::FileSystem")
         assert len(fses) == 1
         fs = next(iter(fses.values()))
-        assert (
-            fs.get("DeletionPolicy") == "Delete"
-        ), f"expected DeletionPolicy=Delete, got {fs.get('DeletionPolicy')!r}"
+        assert fs.get("DeletionPolicy") == "Delete", (
+            f"expected DeletionPolicy=Delete, got {fs.get('DeletionPolicy')!r}"
+        )
         assert fs.get("UpdateReplacePolicy") == "Delete"
 
     def test_efs_security_group_only_allows_nfs_from_vpc_cidr(self) -> None:
@@ -628,15 +624,15 @@ class TestStudioEfs:
             for lid, res in sgs.items()
             if "Studio_EFS" in str(res["Properties"].get("GroupDescription", ""))
         ]
-        assert (
-            len(matches) == 1
-        ), f"expected exactly one Studio_EFS security group, got {len(matches)}"
+        assert len(matches) == 1, (
+            f"expected exactly one Studio_EFS security group, got {len(matches)}"
+        )
         _, sg = matches[0]
 
         ingress = sg["Properties"].get("SecurityGroupIngress") or []
-        assert (
-            len(ingress) == 1
-        ), f"expected exactly one ingress rule on Studio_EFS SG, got {len(ingress)}"
+        assert len(ingress) == 1, (
+            f"expected exactly one ingress rule on Studio_EFS SG, got {len(ingress)}"
+        )
         rule = ingress[0]
         assert rule.get("IpProtocol") == "tcp", f"expected tcp, got {rule!r}"
         assert rule.get("FromPort") == 2049, f"expected FromPort=2049, got {rule!r}"
@@ -645,15 +641,15 @@ class TestStudioEfs:
         # CidrIp resolves to the VPC's CidrBlock via Fn::GetAtt.
         cidr = rule.get("CidrIp")
         assert isinstance(cidr, dict) and "Fn::GetAtt" in cidr, (
-            f"expected CidrIp to reference the VPC CidrBlock via Fn::GetAtt, " f"got {cidr!r}"
+            f"expected CidrIp to reference the VPC CidrBlock via Fn::GetAtt, got {cidr!r}"
         )
         vpcs = template.find_resources("AWS::EC2::VPC")
         assert len(vpcs) == 1
         vpc_lid = next(iter(vpcs))
         get_att = cidr["Fn::GetAtt"]
-        assert (
-            get_att[0] == vpc_lid and get_att[1] == "CidrBlock"
-        ), f"expected ingress CidrIp to GetAtt <VPC>.CidrBlock, got {get_att!r}"
+        assert get_att[0] == vpc_lid and get_att[1] == "CidrBlock", (
+            f"expected ingress CidrIp to GetAtt <VPC>.CidrBlock, got {get_att!r}"
+        )
 
 
 class TestStudioEfsRemovalRetain:
@@ -671,9 +667,9 @@ class TestStudioEfsRemovalRetain:
         fses = template.find_resources("AWS::EFS::FileSystem")
         assert len(fses) == 1
         fs = next(iter(fses.values()))
-        assert (
-            fs.get("DeletionPolicy") == "Retain"
-        ), f"expected DeletionPolicy=Retain, got {fs.get('DeletionPolicy')!r}"
+        assert fs.get("DeletionPolicy") == "Retain", (
+            f"expected DeletionPolicy=Retain, got {fs.get('DeletionPolicy')!r}"
+        )
         assert fs.get("UpdateReplacePolicy") == "Retain"
 
 
@@ -699,9 +695,9 @@ class TestSageMakerExecutionRole:
             if isinstance(res["Properties"].get("RoleName"), str)
             and res["Properties"]["RoleName"].startswith("AmazonSageMaker")
         ]
-        assert (
-            len(matches) == 1
-        ), f"expected exactly one AmazonSageMaker*-named role, got {len(matches)}"
+        assert len(matches) == 1, (
+            f"expected exactly one AmazonSageMaker*-named role, got {len(matches)}"
+        )
         return matches[0]
 
     def _collect_role_statements(
@@ -731,9 +727,9 @@ class TestSageMakerExecutionRole:
         template = _synth_analytics()
         _, role = self._find_sagemaker_role(template)
         name = role["Properties"]["RoleName"]
-        assert isinstance(name, str) and name.startswith(
-            "AmazonSageMaker"
-        ), f"expected RoleName to start with AmazonSageMaker, got {name!r}"
+        assert isinstance(name, str) and name.startswith("AmazonSageMaker"), (
+            f"expected RoleName to start with AmazonSageMaker, got {name!r}"
+        )
 
     def test_role_has_rw_grant_on_cluster_shared_bucket_arn_token(self) -> None:
         """Inline policy grants ``s3:PutObject|GetObject|...`` on a
@@ -1029,9 +1025,9 @@ class TestCognitoUserPool:
         assert len(pools) == 1
         pool = next(iter(pools.values()))
         password_policy = (pool["Properties"].get("Policies") or {}).get("PasswordPolicy")
-        assert isinstance(
-            password_policy, dict
-        ), f"expected Policies.PasswordPolicy on the user pool, got {password_policy!r}"
+        assert isinstance(password_policy, dict), (
+            f"expected Policies.PasswordPolicy on the user pool, got {password_policy!r}"
+        )
         assert password_policy.get("MinimumLength") == 12
         assert password_policy.get("RequireNumbers") is True
         assert password_policy.get("RequireSymbols") is True
@@ -1044,9 +1040,9 @@ class TestCognitoUserPool:
         pools = template.find_resources("AWS::Cognito::UserPool")
         assert len(pools) == 1
         pool = next(iter(pools.values()))
-        assert (
-            pool.get("DeletionPolicy") == "Delete"
-        ), f"expected DeletionPolicy=Delete, got {pool.get('DeletionPolicy')!r}"
+        assert pool.get("DeletionPolicy") == "Delete", (
+            f"expected DeletionPolicy=Delete, got {pool.get('DeletionPolicy')!r}"
+        )
         assert pool.get("UpdateReplacePolicy") == "Delete"
 
 
@@ -1064,9 +1060,9 @@ class TestCognitoRemovalRetain:
         pools = template.find_resources("AWS::Cognito::UserPool")
         assert len(pools) == 1
         pool = next(iter(pools.values()))
-        assert (
-            pool.get("DeletionPolicy") == "Retain"
-        ), f"expected DeletionPolicy=Retain, got {pool.get('DeletionPolicy')!r}"
+        assert pool.get("DeletionPolicy") == "Retain", (
+            f"expected DeletionPolicy=Retain, got {pool.get('DeletionPolicy')!r}"
+        )
         assert pool.get("UpdateReplacePolicy") == "Retain"
 
 
@@ -1111,9 +1107,9 @@ class TestEmrServerlessApp:
 
         network = app["Properties"].get("NetworkConfiguration") or {}
         subnet_refs = network.get("SubnetIds") or []
-        assert (
-            subnet_refs
-        ), f"expected NetworkConfiguration.SubnetIds on the EMR app, got {network!r}"
+        assert subnet_refs, (
+            f"expected NetworkConfiguration.SubnetIds on the EMR app, got {network!r}"
+        )
 
         # Collect every subnet Ref and verify it resolves to one of the
         # private subnets (Private or Isolated).
@@ -1172,7 +1168,7 @@ class TestCanvasDisabled:
                         str(piece) for piece in entry["Fn::Join"][1] if isinstance(piece, str)
                     )
                     assert "AmazonSageMakerCanvasFullAccess" not in flat, (
-                        "Canvas managed policy must not be attached when " "canvas.enabled=false."
+                        "Canvas managed policy must not be attached when canvas.enabled=false."
                     )
                 elif isinstance(entry, str):
                     assert "AmazonSageMakerCanvasFullAccess" not in entry

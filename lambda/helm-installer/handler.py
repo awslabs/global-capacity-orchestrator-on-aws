@@ -209,15 +209,9 @@ def run_helm(
     helm_env = os.environ.copy()
     helm_env["KUBECONFIG"] = kubeconfig
     # Lambda has read-only filesystem except /tmp
-    helm_env["HELM_CACHE_HOME"] = (
-        "/tmp/.helm/cache"  # nosec B108 - Lambda runtime requires /tmp for writable storage
-    )
-    helm_env["HELM_CONFIG_HOME"] = (
-        "/tmp/.helm/config"  # nosec B108 - Lambda runtime requires /tmp for writable storage
-    )
-    helm_env["HELM_DATA_HOME"] = (
-        "/tmp/.helm/data"  # nosec B108 - Lambda runtime requires /tmp for writable storage
-    )
+    helm_env["HELM_CACHE_HOME"] = "/tmp/.helm/cache"  # nosec B108 - Lambda runtime requires /tmp for writable storage
+    helm_env["HELM_CONFIG_HOME"] = "/tmp/.helm/config"  # nosec B108 - Lambda runtime requires /tmp for writable storage
+    helm_env["HELM_DATA_HOME"] = "/tmp/.helm/data"  # nosec B108 - Lambda runtime requires /tmp for writable storage
     if env:
         helm_env.update(env)
 
@@ -273,7 +267,7 @@ def _clear_stuck_release(chart_name: str, namespace: str, kubeconfig: str) -> bo
 
     try:
         status = json.loads(status_out).get("info", {}).get("status", "")
-    except (json.JSONDecodeError, AttributeError):
+    except json.JSONDecodeError, AttributeError:
         return False
 
     if status not in ("pending-install", "pending-upgrade", "pending-rollback"):

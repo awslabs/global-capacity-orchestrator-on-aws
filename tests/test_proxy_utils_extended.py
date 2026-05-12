@@ -303,9 +303,7 @@ class TestGetSecretTokenCaching:
         mock_sm.get_secret_value.reset_mock()
 
         token = pu.get_secret_token()
-        assert (
-            token == "test-token"
-        )  # nosec B105 - test assertion against fixture value, not a real credential
+        assert token == "test-token"  # nosec B105 - test assertion against fixture value, not a real credential
         mock_sm.get_secret_value.assert_not_called()
 
     def test_refreshes_after_ttl(self, proxy_module):
@@ -318,9 +316,7 @@ class TestGetSecretTokenCaching:
         mock_sm.get_secret_value.return_value = {"SecretString": json.dumps({"token": "new-token"})}
 
         token = pu.get_secret_token()
-        assert (
-            token == "new-token"
-        )  # nosec B105 - test assertion against fixture value, not a real credential
+        assert token == "new-token"  # nosec B105 - test assertion against fixture value, not a real credential
 
     def test_stale_cache_on_sm_failure(self, proxy_module):
         """SM failure with existing cache should return stale token."""
