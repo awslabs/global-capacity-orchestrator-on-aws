@@ -1507,7 +1507,7 @@ class TestNewSchedulerChartIntegration:
     # NOTE: test_cdk_json_helm_slurm_and_yunikorn_disabled was removed because
     # it asserted specific config values from the live cdk.json, which breaks
     # when features are enabled for testing. The CDK config matrix test
-    # (scripts/test_cdk_synthesis.py) already validates all config combinations.
+    # (tests/test_cdk_synthesis_matrix.py) already validates all config combinations.
 
 
 class TestGetEnabledHelmCharts:

@@ -439,7 +439,7 @@ pytest tests/ --cov=gco --cov=cli --cov-report=html --cov-fail-under=90 \
 pytest tests/test_nag_compliance.py -n auto
 
 # Run CDK config matrix (matches unit:cdk:config-matrix)
-python scripts/test_cdk_synthesis.py
+pytest tests/test_cdk_synthesis_matrix.py -n auto
 
 # Regenerate the lockfile (after dependency changes — use the Docker workflow
 # documented in Dependency Management above; pip-compile on the host produces

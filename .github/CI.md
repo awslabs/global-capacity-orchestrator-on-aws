@@ -326,7 +326,7 @@ pytest tests/test_nag_compliance.py -n auto
 
 # CDK synth / config matrix (matches unit:cdk:synth and unit:cdk:config-matrix)
 cdk synth --quiet
-python scripts/test_cdk_synthesis.py
+pytest tests/test_cdk_synthesis_matrix.py -n auto
 
 # Security (matches security:bandit:sast)
 bandit -r gco/ cli/ -c pyproject.toml --severity-level medium

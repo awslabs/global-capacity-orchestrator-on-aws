@@ -8,7 +8,7 @@
 #
 # Jobs (alphabetical by display name):
 #   - unit:bats:shell              — BATS shell tests
-#   - unit:cdk:config-matrix       — scripts/test_cdk_synthesis.py (config combos)
+#   - unit:cdk:config-matrix       — tests/test_cdk_synthesis_matrix.py (in-process, -n auto)
 #   - unit:cdk:nag-compliance      — cdk-nag compliance across full config matrix
 #   - unit:cdk:synth               — cdk synth of the default config
 #   - unit:cli:smoke               — gco --help and all subcommand help pages
@@ -91,15 +91,25 @@ jobs:
           pip install -e ".[dev,mcp]"
       - uses: ./.github/actions/build-lambda-package
       - name: Run pytest with coverage
+        # -n auto uses pytest-xdist to spread tests across all available CPU
+        # cores (2 on standard ubuntu-latest runners). The suite is xdist-safe:
+        # every test uses tmp_path / monkeypatch or a per-test _free_port()
+        # helper, and the one session-autouse fixture (ensure_lambda_build_dirs
+        # in tests/conftest.py) is idempotent. Coverage is collected per-worker
+        # and pytest-cov combines the results before the report threshold is
+        # checked. --maxfail=1 matches the previous -x behavior (stop after the
+        # first failure); the -x flag itself isn't compatible with xdist.
         run: |
           pytest tests/ -v \
             --ignore=tests/test_integration.py \
             --ignore=tests/test_nag_compliance.py \
+            --ignore=tests/test_cdk_synthesis_matrix.py \
             --cov=gco --cov=cli \
             --cov-report=xml --cov-report=html --cov-report=json \
             --cov-report=term-missing \
             --cov-fail-under=90 \
-            --junitxml=report.xml -x
+            --junitxml=report.xml \
+            -n auto --maxfail=1
       - name: Upload coverage artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -269,13 +279,18 @@ jobs:
           python-version: "3.14"
           cache: "pip"
           cache-dependency-path: "requirements-lock.txt"
-      - name: Install CDK + dependencies
-        run: |
-          pip install -e ".[cdk]"
-          npm install -g aws-cdk@2
+      - name: Install CDK + test dependencies
+        run: pip install -e ".[cdk,test]"
       - uses: ./.github/actions/build-lambda-package
       - name: Run config matrix
-        run: python3 scripts/test_cdk_synthesis.py --verbose
+        # tests/test_cdk_synthesis_matrix.py parametrizes across every
+        # entry in tests/_cdk_config_matrix.CONFIGS and runs ``app.synth()``
+        # in-process per config — no ``cdk synth`` subprocess, no cdk.json
+        # mutation. pytest-xdist (``-n auto``) parallelizes across worker
+        # processes for a roughly N×-core speedup. The Node.js/CDK CLI is
+        # no longer required, so the ``npm install -g aws-cdk`` step was
+        # dropped alongside the subprocess loop.
+        run: pytest tests/test_cdk_synthesis_matrix.py -n auto -v
 
   unit-cdk-nag-compliance:
     name: "unit:cdk:nag-compliance"
@@ -290,8 +305,7 @@ jobs:
     # ``app.py`` uses for real deploys.
     #
     # Runs in its own job with pytest-xdist parallelism (``-n auto``
-    # picks the core count via psutil). On an 8-core runner all 24
-    # configs complete in ~10 minutes. The tests are parallel-safe by
+    # picks the core count via psutil). The tests are parallel-safe by
     # construction — each config builds a fresh ``cdk.App`` with no
     # shared module state.
     #

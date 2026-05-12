@@ -26,11 +26,12 @@ Scope
 -----
 Parameterized across the IAM-relevant subset of the cdk.json
 configuration matrix (``tests/_cdk_config_matrix.NAG_CONFIGS``): the
-5 configs that produce distinct IAM policy surfaces (default,
-multi-region, FSx-enabled, all-features-enabled, three-regions). The
-full 24-config matrix runs via ``scripts/test_cdk_synthesis.py`` for
-synthesis correctness; this test focuses on the configs that actually
-change IAM roles and policies, which is where cdk-nag findings live.
+configs that produce distinct IAM policy surfaces (default,
+multi-region, FSx-enabled, all-features-enabled, three-regions, plus
+the analytics-environment fixtures). The full CONFIGS matrix runs
+via ``tests/test_cdk_synthesis_matrix.py`` for synthesis correctness;
+this test focuses on the configs that actually change IAM roles and
+policies, which is where cdk-nag findings live.
 """
 
 from __future__ import annotations
@@ -251,7 +252,7 @@ class TestCdkNagCompliance:
     """
 
     # The IAM-relevant config subset is shared with
-    # ``scripts/test_cdk_synthesis.py`` via
+    # ``tests/test_cdk_synthesis_matrix.py`` via
     # ``tests/_cdk_config_matrix.NAG_CONFIGS``. Only configs that
     # produce distinct IAM policy surfaces are included — the rest
     # (helm toggles, thresholds, etc.) don't change IAM and would

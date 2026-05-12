@@ -20,7 +20,7 @@ This suite covers:
 
 These tests synthesize the stack in isolation rather than running the full
 ``app.py`` pipeline. The full-app synthesis path is already covered by
-``tests/test_nag_compliance.py`` and ``scripts/test_cdk_synthesis.py``;
+``tests/test_nag_compliance.py`` and ``tests/test_cdk_synthesis_matrix.py``;
 here we want a targeted test that runs in pytest without Docker and without
 the heavy regional stack's helm-installer asset.
 """

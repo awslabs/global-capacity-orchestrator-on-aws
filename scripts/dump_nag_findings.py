@@ -19,8 +19,8 @@ entry. This script:
    attaches a ``CapturingCdkNagLogger`` to every rule pack, calls
    ``app.synth()``, and collects the raw findings.
 3. Groups them by ``(rule_id, resource_path, finding_id)`` so a
-   wildcard that appears in 24 configs shows up once with the list
-   of config names rather than 24 repeated entries.
+   wildcard that appears in N configs shows up once with the list
+   of config names rather than N repeated entries.
 4. Exits 0 if zero findings, 1 otherwise — which matches the pytest
    gate and means you can pipe this script's output to
    ``pre-commit`` or use it as a quick smoke before pushing.
@@ -34,9 +34,10 @@ Relationship to other tooling
 -----------------------------
 * ``tests/test_nag_compliance.py`` — the PR gate. Parameterizes over
   the same ``CONFIGS`` and fails if any unsuppressed finding exists.
-* ``scripts/test_cdk_synthesis.py`` — runs ``cdk synth --quiet`` as a
-  subprocess for each config. Catches toolchain and node-side
-  breakage; does NOT catch cdk-nag findings because synth exits 0
+* ``tests/test_cdk_synthesis_matrix.py`` — runs ``app.synth()``
+  in-process for each config with pytest-xdist parallelism. Catches
+  synth-time breakage; does NOT catch cdk-nag findings because synth
+  exits 0
   even when unsuppressed findings exist (that was the us-east-1
   deploy bug).
 * ``tests/_cdk_nag_logger.py`` — the ``INagLogger`` implementation

@@ -1,12 +1,13 @@
 """Shared ``cdk.json`` configuration matrix.
 
 Single source of truth for ``tests/test_nag_compliance.py`` and
-``scripts/test_cdk_synthesis.py``. Both need to iterate over the
-same set of cdk.json overlays to catch the same configuration-specific
-regressions — divergence between the two lists is how we ended up
-with an ``AwsSolutions-IAM5`` error on a ``gco-us-east-1`` deploy
-that neither tool had ever exercised. Keep this list as the canonical
-definition; both sides just import ``CONFIGS`` from here.
+``tests/test_cdk_synthesis_matrix.py``. Both need to iterate over
+the same set of cdk.json overlays to catch the same
+configuration-specific regressions — divergence between the two lists
+is how we ended up with an ``AwsSolutions-IAM5`` error on a
+``gco-us-east-1`` deploy that neither tool had ever exercised. Keep
+this list as the canonical definition; both sides just import
+``CONFIGS`` from here.
 
 Each entry is a ``(name, overrides)`` tuple where ``overrides`` is a
 shallow dict merged into the baseline ``cdk.json`` context before the
@@ -396,14 +397,15 @@ CONFIGS.extend(
 # ---------------------------------------------------------------------------
 # NAG_CONFIGS — subset of CONFIGS used by tests/test_nag_compliance.py
 # ---------------------------------------------------------------------------
-# The full 24-entry CONFIGS list is used by scripts/test_cdk_synthesis.py
-# (subprocess-based synth validation). For the in-process cdk-nag compliance
-# test, we only need the configs that produce *distinct IAM policy surfaces*.
+# The full CONFIGS list is used by tests/test_cdk_synthesis_matrix.py
+# (in-process synth validation, run in parallel via pytest-xdist). For the
+# in-process cdk-nag compliance test, we only need the configs that produce
+# *distinct IAM policy surfaces*.
 # Most configs (valkey-disabled, thresholds-aggressive, helm-minimal, etc.)
 # change Helm charts, resource quotas, or threshold values that don't touch
 # IAM at all — running cdk-nag on them is pure overhead.
 #
-# The 5 configs below cover every IAM code path:
+# The configs below cover every IAM code path:
 #   1. default-regions     — baseline single-region, all standard roles
 #   2. multi-region        — cross-region SSM/DynamoDB roles, 2 regional stacks
 #   3. fsx-enabled         — FSx CSI IRSA role + PassRole on shared CR role
@@ -417,9 +419,6 @@ CONFIGS.extend(
 # ``config.get_analytics_enabled()`` returns ``True``, so the test
 # harness ``_build_all_stacks`` has to instantiate the analytics stack
 # for them.
-#
-# On a 2-vCPU CI runner with 2 xdist workers this runs in ~5 minutes
-# instead of ~30 minutes for the full matrix.
 
 _NAG_CONFIG_NAMES = {
     "default-regions",
@@ -433,9 +432,9 @@ _NAG_CONFIG_NAMES = {
     # sub-toggles in a single synth — it subsumes the coverage that
     # dedicated ``analytics-enabled-hyperpod`` and
     # ``analytics-enabled-canvas`` entries would give us individually.
-    # Keeping only the combined variant in the nag matrix saves two
-    # full-app synths (~2 min apiece on CI) without losing IAM surface
-    # coverage, because both sub-toggles layer on top of the baseline
+    # Keeping only the combined variant in the nag matrix avoids two
+    # redundant full-app synths without losing IAM surface coverage,
+    # because both sub-toggles layer on top of the baseline
     # ``analytics-enabled`` IAM surface independently.
     "analytics-enabled-hyperpod-canvas",
 }

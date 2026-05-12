@@ -166,13 +166,13 @@ and inverse-derivation logic.
 
 The cdk.json configuration matrix — the set of overlays users can pick from (multi-region, FSx on/off, all feature toggles, resource threshold values, helm chart enable/disable, etc.) — lives in `tests/_cdk_config_matrix.CONFIGS` and is the single source of truth shared between two test surfaces:
 
-1. **`scripts/test_cdk_synthesis.py`** runs `cdk synth --quiet` as a subprocess for each of the 24 configs. Catches node/CLI toolchain breakage, hardcoded regions, missing conditional guards, and broken feature-flag interactions. Run locally or in CI:
+1. **`tests/test_cdk_synthesis_matrix.py`** builds the full CDK app in-process against every entry in `CONFIGS` and runs `app.synth()`, parallelized with `pytest-xdist`. Catches synth-time breakage, hardcoded regions, missing conditional guards, and broken feature-flag interactions. Run locally or in CI:
 
     ```bash
-    python scripts/test_cdk_synthesis.py
+    pytest tests/test_cdk_synthesis_matrix.py -n auto
     ```
 
-2. **`tests/test_nag_compliance.py`** runs the full CDK app in-process against the same 24 configs and asserts zero unsuppressed cdk-nag findings across five rule packs (AwsSolutions, HIPAA Security, NIST 800-53 R5, PCI DSS 3.2.1, Serverless). This is the gate that prevents a user from hitting a cdk-nag error at `cdk deploy` time on a config CI hasn't already validated. See [cdk-nag Compliance Testing](#cdk-nag-compliance-testing) below for details.
+2. **`tests/test_nag_compliance.py`** runs the full CDK app in-process against the IAM-relevant subset (`NAG_CONFIGS`) and asserts zero unsuppressed cdk-nag findings across five rule packs (AwsSolutions, HIPAA Security, NIST 800-53 R5, PCI DSS 3.2.1, Serverless). This is the gate that prevents a user from hitting a cdk-nag error at `cdk deploy` time on a config CI hasn't already validated. See [cdk-nag Compliance Testing](#cdk-nag-compliance-testing) below for details.
 
 Sharing the matrix is deliberate — divergence between the two lists is how we ended up with an `AwsSolutions-IAM5` error on a user's `gco-us-east-1` deploy that neither tool had exercised. Adding a new cdk.json knob means adding one entry to `tests/_cdk_config_matrix.py` and both tests pick it up.
 
@@ -185,8 +185,8 @@ The cdk-nag rule packs that block production deploys (AwsSolutions-IAM5 wildcard
 **How it works:**
 
 - `tests/_cdk_nag_logger.py` implements a custom `INagLogger` that routes every rule-pack finding into a Python list rather than CDK's annotation system. This bypasses the CLI's silent-drop behavior.
-- `tests/test_nag_compliance.py` parameterizes over the full 24-config matrix, builds the complete CDK app (Global, API Gateway, Regional, Monitoring) the same way `app.py` does, attaches all five rule packs plus the capturing logger, calls `app.synth()`, and asserts the finding list is empty.
-- CI runs this as its own job — `unit:cdk:nag-compliance` — with `pytest-xdist`'s `-n auto` (via the `psutil` extra). On an 8-core runner, all 24 configs finish in ~10 minutes.
+- `tests/test_nag_compliance.py` parameterizes over the IAM-relevant `NAG_CONFIGS` subset, builds the complete CDK app (Global, API Gateway, Regional, Monitoring) the same way `app.py` does, attaches all five rule packs plus the capturing logger, calls `app.synth()`, and asserts the finding list is empty.
+- CI runs this as its own job — `unit:cdk:nag-compliance` — with `pytest-xdist`'s `-n auto` (via the `psutil` extra).
 
 **Scope discipline for new suppressions:**
 
@@ -288,7 +288,7 @@ actually deploy anything, hit AWS, or spawn long-running subprocesses.
 |------|-------------------|----------------|
 | `test_bump_version.py` | `scripts/bump_version.py` | SemVer parsing, bump paths (major/minor/patch), dry-run mode, argparse dispatch, keeping `VERSION`, `gco/_version.py`, and `cli/__init__.py` in sync |
 | `test_webhook_delivery_script.py` | `scripts/test_webhook_delivery.py` | `WebhookHandler` do_POST capture and 200 response, silenced `log_message`, `start_local_server` port binding + daemon thread + clean shutdown, `create_mock_job` fixture shape, `main()` argparse branches between local-server and external-URL modes |
-| `test_cdk_synthesis_script.py` | `scripts/test_cdk_synthesis.py` | `CONFIGS` matrix structural integrity (unique names, correct tuple shape, baseline first), `synth_with_config` overlay merging for dict vs scalar values, cdk.json restoration after success/error/exception, return-code classification (real error vs NOTICES-only), TimeoutExpired handling, `main()` aggregation/exit code |
+| `test_cdk_synthesis_matrix.py` | full-app `app.synth()` validation across every entry in `tests/_cdk_config_matrix.CONFIGS`, parallelized via pytest-xdist. Pairs with `test_nag_compliance.py`, which runs the IAM-relevant subset through cdk-nag. |
 | `test_dump_nag_findings_script.py` | `scripts/dump_nag_findings.py` | `run_config` threads context overrides through to `_build_app_with_logger`, invokes `app.synth()` while the Docker-asset mock is live, returns `logger.findings` verbatim. `main()` aggregates by `(rule_id, resource_path, finding_id)`, deduplicates across configs, emits per-config and summary counts, exits 0 on clean and 1 otherwise |
 
 ### MCP Server Tests
@@ -313,7 +313,7 @@ actually deploy anything, hit AWS, or spawn long-running subprocesses.
 |------|-------------|
 | `conftest.py` | Shared pytest fixtures and configuration |
 | `_lambda_imports.py` | `load_lambda_module()` helper for importing Lambda handler modules under unique `sys.modules` names. See the [Lambda Handler Import Helper](#lambda-handler-import-helper) section above. |
-| `_cdk_config_matrix.py` | The canonical list of `cdk.json` configuration overlays (24 entries: default, multi-region, feature toggles, thresholds, helm matrix). Imported by both `scripts/test_cdk_synthesis.py` and `tests/test_nag_compliance.py` so the two iterate over the same set. See the [CDK Configuration Matrix](#cdk-stack-tests) section. |
+| `_cdk_config_matrix.py` | The canonical list of `cdk.json` configuration overlays (default, multi-region, feature toggles, thresholds, helm matrix, analytics fixtures). Imported by both `tests/test_cdk_synthesis_matrix.py` and `tests/test_nag_compliance.py` so the two iterate over the same set. See the [CDK Configuration Matrix](#cdk-stack-tests) section. |
 | `_cdk_nag_logger.py` | `CapturingCdkNagLogger` — a custom `INagLogger` implementation that routes every cdk-nag finding into a Python list instead of CDK's annotation system. Used by `test_nag_compliance.py` and `scripts/dump_nag_findings.py` to assert on findings programmatically. |
 | `__init__.py` | Package initialization |
 
