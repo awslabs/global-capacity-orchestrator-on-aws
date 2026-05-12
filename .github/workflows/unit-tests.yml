@@ -292,29 +292,53 @@ jobs:
         # dropped alongside the subprocess loop.
         run: pytest tests/test_cdk_synthesis_matrix.py -n auto -v
 
-  unit-cdk-nag-compliance:
-    name: "unit:cdk:nag-compliance"
-    # Synthesizes every cdk.json configuration in the shared matrix
-    # (``tests/_cdk_config_matrix.CONFIGS``) through a full cdk-nag
-    # traversal and asserts zero unsuppressed findings. This is the
-    # hard gate against shipping an IAM-wildcard or similar cdk-nag
-    # error to a user's ``cdk deploy``: if the test is green, every
-    # configuration the user can pick from cdk.json has been validated
-    # against AwsSolutions, HIPAA Security, NIST 800-53 R5, PCI DSS
-    # 3.2.1, and Serverless rule packs in the same process that
-    # ``app.py`` uses for real deploys.
-    #
-    # Runs in its own job with pytest-xdist parallelism (``-n auto``
-    # picks the core count via psutil). The tests are parallel-safe by
-    # construction — each config builds a fresh ``cdk.App`` with no
-    # shared module state.
-    #
-    # Separate from ``unit:pytest:core`` because the rest of the
-    # suite isn't parallel-safe and we don't want to either
-    # (a) pay the serial cost here, or (b) split a single pytest
-    # invocation across two --dist modes.
+  unit-cdk-nag-compliance-matrix:
+    name: "unit:cdk:nag-compliance:list"
+    # Emits the NAG_CONFIGS list as a JSON array for the fan-out matrix
+    # below. Reading the Python list here (rather than hard-coding config
+    # names in YAML) keeps the workflow in lockstep with
+    # ``tests/_cdk_config_matrix.NAG_CONFIGS`` — add an entry there and
+    # the matrix automatically picks it up on the next run.
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 2
+    outputs:
+      configs: ${{ steps.list.outputs.configs }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: list
+        run: |
+          python3 -c "
+          import json, sys
+          sys.path.insert(0, '.')
+          from tests._cdk_config_matrix import NAG_CONFIGS
+          names = [name for name, _ in NAG_CONFIGS]
+          print(f'configs={json.dumps(names)}')
+          " >> "$GITHUB_OUTPUT"
+
+  unit-cdk-nag-compliance:
+    name: "unit:cdk:nag-compliance (${{ matrix.config }})"
+    # Fan out across ``NAG_CONFIGS`` so each configuration synthesizes
+    # and runs cdk-nag in its own runner — the per-config work (build
+    # global + API gateway + regional(s) + monitoring + optionally
+    # analytics, then walk five rule packs across the resource tree)
+    # is heavy enough that GitHub's free 4-vCPU arm64 runner beats
+    # cramming every config onto a 2-vCPU amd64 runner under xdist.
+    #
+    # Each matrix cell invokes pytest with ``-k <config_name>`` so it
+    # runs exactly the parametrized case matching that config. This is
+    # the same hard gate as before against shipping an IAM-wildcard or
+    # similar cdk-nag error to a user's ``cdk deploy``: if every matrix
+    # cell is green, every configuration the user can pick from cdk.json
+    # has been validated against AwsSolutions, HIPAA Security, NIST
+    # 800-53 R5, PCI DSS 3.2.1, and Serverless rule packs in the same
+    # process that ``app.py`` uses for real deploys.
+    needs: unit-cdk-nag-compliance-matrix
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        config: ${{ fromJson(needs.unit-cdk-nag-compliance-matrix.outputs.configs) }}
     env:
       AWS_DEFAULT_REGION: us-east-1
       AWS_REGION: us-east-1
@@ -329,19 +353,25 @@ jobs:
           cache: "pip"
           cache-dependency-path: "requirements-lock.txt"
       - name: Install dependencies
-        run: |
-          pip install -e ".[dev,mcp]"
+        run: pip install -e ".[dev,mcp]"
       - uses: ./.github/actions/build-lambda-package
-      - name: Run cdk-nag compliance matrix
+      - name: Run cdk-nag compliance for ${{ matrix.config }}
+        # Select the exact parametrized test case by test ID. The
+        # parametrize call in tests/test_nag_compliance.py uses
+        # ``ids=[c[0] for c in CONFIGS]``, so the config name *is* the
+        # test ID — ``::`` rather than ``-k`` avoids substring
+        # collisions (e.g. ``analytics-enabled`` matching both
+        # ``analytics-enabled`` and ``analytics-enabled-hyperpod-canvas``).
         run: |
-          pytest tests/test_nag_compliance.py -n auto -v \
-            --junitxml=report-nag-compliance.xml
+          pytest -v \
+            "tests/test_nag_compliance.py::TestCdkNagCompliance::test_no_unsuppressed_findings[${{ matrix.config }}]" \
+            --junitxml=report-nag-compliance-${{ matrix.config }}.xml
       - name: Upload nag compliance report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: nag-compliance-report
-          path: report-nag-compliance.xml
+          name: nag-compliance-report-${{ matrix.config }}
+          path: report-nag-compliance-${{ matrix.config }}.xml
           retention-days: 7
 
   unit-lockfile-freshness:
