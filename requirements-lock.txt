@@ -22,7 +22,6 @@ attrs==25.4.0
     # via
     #   cattrs
     #   cyclopts
-    #   flake8-bugbear
     #   hypothesis
     #   jsii
     #   jsonschema
@@ -54,10 +53,6 @@ bandit==1.9.4
     #   gco-cli (pyproject.toml)
 beartype==0.22.9
     # via py-key-value-aio
-black==26.3.1
-    # via
-    #   gco-cli
-    #   gco-cli (pyproject.toml)
 boto3==1.43.3
     # via
     #   gco-cli
@@ -97,7 +92,6 @@ charset-normalizer==3.4.7
     # via requests
 click==8.3.3
     # via
-    #   black
     #   gco-cli
     #   gco-cli (pyproject.toml)
     #   pip-tools
@@ -148,20 +142,6 @@ filelock==3.29.0
     # via
     #   python-discovery
     #   virtualenv
-flake8==7.3.0
-    # via
-    #   flake8-bugbear
-    #   flake8-comprehensions
-    #   gco-cli
-    #   gco-cli (pyproject.toml)
-flake8-bugbear==25.11.29
-    # via
-    #   gco-cli
-    #   gco-cli (pyproject.toml)
-flake8-comprehensions==3.16.0
-    # via
-    #   gco-cli
-    #   gco-cli (pyproject.toml)
 greenlet==3.5.0
     # via playwright
 griffelib==2.0.2
@@ -198,10 +178,6 @@ importlib-resources==7.1.0
     # via jsii
 iniconfig==2.3.0
     # via pytest
-isort==8.0.1
-    # via
-    #   gco-cli
-    #   gco-cli (pyproject.toml)
 jaraco-classes==3.4.0
     # via keyring
 jaraco-context==6.1.2
@@ -262,8 +238,6 @@ markupsafe==3.0.3
     # via
     #   jinja2
     #   werkzeug
-mccabe==0.7.0
-    # via flake8
 mcp==1.27.0
     # via fastmcp
 mdurl==0.1.2
@@ -281,9 +255,7 @@ mypy==1.19.1
     #   gco-cli
     #   gco-cli (pyproject.toml)
 mypy-extensions==1.1.0
-    # via
-    #   black
-    #   mypy
+    # via mypy
 nodeenv==1.10.0
     # via pre-commit
 oauthlib==3.3.1
@@ -300,7 +272,6 @@ opentelemetry-api==1.41.1
     # via fastmcp
 packaging==26.2
     # via
-    #   black
     #   build
     #   fastmcp
     #   pytest
@@ -309,7 +280,6 @@ pathable==0.5.0
     # via jsonschema-path
 pathspec==1.1.1
     # via
-    #   black
     #   mypy
     #   yamllint
 pip-tools==7.5.3
@@ -318,7 +288,6 @@ pip-tools==7.5.3
     #   gco-cli (pyproject.toml)
 platformdirs==4.9.6
     # via
-    #   black
     #   fastmcp
     #   python-discovery
     #   virtualenv
@@ -354,8 +323,6 @@ publication==0.0.3
     #   projen
 py-key-value-aio==0.4.4
     # via fastmcp
-pycodestyle==2.14.0
-    # via flake8
 pycparser==3.0
     # via cffi
 pydantic==2.13.3
@@ -378,8 +345,6 @@ pydantic-settings==2.14.0
     #   openapi-spec-validator
 pyee==13.0.1
     # via playwright
-pyflakes==3.4.0
-    # via flake8
 pyflowchart==0.6.0
     # via
     #   gco-cli
@@ -434,8 +399,6 @@ python-dotenv==1.2.2
     #   pydantic-settings
 python-multipart==0.0.27
     # via mcp
-pytokens==0.4.1
-    # via black
 pyyaml==6.0.3
     # via
     #   bandit

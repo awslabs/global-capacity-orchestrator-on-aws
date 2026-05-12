@@ -382,7 +382,7 @@ The project uses GitHub Actions for automated testing. Every push and pull reque
 | `.github/workflows/unit-tests.yml` | Unit Tests | pytest with coverage, BATS, CLI smoke, CDK synth + config matrix, lockfile freshness, fresh install, workload import checks |
 | `.github/workflows/integration-tests.yml` | Integration Tests | Per-Dockerfile build + healthcheck, kind cluster E2E (with Calico for NetworkPolicy enforcement), K8s manifest schema, Lambda import validation, cross-module pytest, MCP server pytest |
 | `.github/workflows/security.yml` | Security | bandit, pip-audit, trivy (filesystem + per-image), trufflehog, gitleaks, semgrep, checkov, KICS |
-| `.github/workflows/lint.yml` | Linting | actionlint, black, flake8, hadolint, isort, markdownlint, mypy (strict/stacks/lambda), ruff, shellcheck, yamllint |
+| `.github/workflows/lint.yml` | Linting | actionlint, hadolint, markdownlint, mypy (strict/stacks/lambda), ruff (format + check, imports included), shellcheck, yamllint |
 
 Each workflow file has a comment header documenting triggers and per-job purpose — that is the single source of truth. Every job uses `category:tool:test_name` display names (e.g., `unit:pytest:core`, `security:trivy:container-scan`) and `category-tool-test_name` job IDs.
 
@@ -413,10 +413,9 @@ You can simulate the CI pipeline locally:
 pip install -e ".[dev]"
 
 # Run linters (matches lint.yml jobs)
-black --check gco/ cli/ tests/ lambda/ scripts/
-ruff check gco/ cli/ tests/
-isort --check-only gco/ cli/ tests/ lambda/ scripts/
-flake8 gco/ cli/ tests/ lambda/ scripts/
+ruff format --check gco/ cli/ mcp/ tests/ lambda/ scripts/ diagrams/
+ruff check gco/ cli/ mcp/ tests/ lambda/ scripts/ diagrams/
+yamllint --strict .
 
 # Run markdownlint (requires Node; no Python install needed).
 # Config lives in .markdownlint-cli2.yaml at the repo root.

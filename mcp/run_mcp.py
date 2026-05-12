@@ -170,7 +170,7 @@ from resources.k8s import MANIFESTS_DIR  # noqa: E402, F401
 
 # Declare every name that is intentionally re-exported for tests and
 # downstream consumers. This silences unused-import warnings from static
-# analyzers that don't recognise the per-line ruff/flake8 markers above.
+# analyzers that don't recognise the per-line ruff markers above.
 __all__ = [
     "DOCKERFILES_DIR",
     "DOCS_DIR",

@@ -196,8 +196,8 @@ class TestUpsertMarkers:
 
     def test_inserts_block_after_module_docstring_and_imports(self, tmp_path: Path) -> None:
         """With a docstring + real imports, the marker sits below the
-        imports so isort/black don't treat it as a section boundary
-        that forces reordering of surrounding import statements."""
+        imports so ruff's import sorter doesn't treat it as a section
+        boundary that forces reordering of surrounding import statements."""
         src_rel = "mymod/handler.py"
         src_path = tmp_path / src_rel
         self._write_source(
@@ -280,8 +280,8 @@ class TestUpsertMarkers:
 
     def test_marker_survives_future_imports_and_regular_imports(self, tmp_path: Path) -> None:
         """``from __future__ import ...`` and subsequent regular imports
-        all appear above the marker block — isort groups imports
-        together and treats a comment in the middle as a section
+        all appear above the marker block — ruff's import sorter groups
+        imports together and treats a comment in the middle as a section
         boundary, which would force reordering."""
         src_rel = "mymod/fut.py"
         src_path = tmp_path / src_rel
@@ -331,7 +331,7 @@ class TestStripMarkers:
         stripped = strip_markers_from(src)
         assert SENTINEL not in stripped
         # The strip must collapse run-away ``\n{4,}`` sequences down to
-        # ``\n\n\n`` (two blank lines) so the result is black-stable.
+        # ``\n\n\n`` (two blank lines) so the result is formatter-stable.
         # A lone ``\n\n\n`` (two blank lines between top-level defs) is
         # PEP 8 and is preserved.
         assert "\n\n\n\n" not in stripped

@@ -138,7 +138,7 @@ def _format_entry(
     src = entry.target.source
     func = entry.target.function
     title = entry.target.title or f"`{func}`"
-    line = f"  - {title} &mdash; `{src}::{func}` " f"&mdash; [HTML](./{html_rel.as_posix()})"
+    line = f"  - {title} &mdash; `{src}::{func}` &mdash; [HTML](./{html_rel.as_posix()})"
     if entry.png_path is not None:
         png_rel = entry.png_path.relative_to(output_dir)
         line += f" · [PNG](./{png_rel.as_posix()})"

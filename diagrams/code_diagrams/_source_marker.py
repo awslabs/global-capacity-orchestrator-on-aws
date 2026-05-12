@@ -34,10 +34,10 @@ def upsert_markers(
     Multiple targets from the same source file collapse into a single
     comment block that lists every flowchart produced for that file.
     After writing the marker, each touched file is normalised with
-    ``black`` so the resulting layout is formatter-stable — otherwise
-    the marker's leading/trailing blank lines can compose with the
-    source file's existing PEP 8 spacing into three-blank-line runs
-    that break ``black --check``.
+    ``ruff format`` so the resulting layout is formatter-stable —
+    otherwise the marker's leading/trailing blank lines can compose
+    with the source file's existing PEP 8 spacing into three-blank-line
+    runs that break ``ruff format --check``.
     """
     by_source: dict[Path, list[RenderedTarget]] = defaultdict(list)
     for result in results:
@@ -53,32 +53,32 @@ def upsert_markers(
             touched.append(source_path)
 
     if touched:
-        _black_normalise(touched, project_root=project_root)
+        _ruff_format(touched, project_root=project_root)
 
 
-def _black_normalise(paths: list[Path], *, project_root: Path) -> None:
-    """Run ``black`` on ``paths`` so the marker insertion is formatter-stable.
+def _ruff_format(paths: list[Path], *, project_root: Path) -> None:
+    """Run ``ruff format`` on ``paths`` so the marker insertion is formatter-stable.
 
-    Uses ``python -m black`` from the current interpreter so the check
-    works whether ``black`` is on PATH or only importable. Silently
-    no-ops if ``black`` isn't importable at all — the generator still
-    works, the contributor just has to run ``black`` themselves later.
+    Uses ``python -m ruff`` from the current interpreter so the check
+    works whether ``ruff`` is on PATH or only importable. Silently
+    no-ops if ``ruff`` isn't importable at all — the generator still
+    works, the contributor just has to run ``ruff format`` themselves later.
     """
     try:
-        import black  # noqa: F401
+        import ruff  # noqa: F401
     except ImportError:
         warnings.warn(
-            "black is not installed — skipping post-marker normalisation. "
+            "ruff is not installed — skipping post-marker normalisation. "
             "Install with ``pip install -e '.[diagrams]'``; the marker block "
-            "may still land in a shape black later reformats.",
+            "may still land in a shape ruff later reformats.",
             stacklevel=2,
         )
         return
 
     rels = [str(p.relative_to(project_root)) for p in paths]
-    # Invoke black directly so we inherit its exit code + stdout.
+    # Invoke ruff directly so we inherit its exit code + stdout.
     subprocess.run(  # noqa: S603 — args are fully-known paths we just generated
-        [sys.executable, "-m", "black", "--quiet", *rels],
+        [sys.executable, "-m", "ruff", "format", "--quiet", *rels],
         cwd=str(project_root),
         check=False,
     )
@@ -104,8 +104,8 @@ def _update_file(
     cleanup pass.
 
     We don't try to normalise whitespace here — :func:`upsert_markers`
-    runs ``black`` on every touched file after all insertions complete,
-    which handles the PEP 8 blank-line spacing consistently.
+    runs ``ruff format`` on every touched file after all insertions
+    complete, which handles the PEP 8 blank-line spacing consistently.
     """
     original = source_path.read_text(encoding="utf-8")
     stripped = strip_markers_from(original)
@@ -129,12 +129,12 @@ def strip_markers_from(source: str) -> str:
     source is returned unchanged. When a marker block is removed we
     collapse the resulting *four*-or-more consecutive newlines down
     to a single three-newline run (i.e. two blank lines) — that
-    preserves black's PEP 8 ``two-blank-lines-between-top-level-defs``
-    requirement, which would otherwise be broken when the marker
-    block lived between two top-level defs and removing it fused
-    their trailing and leading blank-line padding into a four-newline
-    run. Files with legitimate triple-blank-line runs unrelated to a
-    marker are left unchanged.
+    preserves the PEP 8 ``two-blank-lines-between-top-level-defs``
+    requirement ruff format enforces, which would otherwise be broken
+    when the marker block lived between two top-level defs and removing
+    it fused their trailing and leading blank-line padding into a
+    four-newline run. Files with legitimate triple-blank-line runs
+    unrelated to a marker are left unchanged.
     """
     if SENTINEL not in source:
         return source
@@ -186,11 +186,11 @@ def _format_block(
     The block is preceded *and* followed by a blank line so it cleanly
     separates from the surrounding statements — otherwise ruff's
     ``I001`` rule treats the comment as part of the import block above,
-    and black's PEP 8 enforcement complains about the single blank
-    line between the marker and a class/def below. Two blank-line
-    separators work in every context we insert into (after docstring,
-    after ``from __future__`` imports, after a regular import block,
-    before a class/def/module-level statement).
+    and PEP 8 enforcement complains about the single blank line between
+    the marker and a class/def below. Two blank-line separators work in
+    every context we insert into (after docstring, after ``from __future__``
+    imports, after a regular import block, before a class/def/module-level
+    statement).
     """
     lines = ["", f"# <{SENTINEL}> BEGIN - auto-inserted, do not edit"]
     lines.append("# Flowchart(s) generated from this file:")
@@ -207,8 +207,8 @@ def _format_block(
     # Trailing "" plus the final "\n" from ``join`` ensures the block
     # ends with an empty line — combined with whatever line-terminator
     # is already present in the source at the insertion point, this
-    # gives us the two-blank-line separator black expects before the
-    # next class or def.
+    # gives us the two-blank-line separator ruff format expects before
+    # the next class or def.
     lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -219,10 +219,10 @@ def _insertion_point(source: str) -> int:
     Places the block immediately after the module docstring and the
     full block of top-level imports (``import``, ``from`` — including
     ``from __future__ import …``), but before the first real
-    statement. This placement keeps isort happy: isort groups
-    consecutive imports, and a comment block slotted in the middle of
-    that group would be treated as a section boundary that forces
-    reordering.
+    statement. This placement keeps ruff's import sorter happy: it
+    groups consecutive imports, and a comment block slotted in the
+    middle of that group would be treated as a section boundary that
+    forces reordering.
 
     Falls back to offset 0 if the file has no docstring and no imports.
     """

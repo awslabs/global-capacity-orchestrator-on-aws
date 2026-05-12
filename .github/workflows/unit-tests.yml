@@ -358,17 +358,16 @@ jobs:
         # Pre-seed the candidate lockfile with the committed one so pip-compile
         # treats the existing pins as the current resolution state. Without
         # this, an unrelated transitive release between a local pip-compile
-        # and the CI run would falsely flag drift. See the comment block in
-        # the retired .gitlab-ci.yml for the full rationale.
+        # and the CI run would falsely flag drift.
         #
         # ``--all-extras`` pins every optional-dependency group (dev, test,
         # cdk, mcp, typecheck, lint, security, inference-monitor). Without
         # it, only the runtime ``dependencies`` list gets resolved and CI's
-        # own toolchain (pytest, pytest-xdist, moto, black, ruff, mypy,
-        # aws-cdk-lib, etc.) installs against live PyPI on every run. That
-        # means a transitive bump to pluggy or coverage between PR runs
-        # could silently change test behavior. Locking everything keeps
-        # every job reproducible against a known pinned tree.
+        # own toolchain (pytest, pytest-xdist, moto, ruff, mypy, aws-cdk-lib,
+        # etc.) installs against live PyPI on every run. That means a
+        # transitive bump to pluggy or coverage between PR runs could
+        # silently change test behavior. Locking everything keeps every job
+        # reproducible against a known pinned tree.
         env:
           # pip-compile invokes pip, which can hit interactive keyring prompts
           # on CI ("Unhandled exception: EOF when reading a line"). Disabling

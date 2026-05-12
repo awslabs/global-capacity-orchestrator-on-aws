@@ -66,7 +66,7 @@ Each file maps to one row in the README badge table.
 | `workflows/unit-tests.yml` | Unit Tests | pytest with coverage (fail under 85%), BATS, CLI smoke, CDK synth + config matrix, lockfile freshness, fresh install, workload import checks |
 | `workflows/integration-tests.yml` | Integration Tests | Per-Dockerfile build + module-import smoke, dev-container smoke, kind E2E with Calico (NetworkPolicy enforcement, RBAC verification, ResourceQuota/LimitRange, PDB validation, cross-namespace traffic blocking, all 3 service deployments), K8s manifest validation, Lambda import validation, cross-module pytest, MCP server pytest |
 | `workflows/security.yml` | Security | bandit, pip-audit, trivy (filesystem + per-image matrix), trufflehog, gitleaks, semgrep, checkov, KICS, CodeQL (Python) |
-| `workflows/lint.yml` | Linting | actionlint, black, flake8, hadolint, isort, markdownlint, mypy (strict / stacks / lambda), ruff, shellcheck, yamllint |
+| `workflows/lint.yml` | Linting | actionlint, hadolint, markdownlint, mypy (strict / stacks / lambda), ruff (format + check, imports included), shellcheck, yamllint |
 
 ### Satellites
 
@@ -307,11 +307,9 @@ Most jobs map to a single command you can run locally. Quick reference:
 
 ```bash
 # Lint (matches jobs in workflows/lint.yml)
-black --check gco/ cli/ tests/ lambda/ scripts/
-ruff check gco/ cli/ tests/
-isort --check-only gco/ cli/ tests/ lambda/ scripts/
-flake8 gco/ cli/ tests/ lambda/ scripts/
-yamllint .
+ruff format --check gco/ cli/ mcp/ tests/ lambda/ scripts/ diagrams/
+ruff check gco/ cli/ mcp/ tests/ lambda/ scripts/ diagrams/
+yamllint --strict .
 npx markdownlint-cli2                 # uses .markdownlint-cli2.yaml config
 
 # Type check (matches lint:mypy:strict and lint:mypy:stacks)

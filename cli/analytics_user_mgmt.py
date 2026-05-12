@@ -360,9 +360,10 @@ def fetch_studio_url(api_base: str, id_token: str) -> tuple[str, int, str]:
     # of this function rejects any ``api_base`` that isn't ``https://``
     # before we reach these lines, which closes the ``file://`` /
     # ``ftp://`` / ``custom`` scheme hole the rules are written to catch.
-    # ``# fmt: off`` pins the block so black can't re-wrap the urlopen
-    # call — wrapping moves the suppression comments to the wrong line
-    # and bandit / semgrep attach findings to the first line of the call.
+    # ``# fmt: off`` pins the block so the formatter can't re-wrap the
+    # urlopen call — wrapping moves the suppression comments to the
+    # wrong line and bandit / semgrep attach findings to the first
+    # line of the call.
     # fmt: off
     request = urllib.request.Request(  # nosec B310  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: S310
         login_url,

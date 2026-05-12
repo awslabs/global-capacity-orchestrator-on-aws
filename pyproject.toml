@@ -60,14 +60,15 @@ diagrams = [
     # interactive HTML via its ``output_html`` helper. ``playwright``
     # drives a headless Chromium to rasterise each flowchart.js SVG to
     # a PNG — run ``playwright install chromium`` once to fetch the
-    # browser binary. ``black`` is invoked by the generator's marker
-    # inserter to normalise whitespace around the injected ``# Flowchart:``
-    # comment block so the result is formatter-stable under ``black
-    # --check`` (kept at the same pin as the ``lint`` extra to avoid
-    # version-drift between the generator and the CI lint gate).
+    # browser binary. ``ruff`` is invoked by the generator's marker
+    # inserter to normalise whitespace around the injected
+    # ``# Flowchart:`` comment block so the result is formatter-stable
+    # under ``ruff format --check`` (kept at the same pin as the
+    # ``lint`` extra to avoid version-drift between the generator and
+    # the CI lint gate).
     "pyflowchart==0.6.0",
     "playwright==1.59.0",
-    "black==26.3.1",
+    "ruff==0.15.7",
 ]
 inference-monitor = [
     "boto3==1.43.3",
@@ -78,13 +79,8 @@ mcp = [
     "fastmcp>=3.2.0",
 ]
 lint = [
-    "black==26.3.1",
     "ruff==0.15.7",
-    "isort==8.0.1",
     "yamllint==1.38.0",
-    "flake8==7.3.0",
-    "flake8-bugbear==25.11.29",
-    "flake8-comprehensions==3.16.0",
 ]
 typecheck = [
     "mypy==1.19.1",
@@ -130,34 +126,9 @@ Repository = "https://github.com/awslabs/global-capacity-orchestrator-on-aws"
 # Tool Configurations
 # =============================================================================
 
-[tool.black]
-line-length = 100
-target-version = ['py310', 'py311', 'py312', 'py313', 'py314']
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.git
-    | \.venv
-    | \.mypy_cache
-    | \.pytest_cache
-    | __pycache__
-    | cdk\.out
-    | dist
-    | build
-    | lambda/kubectl-applier-simple-build
-    | lambda/helm-installer-build
-)/
-'''
-
-[tool.isort]
-profile = "black"
-line_length = 100
-skip_gitignore = true
-skip = [".venv", "cdk.out", "dist", "build",
-        "lambda/kubectl-applier-simple-build",
-        "lambda/helm-installer-build"]
-known_first_party = ["gco", "cli"]
-sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+# Ruff handles both formatting (``ruff format``) and linting, covering
+# pycodestyle, Pyflakes, bugbear, comprehensions, pyupgrade, simplify,
+# and isort-style import sorting via the rule selectors below.
 
 [tool.ruff]
 line-length = 100
@@ -188,11 +159,14 @@ select = [
     "SIM",    # flake8-simplify
 ]
 ignore = [
-    "E501",   # line too long (handled by black)
+    "E501",   # line too long (handled by ruff format)
     "B008",   # do not perform function calls in argument defaults
     "ARG001", # unused function argument
     "ARG002", # unused method argument
 ]
+
+[tool.ruff.lint.isort]
+known-first-party = ["gco", "cli"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ARG", "S101"]

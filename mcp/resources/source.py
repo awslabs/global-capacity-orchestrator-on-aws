@@ -32,7 +32,6 @@ _CONFIG_FILES = {
     "Dockerfile.dev",
     ".gitlab-ci.yml",
     ".pre-commit-config.yaml",
-    ".flake8",
     ".yamllint.yml",
     ".checkov.yaml",
     ".kics.yaml",

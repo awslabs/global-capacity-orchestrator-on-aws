@@ -33,7 +33,6 @@ def infra_index() -> str:
         ".kics.yaml",
         ".gitleaks.toml",
         ".semgrepignore",
-        ".flake8",
         ".yamllint.yml",
     ):
         lines.append(f"- `source://gco/config/{name}` — {name}")

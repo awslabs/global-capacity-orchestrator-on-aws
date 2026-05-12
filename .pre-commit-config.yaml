@@ -1,14 +1,12 @@
 repos:
-  - repo: https://github.com/psf/black
-    rev: 26.3.1
-    hooks:
-      - id: black
-        args: [--line-length=100]
-        exclude: '/(\.venv|cdk\.out|lambda/kubectl-applier-simple-build|lambda/helm-installer-build)/'
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.7
     hooks:
+      # Formatter. Run before ``ruff`` so the check sees formatter output.
+      - id: ruff-format
+        exclude: '/(\.venv|cdk\.out|lambda/kubectl-applier-simple-build|lambda/helm-installer-build)/'
+      # Linter, including isort-style import sorting via the ``I`` rule
+      # selected in pyproject.toml.
       - id: ruff
         args: [--fix, --exclude, lambda/kubectl-applier-simple-build, --exclude, lambda/helm-installer-build]
 
@@ -35,10 +33,3 @@ repos:
       # .markdownlint-cli2.yaml at the repo root. See CONTRIBUTING.md for
       # how to run the same check locally via `npx markdownlint-cli2`.
       - id: markdownlint-cli2
-
-  - repo: https://github.com/PyCQA/flake8
-    rev: 7.3.0
-    hooks:
-      - id: flake8
-        additional_dependencies: [flake8-bugbear, flake8-comprehensions]
-        exclude: '/(\.venv|cdk\.out|lambda/kubectl-applier-simple-build|lambda/helm-installer-build)/'
