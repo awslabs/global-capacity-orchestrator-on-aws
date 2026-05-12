@@ -91,21 +91,18 @@ jobs:
           pip install -e ".[dev,mcp]"
       - uses: ./.github/actions/build-lambda-package
       - name: Run pytest with coverage
-        # -n auto uses pytest-xdist to spread tests across all available CPU
-        # cores (2 on standard ubuntu-latest runners). --dist=loadfile keeps
-        # all tests from the same file on one worker, which matters for the
-        # CDK-heavy stack tests: `Code.from_asset(...)` stages the same
-        # lambda/*-build directory to `cdk.out/asset.<hash>/` and CDK's
-        # in-process asset-staging cache is not xdist-safe — two workers
-        # copying the same asset tree race and one hits ENOENT mid-copy.
-        # Grouping per-file lets the in-process cache do its job. The
-        # suite is otherwise xdist-safe: every test uses tmp_path /
-        # monkeypatch or a per-test _free_port() helper, and the one
-        # session-autouse fixture (ensure_lambda_build_dirs in
-        # tests/conftest.py) is idempotent. Coverage is collected
-        # per-worker and pytest-cov combines the results before the
-        # report threshold is checked. --maxfail=1 matches the previous
-        # -x behavior; the -x flag itself isn't compatible with xdist.
+        # Parallelism (pytest-xdist -n auto) was attempted here but the
+        # CDK-heavy stack tests (test_regional_stack, test_stacks, etc.)
+        # race on CDK's in-process asset-staging cache: two workers both
+        # stage ``lambda/kubectl-applier-simple-build`` into the shared
+        # ``cdk.out/asset.<hash>/`` destination and one hits ENOENT on the
+        # source mid-copy. Neither ``--dist=loadfile`` nor ``--dist=loadscope``
+        # fixes it because the race is cross-file (multiple test modules
+        # instantiate GCORegionalStack, which uses the same asset). Running
+        # serially with ``-x`` preserves correctness at the cost of the
+        # xdist wall-clock speedup. The two dedicated CDK jobs
+        # (unit:cdk:config-matrix + unit:cdk:nag-compliance) do benefit
+        # from parallelism and are wired for it in their own workflows.
         run: |
           pytest tests/ -v \
             --ignore=tests/test_integration.py \
@@ -115,8 +112,7 @@ jobs:
             --cov-report=xml --cov-report=html --cov-report=json \
             --cov-report=term-missing \
             --cov-fail-under=90 \
-            --junitxml=report.xml \
-            -n auto --dist=loadfile --maxfail=1
+            --junitxml=report.xml -x
       - name: Upload coverage artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -293,15 +289,18 @@ jobs:
         # tests/test_cdk_synthesis_matrix.py parametrizes across every
         # entry in tests/_cdk_config_matrix.CONFIGS and runs ``app.synth()``
         # in-process per config — no ``cdk synth`` subprocess, no cdk.json
-        # mutation. pytest-xdist (``-n auto``) parallelizes across worker
-        # parallelizes across worker processes for a roughly N×-core
-        # speedup. --dist=loadfile keeps all parametrized cases of the
-        # same test file on one worker, so CDK's in-process asset-staging
-        # cache (which is not xdist-safe across processes copying the same
-        # `lambda/*-build/` tree) can do its job. The Node.js/CDK CLI is
-        # no longer required, so the ``npm install -g aws-cdk`` step was
-        # dropped alongside the subprocess loop.
-        run: pytest tests/test_cdk_synthesis_matrix.py -n auto --dist=loadfile -v
+        # mutation. The Node.js/CDK CLI is no longer required, so the
+        # ``npm install -g aws-cdk`` step was dropped alongside the
+        # subprocess loop.
+        #
+        # Runs serially (no ``-n auto``) for the same reason as
+        # unit:pytest:core: every parametrized case stages the same
+        # ``lambda/kubectl-applier-simple-build`` tree into
+        # ``cdk.out/asset.<hash>/`` and CDK's in-process asset-staging
+        # cache races under xdist. The bulk of CDK-config parallelism
+        # lives in the sibling unit:cdk:nag-compliance job, which fans
+        # out one GitHub runner per config.
+        run: pytest tests/test_cdk_synthesis_matrix.py -v
 
   unit-cdk-nag-compliance-matrix:
     name: "unit:cdk:nag-compliance:list"
