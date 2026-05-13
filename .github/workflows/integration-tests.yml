@@ -7,14 +7,15 @@
 # Triggers: push: main, pull_request, workflow_dispatch.
 #
 # Jobs (alphabetical by display name):
+#   - integration:docker:build-images        — build all service images once; fan out as artifacts
 #   - integration:docker:dev-container       — Dockerfile.dev native-arch matrix (amd64 + arm64 runners)
-#   - integration:docker:health-monitor      — build + /healthz + /readyz
-#   - integration:docker:helm-installer      — build + `helm version`/`kubectl version`
-#   - integration:docker:inference-monitor   — build + import-based liveness
-#   - integration:docker:manifest-processor  — build + /healthz + /readyz
-#   - integration:docker:queue-processor     — build + startup-banner check
+#   - integration:docker:health-monitor      — load shared image + import-based liveness
+#   - integration:docker:helm-installer      — load shared image + `helm version`/`kubectl version`
+#   - integration:docker:inference-monitor   — load shared image + import-based liveness
+#   - integration:docker:manifest-processor  — load shared image + import-based liveness
+#   - integration:docker:queue-processor     — load shared image + startup-banner check
 #   - integration:k8s:manifest-schema        — YAML validation + required kinds
-#   - integration:kind:cluster-e2e           — kind + Calico + services + RBAC + NetworkPolicy + ResourceQuota
+#   - integration:kind:cluster-e2e           — load shared images + kind + Calico + services + RBAC + NetworkPolicy + ResourceQuota
 #   - integration:lambda:imports             — import each Lambda handler
 #   - integration:mcp:server                 — pytest tests/test_mcp_integration.py
 #   - integration:pytest:cross-module        — pytest tests/test_integration.py
@@ -259,31 +260,87 @@ jobs:
           retention-days: 7
 
   # --------------------------------------------------------------------------
-  # Per-Dockerfile build + healthcheck integration tests.
-  # One job per image. Each job builds from scratch, runs the container,
-  # probes the health endpoint (or exec equivalent), then tears down.
+  # Shared container build. Each service image is built exactly once per run
+  # and uploaded as a tarball artifact. The per-image smoke tests below and
+  # the kind E2E job consume these artifacts instead of rebuilding. This
+  # collapses what used to be 3–5 identical builds per run (docker smoke +
+  # kind + trivy) into one build per image, shared across jobs via the
+  # Artifacts API. GHA layer cache is still enabled here so cold builds
+  # benefit from cross-run reuse. The Trivy container scan in security.yml
+  # still builds its own scannable tags to stay in that workflow's scope,
+  # but also shares the same GHA layer cache scopes.
+  # --------------------------------------------------------------------------
+
+  integration-docker-build-images:
+    name: "integration:docker:build-images (${{ matrix.image }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: health-monitor
+            dockerfile: dockerfiles/health-monitor-dockerfile
+            context: .
+          - image: manifest-processor
+            dockerfile: dockerfiles/manifest-processor-dockerfile
+            context: .
+          - image: inference-monitor
+            dockerfile: dockerfiles/inference-monitor-dockerfile
+            context: .
+          - image: queue-processor
+            dockerfile: dockerfiles/queue-processor-dockerfile
+            context: .
+          - image: helm-installer
+            dockerfile: lambda/helm-installer/Dockerfile
+            context: lambda/helm-installer
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - name: Build image and export tarball
+        # Shared GHA layer cache per image (scope: ${{ matrix.image }}).
+        # Same scope is used by security:trivy:container-scan, so warm
+        # runs reuse layers even across workflows. `outputs: type=docker`
+        # with `dest:` writes a docker-format tarball that downstream jobs
+        # can `docker load` without needing buildx set up again.
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          tags: ${{ matrix.image }}:ci
+          outputs: type=docker,dest=/tmp/${{ matrix.image }}.tar
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      - name: Upload image tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-${{ matrix.image }}
+          path: /tmp/${{ matrix.image }}.tar
+          # Short retention — these are consumed within the same run by
+          # downstream jobs and have no value after that.
+          retention-days: 1
+          if-no-files-found: error
+
+  # --------------------------------------------------------------------------
+  # Per-Dockerfile smoke tests. Each job pulls the prebuilt tarball from
+  # integration:docker:build-images, loads it into the local docker daemon,
+  # then runs the module-import probe. No builds happen here — this job's
+  # scope is "the image we just built starts Python and imports the module".
   # --------------------------------------------------------------------------
 
   integration-docker-health-monitor:
     name: "integration:docker:health-monitor"
+    needs: integration-docker-build-images
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v4
-      - name: Build image
-        # Shared GHA layer cache (scope: health-monitor). Populated and
-        # reused by this job, integration:kind:cluster-e2e, and
-        # security:trivy:container-scan — all three build the same image
-        # from the same Dockerfile + context.
-        uses: docker/build-push-action@v6
+      - name: Download image tarball
+        uses: actions/download-artifact@v7
         with:
-          context: .
-          file: dockerfiles/health-monitor-dockerfile
-          tags: health-monitor:ci
-          load: true
-          cache-from: type=gha,scope=health-monitor
-          cache-to: type=gha,mode=max,scope=health-monitor
+          name: image-health-monitor
+          path: /tmp
+      - name: Load image
+        run: docker load -i /tmp/health-monitor.tar
       - name: Verify image boots the module
         # The FastAPI app's lifespan() calls kubernetes.config.load_incluster_config()
         # / load_kube_config() on startup, both of which (correctly) fail without
@@ -295,20 +352,17 @@ jobs:
 
   integration-docker-manifest-processor:
     name: "integration:docker:manifest-processor"
+    needs: integration-docker-build-images
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v4
-      - name: Build image
-        uses: docker/build-push-action@v6
+      - name: Download image tarball
+        uses: actions/download-artifact@v7
         with:
-          context: .
-          file: dockerfiles/manifest-processor-dockerfile
-          tags: manifest-processor:ci
-          load: true
-          cache-from: type=gha,scope=manifest-processor
-          cache-to: type=gha,mode=max,scope=manifest-processor
+          name: image-manifest-processor
+          path: /tmp
+      - name: Load image
+        run: docker load -i /tmp/manifest-processor.tar
       - name: Verify image boots the module
         # Same rationale as integration:docker:health-monitor — the FastAPI
         # app fails fast without a real K8s API, so the image-level test
@@ -320,20 +374,17 @@ jobs:
 
   integration-docker-inference-monitor:
     name: "integration:docker:inference-monitor"
+    needs: integration-docker-build-images
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v4
-      - name: Build image
-        uses: docker/build-push-action@v6
+      - name: Download image tarball
+        uses: actions/download-artifact@v7
         with:
-          context: .
-          file: dockerfiles/inference-monitor-dockerfile
-          tags: inference-monitor:ci
-          load: true
-          cache-from: type=gha,scope=inference-monitor
-          cache-to: type=gha,mode=max,scope=inference-monitor
+          name: image-inference-monitor
+          path: /tmp
+      - name: Load image
+        run: docker load -i /tmp/inference-monitor.tar
       - name: Verify image runs and imports
         # inference-monitor needs a real Kubernetes API on startup, so we
         # don't run the reconciliation loop. The Dockerfile's HEALTHCHECK
@@ -346,20 +397,17 @@ jobs:
 
   integration-docker-queue-processor:
     name: "integration:docker:queue-processor"
+    needs: integration-docker-build-images
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v4
-      - name: Build image
-        uses: docker/build-push-action@v6
+      - name: Download image tarball
+        uses: actions/download-artifact@v7
         with:
-          context: .
-          file: dockerfiles/queue-processor-dockerfile
-          tags: queue-processor:ci
-          load: true
-          cache-from: type=gha,scope=queue-processor
-          cache-to: type=gha,mode=max,scope=queue-processor
+          name: image-queue-processor
+          path: /tmp
+      - name: Load image
+        run: docker load -i /tmp/queue-processor.tar
       - name: Verify image boots the module
         # queue-processor is a short-lived KEDA ScaledJob — it has no HTTP
         # endpoint. With no JOB_QUEUE_URL / SQS_QUEUE_URL set, the module
@@ -373,20 +421,17 @@ jobs:
 
   integration-docker-helm-installer:
     name: "integration:docker:helm-installer"
+    needs: integration-docker-build-images
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v4
-      - name: Build image
-        uses: docker/build-push-action@v6
+      - name: Download image tarball
+        uses: actions/download-artifact@v7
         with:
-          context: lambda/helm-installer
-          file: lambda/helm-installer/Dockerfile
-          tags: helm-installer:ci
-          load: true
-          cache-from: type=gha,scope=helm-installer
-          cache-to: type=gha,mode=max,scope=helm-installer
+          name: image-helm-installer
+          path: /tmp
+      - name: Load image
+        run: docker load -i /tmp/helm-installer.tar
       - name: Verify helm + kubectl binaries
         # This is a Lambda container, not a server. The meaningful check is
         # that the image's helm and kubectl binaries are invocable at the
@@ -545,6 +590,7 @@ jobs:
 
   integration-kind-cluster-e2e:
     name: "integration:kind:cluster-e2e"
+    needs: integration-docker-build-images
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -575,38 +621,26 @@ jobs:
           kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.5/manifests/calico.yaml
           kubectl -n kube-system rollout status daemonset/calico-node              --timeout=5m
           kubectl -n kube-system rollout status deployment/calico-kube-controllers --timeout=5m
-      - name: Set up Buildx (enables shared GHA layer cache)
-        uses: docker/setup-buildx-action@v4
-      - name: Build health-monitor image
-        # Shares the same GHA cache scope as integration:docker:health-monitor
-        # and security:trivy:container-scan. All three build the same image
-        # from the same Dockerfile + context, so layer reuse is automatic.
-        uses: docker/build-push-action@v6
+      - name: Download service image tarballs
+        # Built by integration:docker:build-images once per run and reused
+        # here — saves rebuilding the 3 service images against cold or
+        # warm GHA layer cache inside this already-long E2E job.
+        uses: actions/download-artifact@v7
         with:
-          context: .
-          file: dockerfiles/health-monitor-dockerfile
-          tags: health-monitor:ci
-          load: true
-          cache-from: type=gha,scope=health-monitor
-          cache-to: type=gha,mode=max,scope=health-monitor
-      - name: Build manifest-processor image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: dockerfiles/manifest-processor-dockerfile
-          tags: manifest-processor:ci
-          load: true
-          cache-from: type=gha,scope=manifest-processor
-          cache-to: type=gha,mode=max,scope=manifest-processor
-      - name: Build inference-monitor image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: dockerfiles/inference-monitor-dockerfile
-          tags: inference-monitor:ci
-          load: true
-          cache-from: type=gha,scope=inference-monitor
-          cache-to: type=gha,mode=max,scope=inference-monitor
+          pattern: image-*
+          path: /tmp/images
+          merge-multiple: true
+      - name: Load service images into local docker
+        # Only the 3 service images are needed for kind; helm-installer
+        # and queue-processor aren't referenced by any kind manifest. The
+        # artifact filter pulls all matching tarballs — skip the ones
+        # we don't use rather than per-name downloads (keeps the step
+        # list short and the extra tarballs are small).
+        run: |
+          set -euo pipefail
+          docker load -i /tmp/images/health-monitor.tar
+          docker load -i /tmp/images/manifest-processor.tar
+          docker load -i /tmp/images/inference-monitor.tar
       - name: Load images into kind
         run: |
           kind load docker-image health-monitor:ci --name gco-ci
