@@ -26,7 +26,7 @@ attrs==25.4.0
     #   jsii
     #   jsonschema
     #   referencing
-authlib==1.7.0
+authlib==1.7.1
     # via fastmcp
 aws-cdk-asset-awscli-v1==2.2.273
     # via aws-cdk-lib
