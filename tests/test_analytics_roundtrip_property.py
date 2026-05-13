@@ -98,7 +98,7 @@ class TestToggleRoundTrip:
 
     @settings(
         max_examples=4,
-        deadline=10000,
+        deadline=20000,
         suppress_health_check=[
             HealthCheck.too_slow,
             HealthCheck.function_scoped_fixture,

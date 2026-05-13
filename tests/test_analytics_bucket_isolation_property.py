@@ -35,7 +35,9 @@ builds) which takes ~5 s on a warm JSII bridge. The ``2×2×(region
 combinations)`` strategy space is small enough that
 :func:`functools.cache` on
 ``(enabled, hyperpod, tuple(sorted(regions)))`` keeps the hot loop
-under the ``deadline=10000`` ms per-example budget.
+under the ``deadline=20000`` ms per-example budget, which also leaves
+headroom for the first (uncached) synth in each worker when the suite
+runs under pytest-xdist contention.
 ``max_examples=50`` with caching completes in under 90 s on the
 benchmark workstation.
 """
@@ -297,7 +299,7 @@ class TestBucketIsolationProperty:
 
     @settings(
         max_examples=50,
-        deadline=10000,
+        deadline=20000,
         suppress_health_check=[
             HealthCheck.too_slow,
             HealthCheck.function_scoped_fixture,

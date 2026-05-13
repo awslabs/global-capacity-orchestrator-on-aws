@@ -29,7 +29,7 @@ always present regardless of the analytics toggle because
 
 ## Runtime budget
 
-``max_examples=20, deadline=10000`` keeps the test under ~2 min even
+``max_examples=20, deadline=20000`` keeps the test under ~2 min even
 without caching. With :func:`functools.cache` keyed on ``enabled``
 (cardinality 2) the hot loop reuses one cached synth per toggle value
 and completes in ~15 s.
@@ -203,7 +203,7 @@ class TestSagemakerGrantToggleInvariant:
 
     @settings(
         max_examples=20,
-        deadline=10000,
+        deadline=20000,
         suppress_health_check=[
             HealthCheck.too_slow,
             HealthCheck.function_scoped_fixture,

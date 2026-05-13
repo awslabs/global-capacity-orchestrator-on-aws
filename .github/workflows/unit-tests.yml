@@ -91,18 +91,20 @@ jobs:
           pip install -e ".[dev,mcp]"
       - uses: ./.github/actions/build-lambda-package
       - name: Run pytest with coverage
-        # Parallelism (pytest-xdist -n auto) was attempted here but the
-        # CDK-heavy stack tests (test_regional_stack, test_stacks, etc.)
-        # race on CDK's in-process asset-staging cache: two workers both
-        # stage ``lambda/kubectl-applier-simple-build`` into the shared
-        # ``cdk.out/asset.<hash>/`` destination and one hits ENOENT on the
-        # source mid-copy. Neither ``--dist=loadfile`` nor ``--dist=loadscope``
-        # fixes it because the race is cross-file (multiple test modules
-        # instantiate GCORegionalStack, which uses the same asset). Running
-        # serially with ``-x`` preserves correctness at the cost of the
-        # xdist wall-clock speedup. The two dedicated CDK jobs
-        # (unit:cdk:config-matrix + unit:cdk:nag-compliance) do benefit
-        # from parallelism and are wired for it in their own workflows.
+        # -n auto distributes tests across all available CPU cores via
+        # pytest-xdist. Every test is xdist-safe because
+        # tests/conftest.py::_neutralize_lambda_build patches
+        # StackManager._ensure_lambda_build and _rebuild_lambda_packages
+        # so tests can't rebuild the real lambda/kubectl-applier-simple-build
+        # tree mid-run — that rebuild is what CDK's Code.from_asset() races
+        # against when two workers synthesize stacks concurrently. The
+        # session-wide patch guards on `project_root` so the handful of
+        # tests that legitimately exercise these methods against a
+        # `tmp_path` keep working.
+        #
+        # --dist=load (xdist's default) round-robins individual test items
+        # across workers. --maxfail=1 matches the previous -x "stop at
+        # first failure" behavior — `-x` itself isn't compatible with xdist.
         run: |
           pytest tests/ -v \
             --ignore=tests/test_integration.py \
@@ -112,7 +114,8 @@ jobs:
             --cov-report=xml --cov-report=html --cov-report=json \
             --cov-report=term-missing \
             --cov-fail-under=90 \
-            --junitxml=report.xml -x
+            --junitxml=report.xml \
+            -n auto --maxfail=1
       - name: Upload coverage artifacts
         if: always()
         uses: actions/upload-artifact@v7

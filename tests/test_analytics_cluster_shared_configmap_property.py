@@ -257,7 +257,7 @@ class TestClusterSharedConfigMapAlwaysPresent:
 
     @settings(
         max_examples=50,
-        deadline=5000,
+        deadline=10000,
         suppress_health_check=[
             HealthCheck.too_slow,
             HealthCheck.function_scoped_fixture,
@@ -335,7 +335,7 @@ class TestComputeKubectlClusterSharedReplacementsRoundTrip:
 
     @settings(
         max_examples=50,
-        deadline=5000,
+        deadline=10000,
         suppress_health_check=[
             HealthCheck.too_slow,
             HealthCheck.function_scoped_fixture,
