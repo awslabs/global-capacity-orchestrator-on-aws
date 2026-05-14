@@ -113,11 +113,6 @@ RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
 #
 # Bump in lockstep with the deps-scan report; the value flows through
 # as ``NPM_VERSION`` in the Dockerfile.dev pins section.
-#
-# This bump also clears CVE-2026-33671 — npm 11.12.1 (the version that
-# currently ships with Node 24.x via nodesource) bundles
-# ``picomatch@4.0.3`` indirectly through ``tinyglobby``, and
-# picomatch@4.0.4 (in npm 11.13.0+) is the fixed version.
 ARG NPM_VERSION=11.14.1
 RUN npm install -g "npm@${NPM_VERSION}" \
     && npm --version

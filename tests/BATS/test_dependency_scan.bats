@@ -360,11 +360,12 @@ for m in re.finditer(r\"addon_name=\\\"([^\\\"]+)\\\".*?addon_version=\\\"([^\\\
 
 # ── extract_dockerfile_pins ──────────────────────────────────────────────────
 
-@test "extract_dockerfile_pins: finds all five pins in Dockerfile.dev" {
+@test "extract_dockerfile_pins: finds all six pins in Dockerfile.dev" {
     run extract_dockerfile_pins "Dockerfile.dev"
     [ "$status" -eq 0 ]
-    # All five allowlisted pins should be present.
+    # All six allowlisted pins should be present.
     [[ "$output" == *"NODE_MAJOR|"* ]]
+    [[ "$output" == *"NPM_VERSION|"* ]]
     [[ "$output" == *"CDK_VERSION|"* ]]
     [[ "$output" == *"KUBECTL_VERSION|"* ]]
     [[ "$output" == *"AWSCLI_VERSION|"* ]]
@@ -401,6 +402,17 @@ for m in re.finditer(r\"addon_name=\\\"([^\\\"]+)\\\".*?addon_version=\\\"([^\\\
     k_line="$(echo "$output" | grep '^KUBECTL_VERSION|')"
     value="${k_line#KUBECTL_VERSION|}"
     [[ "$value" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+@test "extract_dockerfile_pins: NPM_VERSION value is bare semver" {
+    # The npm pin in Dockerfile.dev is a bare ``X.Y.Z`` (no ``v``
+    # prefix) so it concatenates cleanly into ``npm install -g
+    # npm@${NPM_VERSION}``. Assert that shape is preserved.
+    run extract_dockerfile_pins "Dockerfile.dev"
+    [ "$status" -eq 0 ]
+    npm_line="$(echo "$output" | grep '^NPM_VERSION|')"
+    value="${npm_line#NPM_VERSION|}"
+    [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 }
 
 @test "extract_dockerfile_pins: ignores ARG names outside the allowlist" {

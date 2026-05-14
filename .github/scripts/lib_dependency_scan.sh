@@ -242,6 +242,7 @@ extract_k8s_version() {
 # Example output for Dockerfile.dev:
 #
 #     NODE_MAJOR|24
+#     NPM_VERSION|11.14.1
 #     CDK_VERSION|2.1120.0
 #     KUBECTL_VERSION|v1.35.4
 #     AWSCLI_VERSION|2.34.42
@@ -253,6 +254,7 @@ extract_dockerfile_pins() {
 import re, sys
 allowlist = {
     'NODE_MAJOR',
+    'NPM_VERSION',
     'CDK_VERSION',
     'KUBECTL_VERSION',
     'AWSCLI_VERSION',

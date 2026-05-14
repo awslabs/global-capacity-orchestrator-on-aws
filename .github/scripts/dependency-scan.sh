@@ -15,8 +15,8 @@
 #   - EKS Kubernetes minor from cdk.json (AWS creds)
 #   - Aurora PostgreSQL engine versions (AWS creds)
 #   - EMR Serverless release labels (AWS creds)
-#   - Dockerfile.dev ARG pins (Node LTS major, CDK CLI, kubectl, AWS CLI v2,
-#     Docker CLI) — public endpoints, no AWS creds needed
+#   - Dockerfile.dev ARG pins (Node LTS major, npm, CDK CLI, kubectl,
+#     AWS CLI v2, Docker CLI) — public endpoints, no AWS creds needed
 #   - Pre-commit hook revisions in .pre-commit-config.yaml compared
 #     against the latest tag published upstream (GitHub API)
 #   - CDK enum constants from gco/stacks/constants.py compared against the
@@ -491,6 +491,7 @@ EMR_COUNT="$(wc -l < "$EMR_RESULTS" 2>/dev/null | tr -d ' ')"
 # Each pin has its own upstream:
 #
 #   NODE_MAJOR     github://nodejs/Release → schedule.json (LTS majors)
+#   NPM_VERSION    registry.npmjs.org/npm/latest
 #   CDK_VERSION    registry.npmjs.org/aws-cdk/latest
 #   KUBECTL_VERSION https://dl.k8s.io/release/stable-<minor>.txt
 #                  (minor from cdk.json::kubernetes_version)
@@ -539,6 +540,17 @@ if candidates:
     CDK_VERSION)
       latest="$(curl -fsSL --max-time 15 \
         "https://registry.npmjs.org/aws-cdk/latest" 2>/dev/null \
+        | jq -r '.version // empty' 2>/dev/null)" || true
+      ;;
+    NPM_VERSION)
+      # ``npm`` is part of the dev container's pinned tooling — the
+      # version that ships bundled inside nodesource's nodejs apt
+      # package isn't pinned to a patch, so the Dockerfile installs a
+      # specific ``npm@X.Y.Z`` to keep rebuilds reproducible (same
+      # rationale as CDK_VERSION above). The canonical "latest" is the
+      # ``latest`` dist-tag on npmjs.org, same source CDK uses.
+      latest="$(curl -fsSL --max-time 15 \
+        "https://registry.npmjs.org/npm/latest" 2>/dev/null \
         | jq -r '.version // empty' 2>/dev/null)" || true
       ;;
     KUBECTL_VERSION)
