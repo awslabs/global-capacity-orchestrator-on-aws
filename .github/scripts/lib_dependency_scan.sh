@@ -271,6 +271,43 @@ with open(sys.argv[1]) as f:
 " "$file" 2>/dev/null
 }
 
+# extract_precommit_hooks [config_path]
+#
+# Parses ``.pre-commit-config.yaml`` and emits one ``repo|rev`` pair per
+# hook ``repo:`` block. The repo URL is left intact (it's needed to
+# resolve the upstream releases endpoint), and ``rev`` is the literal
+# string committed to the config — usually a tag like ``v0.15.7`` or
+# ``v1.19.1`` but pre-commit also tolerates plain semver and full SHAs.
+# Local hook stanzas (``repo: local``) and the pre-commit hook
+# meta-stanza (``repo: meta``) are skipped: there's no upstream release
+# to compare against.
+#
+# Falls back silently to an empty list if the file is missing or the
+# YAML can't be parsed — the caller treats that as "skip" rather than
+# "no drift", same pattern as the other extractors in this file.
+extract_precommit_hooks() {
+  local file="${1:-.pre-commit-config.yaml}"
+  [ -f "$file" ] || return 0
+  python3 -c "
+import sys, yaml
+try:
+    with open(sys.argv[1]) as f:
+        data = yaml.safe_load(f)
+except Exception:
+    sys.exit(0)
+for entry in (data or {}).get('repos', []) or []:
+    repo = (entry or {}).get('repo', '') or ''
+    rev = (entry or {}).get('rev', '') or ''
+    # ``local`` and ``meta`` are pre-commit conventions for hooks
+    # that aren't backed by an upstream repo; skip them.
+    if not repo or repo in ('local', 'meta'):
+        continue
+    if not rev:
+        continue
+    print(f'{repo}|{rev}')
+" "$file" 2>/dev/null
+}
+
 # extract_emr_versions <file>
 #
 # Extracts the pinned EMR Serverless release label from the constants module.
@@ -425,3 +462,82 @@ if candidates:
     print(max(candidates)[1])
 " 2>/dev/null
 }
+# get_latest_precommit_hook_release <repo_url>
+#
+# Given the ``repo:`` URL committed to ``.pre-commit-config.yaml``,
+# prints the latest semver-shaped tag from the upstream Git host so
+# the dep-scan can compare it against the pinned ``rev:``. Empty
+# output on network failure, an unsupported host, or when no tag
+# matches — callers treat that as "skip" rather than as drift.
+#
+# Today only GitHub repos are supported. Every hook in the project's
+# ``.pre-commit-config.yaml`` is hosted there, and the pre-commit
+# ecosystem is overwhelmingly GitHub-based. If a future hook lives
+# elsewhere (GitLab, Codeberg) the helper will return empty and the
+# scan logs a one-line skip note for that hook — no false drift.
+#
+# We use ``GET /repos/{owner}/{repo}/tags`` rather than
+# ``releases/latest`` because pre-commit pins ``rev:`` to a Git tag,
+# not a GitHub Release — and several hooks (yamllint, mirrors-mypy,
+# markdownlint-cli2) tag without ever cutting a Release. The tags
+# endpoint returns newest-first, so we filter to ``vX.Y.Z`` /
+# ``X.Y.Z`` / ``X.Y`` shapes, drop pre-release suffixes (``-rc1``,
+# ``-beta``), and take the highest by semver.
+#
+# Unauthenticated. The monthly scan calls this once per hook (four
+# times against today's config) — the unauthenticated GitHub API
+# limit is 60 req/h per IP, so a per-PAT/GITHUB_TOKEN bump to the
+# 5000 req/h authenticated bucket isn't worth the extra coupling.
+get_latest_precommit_hook_release() {
+  local repo_url="$1"
+  [ -n "$repo_url" ] || return 0
+
+  # Only GitHub is supported today. Strip any trailing ``.git`` or
+  # ``/`` so the owner/repo extraction works for both forms commonly
+  # seen in pre-commit configs.
+  local cleaned="${repo_url%.git}"
+  cleaned="${cleaned%/}"
+  case "$cleaned" in
+    https://github.com/*) ;;
+    *) return 0 ;;
+  esac
+
+  local owner_repo="${cleaned#https://github.com/}"
+  # Reject anything that isn't ``owner/repo`` (no extra path segments).
+  case "$owner_repo" in
+    */*/*) return 0 ;;
+    */*) ;;
+    *) return 0 ;;
+  esac
+
+  curl -fsSL --max-time 15 \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    "https://api.github.com/repos/${owner_repo}/tags?per_page=100" 2>/dev/null \
+    | python3 -c "
+import json, re, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+# pre-commit's ``rev:`` accepts ``vX.Y[.Z]``, ``X.Y[.Z]``, or full
+# SHAs. We compare on the semver-shaped ones; SHA-pinned hooks are
+# left alone (the helper returns empty and the caller skips them).
+pat = re.compile(r'^v?\d+\.\d+(?:\.\d+)?$')
+candidates = []
+for entry in data or []:
+    name = (entry or {}).get('name', '')
+    if not pat.match(name):
+        continue
+    stripped = name.lstrip('v')
+    parts = stripped.split('.')
+    try:
+        nums = tuple(int(p) for p in parts)
+    except ValueError:
+        continue
+    candidates.append((nums, name))
+if candidates:
+    print(max(candidates)[1])
+" 2>/dev/null
+}
+

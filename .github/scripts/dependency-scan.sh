@@ -17,6 +17,8 @@
 #   - EMR Serverless release labels (AWS creds)
 #   - Dockerfile.dev ARG pins (Node LTS major, CDK CLI, kubectl, AWS CLI v2,
 #     Docker CLI) — public endpoints, no AWS creds needed
+#   - Pre-commit hook revisions in .pre-commit-config.yaml compared
+#     against the latest tag published upstream (GitHub API)
 #   - CDK enum constants from gco/stacks/constants.py compared against the
 #     installed aws-cdk-lib (LAMBDA_PYTHON_RUNTIME, AURORA_POSTGRES_VERSION)
 #   - Latest stable Python release from endoflife.date — public endpoint
@@ -605,6 +607,55 @@ DOCKERFILE_COUNT="$(wc -l < "$DOCKERFILE_RESULTS" 2>/dev/null | tr -d ' ')"
 [ -z "$DOCKERFILE_COUNT" ] && DOCKERFILE_COUNT=0
 
 # ---------------------------------------------------------------------------
+# Pre-commit hook revisions
+#
+# Compares the ``rev:`` pinned for each ``repo:`` block in
+# ``.pre-commit-config.yaml`` against the latest semver-shaped tag
+# published by the upstream Git host. This catches drift Dependabot
+# can't see — pre-commit pins live in YAML, not in the package
+# ecosystems Dependabot monitors — and matters in practice because
+# stale hook pins quietly miss new lint rules and bug fixes.
+#
+# Each hook's repo URL is resolved to a tag list via the GitHub API
+# (the only host we use today). The helper returns empty for
+# non-GitHub repos or SHA-pinned ``rev:`` values, in which case that
+# hook is silently skipped — same pattern used by the AWS-creds-gated
+# checks above. Calls are unauthenticated; we make one request per
+# hook, which is well below the 60 req/h public limit.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Checking pre-commit hook revisions ==="
+
+PRECOMMIT_RESULTS="$(mktemp)"
+PRECOMMIT_CONFIG=".pre-commit-config.yaml"
+
+if [ -f "$PRECOMMIT_CONFIG" ]; then
+  extract_precommit_hooks "$PRECOMMIT_CONFIG" | while IFS='|' read -r repo current_rev; do
+    [ -z "$repo" ] && continue
+    [ -z "$current_rev" ] && continue
+
+    latest_rev="$(get_latest_precommit_hook_release "$repo")"
+    [ -z "$latest_rev" ] && continue
+
+    # Strip ``v`` so compare_semver ranks ``v0.22.1`` vs ``v0.22.2``
+    # (and the rare unprefixed ``1.38.0`` from yamllint historically)
+    # consistently. We keep the original ``current_rev`` / ``latest_rev``
+    # strings in the report so the operator copy-pastes the exact
+    # value pre-commit expects.
+    if [ "$current_rev" != "$latest_rev" ] \
+       && [ "$(compare_semver "$current_rev" "$latest_rev")" = "newer" ]; then
+      echo "  - ${repo}: ${current_rev} -> ${latest_rev}"
+      echo "${repo}|${current_rev}|${latest_rev}" >> "$PRECOMMIT_RESULTS"
+    fi
+  done
+else
+  echo "  $PRECOMMIT_CONFIG not found, skipping."
+fi
+
+PRECOMMIT_COUNT="$(wc -l < "$PRECOMMIT_RESULTS" 2>/dev/null | tr -d ' ')"
+[ -z "$PRECOMMIT_COUNT" ] && PRECOMMIT_COUNT=0
+
+# ---------------------------------------------------------------------------
 # CDK enum constants
 #
 # Compares the CDK-enum-name constants pinned in
@@ -733,6 +784,7 @@ else
   echo "EMR Serverless release:   $EMR_COUNT"
 fi
 echo "Dockerfile.dev pins:      $DOCKERFILE_COUNT"
+echo "Pre-commit hooks:         $PRECOMMIT_COUNT"
 if [ -n "$CDK_ENUM_SKIP_REASON" ]; then
   echo "CDK enum constants:       (skipped)"
 else
@@ -749,6 +801,7 @@ if [ "$PYTHON_COUNT" -eq 0 ] && [ "$DOCKER_COUNT" -eq 0 ] \
    && [ "$EKS_K8S_COUNT" -eq 0 ] \
    && [ "$AURORA_COUNT" -eq 0 ] && [ "$EMR_COUNT" -eq 0 ] \
    && [ "$DOCKERFILE_COUNT" -eq 0 ] \
+   && [ "$PRECOMMIT_COUNT" -eq 0 ] \
    && [ "$CDK_ENUM_COUNT" -eq 0 ] \
    && [ "$PYTHON_RELEASE_COUNT" -eq 0 ]; then
   echo ""
@@ -781,7 +834,7 @@ if [ "$PYTHON_COUNT" -eq 0 ] && [ "$DOCKER_COUNT" -eq 0 ] \
   else
     echo "All dependencies are up to date."
   fi
-  rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$EKS_K8S_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS" "$CDK_ENUM_RESULTS" "$PYTHON_RELEASE_RESULTS"
+  rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$EKS_K8S_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS" "$PRECOMMIT_RESULTS" "$CDK_ENUM_RESULTS" "$PYTHON_RELEASE_RESULTS"
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
     echo "has_drift=false" >> "$GITHUB_OUTPUT"
   fi
@@ -918,6 +971,22 @@ fi
     echo ""
   fi
 
+  if [ "$PRECOMMIT_COUNT" -gt 0 ]; then
+    echo "## Pre-commit Hooks"
+    echo ""
+    echo "Hook \`rev:\` pins in \`.pre-commit-config.yaml\` are behind the"
+    echo "latest tag published by their upstream repos. Bump in"
+    echo "\`.pre-commit-config.yaml\`, then run \`pre-commit autoupdate\`"
+    echo "locally (or edit by hand) and verify the hooks still pass."
+    echo ""
+    echo "| Repo | Current | Latest |"
+    echo "|------|---------|--------|"
+    while IFS='|' read -r repo cur lat; do
+      echo "| $repo | \`$cur\` | \`$lat\` |"
+    done < "$PRECOMMIT_RESULTS"
+    echo ""
+  fi
+
   if [ "$CDK_ENUM_COUNT" -gt 0 ]; then
     echo "## CDK Enum Constants"
     echo ""
@@ -977,7 +1046,7 @@ fi
   echo "_Automatically created by the \`deps-scan\` workflow._"
 } > "$REPORT_FILE"
 
-rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$EKS_K8S_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS" "$CDK_ENUM_RESULTS" "$PYTHON_RELEASE_RESULTS"
+rm -f "$DOCKER_RESULTS" "$HELM_RESULTS" "$ADDON_RESULTS" "$EKS_K8S_RESULTS" "$AURORA_RESULTS" "$EMR_RESULTS" "$DOCKERFILE_RESULTS" "$PRECOMMIT_RESULTS" "$CDK_ENUM_RESULTS" "$PYTHON_RELEASE_RESULTS"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "has_drift=true"            >> "$GITHUB_OUTPUT"
