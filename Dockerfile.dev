@@ -64,7 +64,7 @@
 #             -v ~/.colima/default/docker.sock:/var/run/docker.sock
 #       See https://github.com/abiosoft/colima for current defaults.
 
-FROM python:3.14.4-slim
+FROM python:3.14.5-slim
 
 # Multi-arch build args. BuildKit auto-populates TARGETARCH with the build
 # platform's Go-style arch name (`amd64` / `arm64`). We additionally derive
@@ -100,6 +100,22 @@ RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && node --version
+
+# Pin npm to a specific patch.
+#
+# The npm version that ships bundled inside the nodesource ``nodejs``
+# apt package isn't pinned to a patch — it tracks whatever was current
+# when the apt cache was last refreshed — so without this step the
+# image's tooling drifts every time the build is run. We pin it the
+# same way we pin every other contributor-facing tool below
+# (CDK CLI, kubectl, AWS CLI v2, Docker CLI) so rebuilds are
+# reproducible and Dependency-scan can flag drift cleanly.
+#
+# Bump in lockstep with the deps-scan report; the value flows through
+# as ``NPM_VERSION`` in the Dockerfile.dev pins section.
+ARG NPM_VERSION=11.14.1
+RUN npm install -g "npm@${NPM_VERSION}" \
+    && npm --version
 
 # Install AWS CDK CLI — pinned so the dev container and CI agree on the
 # synth output and bootstrap qualifier semantics. The CDK CLI

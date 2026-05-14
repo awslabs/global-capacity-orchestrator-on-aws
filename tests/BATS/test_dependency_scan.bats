@@ -360,11 +360,12 @@ for m in re.finditer(r\"addon_name=\\\"([^\\\"]+)\\\".*?addon_version=\\\"([^\\\
 
 # ── extract_dockerfile_pins ──────────────────────────────────────────────────
 
-@test "extract_dockerfile_pins: finds all five pins in Dockerfile.dev" {
+@test "extract_dockerfile_pins: finds all six pins in Dockerfile.dev" {
     run extract_dockerfile_pins "Dockerfile.dev"
     [ "$status" -eq 0 ]
-    # All five allowlisted pins should be present.
+    # All six allowlisted pins should be present.
     [[ "$output" == *"NODE_MAJOR|"* ]]
+    [[ "$output" == *"NPM_VERSION|"* ]]
     [[ "$output" == *"CDK_VERSION|"* ]]
     [[ "$output" == *"KUBECTL_VERSION|"* ]]
     [[ "$output" == *"AWSCLI_VERSION|"* ]]
@@ -401,6 +402,17 @@ for m in re.finditer(r\"addon_name=\\\"([^\\\"]+)\\\".*?addon_version=\\\"([^\\\
     k_line="$(echo "$output" | grep '^KUBECTL_VERSION|')"
     value="${k_line#KUBECTL_VERSION|}"
     [[ "$value" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+@test "extract_dockerfile_pins: NPM_VERSION value is bare semver" {
+    # The npm pin in Dockerfile.dev is a bare ``X.Y.Z`` (no ``v``
+    # prefix) so it concatenates cleanly into ``npm install -g
+    # npm@${NPM_VERSION}``. Assert that shape is preserved.
+    run extract_dockerfile_pins "Dockerfile.dev"
+    [ "$status" -eq 0 ]
+    npm_line="$(echo "$output" | grep '^NPM_VERSION|')"
+    value="${npm_line#NPM_VERSION|}"
+    [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 }
 
 @test "extract_dockerfile_pins: ignores ARG names outside the allowlist" {
@@ -464,6 +476,103 @@ FROM python:3.14-slim
 RUN echo "no args here"
 EOF
     run extract_dockerfile_pins "$tmpfile"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -f "$tmpfile"
+}
+
+# ── extract_precommit_hooks ─────────────────────────────────────────────────
+
+@test "extract_precommit_hooks: emits one repo|rev pair per real hook" {
+    run extract_precommit_hooks ".pre-commit-config.yaml"
+    [ "$status" -eq 0 ]
+    # Each line is exactly URL|REV — no stray whitespace, no leading dashes.
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        [[ "$line" =~ ^https?://[^[:space:]]+\|[^[:space:]]+$ ]] || {
+            echo "bad line: '$line'"
+            return 1
+        }
+    done <<< "$output"
+}
+
+@test "extract_precommit_hooks: includes the ruff and mypy hooks" {
+    # Both hooks live at the top of the project's config and have been
+    # there long enough that any change would be intentional. Asserting
+    # presence (rather than exact rev) keeps the test stable across
+    # routine bumps.
+    run extract_precommit_hooks ".pre-commit-config.yaml"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"https://github.com/astral-sh/ruff-pre-commit|"* ]]
+    [[ "$output" == *"https://github.com/pre-commit/mirrors-mypy|"* ]]
+}
+
+@test "extract_precommit_hooks: skips local and meta repos" {
+    tmpfile="$(mktemp)"
+    cat > "$tmpfile" <<'EOF'
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.7
+    hooks:
+      - id: ruff
+  - repo: local
+    hooks:
+      - id: my-script
+        name: My script
+        entry: ./my-script.sh
+        language: script
+  - repo: meta
+    hooks:
+      - id: check-hooks-apply
+EOF
+    run extract_precommit_hooks "$tmpfile"
+    [ "$status" -eq 0 ]
+    # Real hook is present.
+    [[ "$output" == *"https://github.com/astral-sh/ruff-pre-commit|v0.15.7"* ]]
+    # local/meta sentinels are skipped.
+    [[ "$output" != *"local|"* ]]
+    [[ "$output" != *"meta|"* ]]
+    # Exactly one line of output (just the ruff hook).
+    line_count="$(printf '%s\n' "$output" | grep -c '|' || true)"
+    [ "$line_count" -eq 1 ]
+    rm -f "$tmpfile"
+}
+
+@test "extract_precommit_hooks: skips hooks with no rev" {
+    # pre-commit allows omitting ``rev`` (e.g. for a meta-style repo
+    # entry that only declares hooks). Those entries have nothing to
+    # compare against and must be filtered out.
+    tmpfile="$(mktemp)"
+    cat > "$tmpfile" <<'EOF'
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.7
+    hooks:
+      - id: ruff
+  - repo: https://github.com/example/no-rev
+    hooks:
+      - id: example
+EOF
+    run extract_precommit_hooks "$tmpfile"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ruff-pre-commit|v0.15.7"* ]]
+    [[ "$output" != *"no-rev"* ]]
+    rm -f "$tmpfile"
+}
+
+@test "extract_precommit_hooks: returns empty for nonexistent file" {
+    run extract_precommit_hooks "/nonexistent/.pre-commit-config.yaml"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "extract_precommit_hooks: returns empty for malformed YAML" {
+    tmpfile="$(mktemp)"
+    cat > "$tmpfile" <<'EOF'
+repos: [
+  this is not valid yaml
+EOF
+    run extract_precommit_hooks "$tmpfile"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     rm -f "$tmpfile"
@@ -679,6 +788,127 @@ except Exception:
 "
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+}
+
+# ── get_latest_precommit_hook_release ───────────────────────────────────────
+#
+# The happy path needs a network round-trip to api.github.com, which we
+# don't want to take in the unit BATS suite — the live network calls
+# are exercised end-to-end by the deps-scan workflow itself. The tests
+# below focus on the URL-parsing branches that run before the curl
+# (skip non-GitHub hosts, reject malformed paths, accept ``.git`` /
+# trailing-slash variants), which is where regressions would actually
+# bite.
+
+@test "get_latest_precommit_hook_release: empty for empty input" {
+    run get_latest_precommit_hook_release ""
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "get_latest_precommit_hook_release: empty for non-GitHub host" {
+    # GitLab, Codeberg, etc. — no false drift; the helper just returns
+    # empty so the caller treats the hook as ``skipped``.
+    run get_latest_precommit_hook_release "https://gitlab.com/owner/repo"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+
+    run get_latest_precommit_hook_release "https://codeberg.org/owner/repo"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "get_latest_precommit_hook_release: empty for github.com URL with deeper path" {
+    # ``https://github.com/owner/repo/tree/main`` is technically a valid
+    # GitHub URL but not the form pre-commit accepts. We reject it
+    # before the API call so a typo doesn't 404 silently and pollute
+    # logs with a spurious request.
+    run get_latest_precommit_hook_release "https://github.com/owner/repo/tree/main"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "get_latest_precommit_hook_release: empty for github.com URL with no repo" {
+    run get_latest_precommit_hook_release "https://github.com/owner"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "get_latest_precommit_hook_release: trailing slash is tolerated" {
+    # We don't want the network call, so we simulate by replacing curl
+    # in PATH with a shim that prints a canned tags response. This
+    # exercises the URL-cleanup logic end-to-end without hitting the
+    # internet — same pattern other BATS suites in this file would use
+    # if they needed to.
+    tmpdir="$(mktemp -d)"
+    cat > "$tmpdir/curl" <<'SHIM'
+#!/usr/bin/env bash
+# Emit a tags-shaped JSON regardless of args so the helper's parser
+# gets something realistic. The tags below mix shapes (vX.Y.Z, X.Y.Z,
+# pre-release suffix, non-semver) so this also covers the parser.
+cat <<'JSON'
+[
+  {"name": "v1.2.3"},
+  {"name": "v1.3.0-rc1"},
+  {"name": "1.4.0"},
+  {"name": "release-2024"},
+  {"name": "v1.2.4"}
+]
+JSON
+SHIM
+    chmod +x "$tmpdir/curl"
+    PATH="$tmpdir:$PATH" run get_latest_precommit_hook_release "https://github.com/owner/repo/"
+    [ "$status" -eq 0 ]
+    # ``1.4.0`` is the highest valid semver in the fixture; non-semver
+    # and pre-release tags are filtered out.
+    [ "$output" = "1.4.0" ]
+    rm -rf "$tmpdir"
+}
+
+@test "get_latest_precommit_hook_release: .git suffix is stripped" {
+    tmpdir="$(mktemp -d)"
+    cat > "$tmpdir/curl" <<'SHIM'
+#!/usr/bin/env bash
+echo '[{"name": "v0.22.1"}]'
+SHIM
+    chmod +x "$tmpdir/curl"
+    PATH="$tmpdir:$PATH" run get_latest_precommit_hook_release "https://github.com/owner/repo.git"
+    [ "$status" -eq 0 ]
+    [ "$output" = "v0.22.1" ]
+    rm -rf "$tmpdir"
+}
+
+@test "get_latest_precommit_hook_release: empty when curl returns no tags" {
+    tmpdir="$(mktemp -d)"
+    cat > "$tmpdir/curl" <<'SHIM'
+#!/usr/bin/env bash
+echo '[]'
+SHIM
+    chmod +x "$tmpdir/curl"
+    PATH="$tmpdir:$PATH" run get_latest_precommit_hook_release "https://github.com/owner/repo"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmpdir"
+}
+
+@test "get_latest_precommit_hook_release: empty when no semver-shaped tags" {
+    # Only date-based tags, like a few infrastructure-as-code repos
+    # publish. The helper must return empty rather than guess.
+    tmpdir="$(mktemp -d)"
+    cat > "$tmpdir/curl" <<'SHIM'
+#!/usr/bin/env bash
+cat <<'JSON'
+[
+  {"name": "release-2024-09-01"},
+  {"name": "release-2024-10-01"}
+]
+JSON
+SHIM
+    chmod +x "$tmpdir/curl"
+    PATH="$tmpdir:$PATH" run get_latest_precommit_hook_release "https://github.com/owner/repo"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmpdir"
 }
 
 @test "extract_direct_python_deps: fixture with only transitive-shaped names" {

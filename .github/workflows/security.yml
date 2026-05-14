@@ -16,7 +16,9 @@
 #   - security:pip-audit:deps            — pip-audit on requirements-lock.txt
 #   - security:semgrep:sast              — semgrep scan --config auto
 #   - security:trivy:filesystem          — trivy fs on the source tree
-#   - security:trivy:container-scan      — trivy image on each built service image
+#   - security:trivy:container-scan      — trivy image on each built image
+#                                          (4 service images + helm-installer
+#                                          + Dockerfile.dev)
 #   - security:trufflehog:secrets        — trufflehog filesystem scan
 #
 # All scans are strict: if a scan finds issues the job fails. Fix the code,
@@ -170,6 +172,12 @@ jobs:
           - image: helm-installer
             dockerfile: lambda/helm-installer/Dockerfile
             context: lambda/helm-installer
+          # Dev container — never deployed, but contributors run host-side
+          # gco/cdk/kubectl commands inside it. Scanning here means a CVE
+          # in the dev image surfaces on the same PR that introduced the
+          # bump (rather than waiting for the next weekly cve-scan run).
+          - image: dev
+            dockerfile: Dockerfile.dev
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v4
