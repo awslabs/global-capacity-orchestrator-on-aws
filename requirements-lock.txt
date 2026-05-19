@@ -7,7 +7,9 @@
 aiofile==3.9.0
     # via py-key-value-aio
 annotated-doc==0.0.4
-    # via fastapi
+    # via
+    #   fastapi
+    #   typer
 annotated-types==0.7.0
     # via pydantic
 anyio==4.13.0
@@ -65,6 +67,8 @@ botocore==1.43.3
     #   s3transfer
 build==1.4.4
     # via pip-tools
+burner-redis==0.1.7
+    # via pydocket
 cachetools==7.0.6
     # via py-key-value-aio
 caio==0.9.25
@@ -95,7 +99,10 @@ click==8.3.3
     #   gco-cli
     #   gco-cli (pyproject.toml)
     #   pip-tools
+    #   typer
     #   uvicorn
+cloudpickle==3.1.2
+    # via pydocket
 constructs==10.6.0
     # via
     #   aws-cdk-aws-cognito-identitypool-alpha
@@ -107,6 +114,8 @@ constructs==10.6.0
     #   projen
 coverage==7.13.5
     # via pytest-cov
+cronsim==2.7
+    # via pydocket
 cryptography==47.0.0
     # via
     #   authlib
@@ -137,7 +146,9 @@ fastapi==0.136.1
     #   gco-cli
     #   gco-cli (pyproject.toml)
 fastmcp==3.2.4
-    # via gco-cli (pyproject.toml)
+    # via
+    #   gco-cli
+    #   gco-cli (pyproject.toml)
 filelock==3.29.0
     # via
     #   python-discovery
@@ -258,6 +269,8 @@ mypy-extensions==1.1.0
     # via mypy
 nodeenv==1.10.0
     # via pre-commit
+numpy==2.4.6
+    # via rank-bm25
 oauthlib==3.3.1
     # via requests-oauthlib
 openapi-pydantic==0.5.1
@@ -269,7 +282,9 @@ openapi-spec-validator==0.8.5
     #   gco-cli
     #   gco-cli (pyproject.toml)
 opentelemetry-api==1.41.1
-    # via fastmcp
+    # via
+    #   fastmcp
+    #   pydocket
 packaging==26.2
     # via
     #   build
@@ -307,6 +322,7 @@ prometheus-client==0.25.0
     # via
     #   gco-cli
     #   gco-cli (pyproject.toml)
+    #   pydocket
 psutil==7.2.2
     # via pytest-xdist
 publication==0.0.3
@@ -322,7 +338,9 @@ publication==0.0.3
     #   jsii
     #   projen
 py-key-value-aio==0.4.4
-    # via fastmcp
+    # via
+    #   fastmcp
+    #   pydocket
 pycparser==3.0
     # via cffi
 pydantic==2.13.3
@@ -338,11 +356,15 @@ pydantic==2.13.3
     #   pydantic-settings
 pydantic-core==2.46.3
     # via pydantic
+pydantic-monty==0.0.11
+    # via fastmcp
 pydantic-settings==2.14.0
     # via
     #   mcp
     #   openapi-schema-validator
     #   openapi-spec-validator
+pydocket==0.20.0
+    # via fastmcp
 pyee==13.0.1
     # via playwright
 pyflowchart==0.6.0
@@ -397,6 +419,8 @@ python-dotenv==1.2.2
     # via
     #   fastmcp
     #   pydantic-settings
+python-json-logger==4.1.0
+    # via pydocket
 python-multipart==0.0.27
     # via mcp
 pyyaml==6.0.3
@@ -410,6 +434,14 @@ pyyaml==6.0.3
     #   pre-commit
     #   responses
     #   yamllint
+rank-bm25==0.2.2
+    # via
+    #   gco-cli
+    #   gco-cli (pyproject.toml)
+redis==7.4.0
+    # via
+    #   py-key-value-aio
+    #   pydocket
 referencing==0.37.0
     # via
     #   jsonschema
@@ -435,7 +467,9 @@ rich==15.0.0
     #   bandit
     #   cyclopts
     #   fastmcp
+    #   pydocket
     #   rich-rst
+    #   typer
 rich-rst==1.3.2
     # via cyclopts
 rpds-py==0.30.0
@@ -450,6 +484,8 @@ s3transfer==0.17.0
     # via boto3
 secretstorage==3.5.0
     # via keyring
+shellingham==1.5.4
+    # via typer
 six==1.17.0
     # via
     #   kubernetes
@@ -478,6 +514,8 @@ typeguard==2.13.3
     #   constructs
     #   jsii
     #   projen
+typer==0.25.1
+    # via pydocket
 types-pyyaml==6.0.12.20250915
     # via
     #   gco-cli
@@ -497,6 +535,8 @@ typing-extensions==4.15.0
     #   py-key-value-aio
     #   pydantic
     #   pydantic-core
+    #   pydantic-monty
+    #   pydocket
     #   pyee
     #   typing-inspection
 typing-inspection==0.4.2
@@ -506,7 +546,9 @@ typing-inspection==0.4.2
     #   pydantic
     #   pydantic-settings
 uncalled-for==0.3.1
-    # via fastmcp
+    # via
+    #   fastmcp
+    #   pydocket
 urllib3==2.7.0
     # via
     #   botocore

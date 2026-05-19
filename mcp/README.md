@@ -238,7 +238,6 @@ python3 /absolute/path/to/global-capacity-orchestrator-on-aws/mcp/run_mcp.py
 
 Set environment variables on the launching shell to enable any feature flags (see [Feature Flags](#feature-flags) for the full list).
 
-
 ## Feature Flags
 
 A handful of GCO MCP tools can incur AWS charges, mutate live infrastructure, delete data, or run for tens of minutes at a time. Those tools are disabled by default and gated behind environment-variable feature flags so an LLM can't reach them through a stray prompt — you opt in only the categories you actually want enabled for a given client. Each flag is opt-in, defaults off, and is read fresh from the environment at server startup.
@@ -352,7 +351,6 @@ If your client relied on them, restore them by adding the flag to your `env` blo
 ```
 
 Setting the umbrella `GCO_ENABLE_ALL_TOOLS=true` also restores both tools alongside every other gated tool.
-
 
 ## Available Tools
 
@@ -564,7 +562,6 @@ The synthetic `read_resource` tool (added by FastMCP's Resources As Tools transf
 | `gco://cluster/{region}/topology` | NodePools plus pending pods for a region | safe | — |
 | `costs://gco/summary/{days_window}` | Cached cost summary scoped to the named window | safe | — |
 | `tasks://gco/{task_id}` | Status of a FastMCP background task | safe | — |
-
 
 ## Available Resources
 
@@ -791,7 +788,6 @@ Once connected, you can interact naturally:
 - "What's my cost this month?"
 - "Scale my-llm endpoint to 3 replicas"
 - "Submit examples/simple-job.yaml to the region with the most capacity"
-
 
 ## Recommended Companion MCP Servers
 
