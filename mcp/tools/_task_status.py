@@ -42,7 +42,7 @@ from collections import deque
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 # Keep at most this many task files (status + log) in the directory.
 # When a new task starts, anything older than the most recent N gets
@@ -183,7 +183,12 @@ class _suppress_oserror:
     def __enter__(self) -> _suppress_oserror:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object,
+    ) -> bool:
         return exc_type is not None and issubclass(exc_type, OSError)
 
 
@@ -259,7 +264,7 @@ class TaskStatusWriter:
 
         self._lock = threading.Lock()
         self._last_write_ts = 0.0
-        self._log_fp = None  # type: ignore[assignment]
+        self._log_fp: IO[str] | None = None
 
         if self._enabled:
             try:
