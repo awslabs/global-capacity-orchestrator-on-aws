@@ -1269,6 +1269,124 @@ class TestJobManagerParseJobInfo:
         assert result.status == "failed"
         assert result.failed_pods == 1
 
+    def test_parse_job_info_extracts_image_refs(self):
+        """The pod template's containers + initContainers carry the
+        image URIs that the orphan-image cross-reference depends on."""
+        from cli.jobs import JobManager
+
+        manager = JobManager()
+
+        job_data = {
+            "metadata": {
+                "name": "with-images",
+                "namespace": "gco-jobs",
+                "creationTimestamp": "2024-01-01T00:00:00Z",
+            },
+            "spec": {
+                "parallelism": 1,
+                "completions": 1,
+                "template": {
+                    "spec": {
+                        "containers": [
+                            {"name": "trainer", "image": "registry/train:v1"},
+                            {"name": "sidecar", "image": "registry/aux:v2"},
+                        ],
+                        "initContainers": [
+                            {"name": "data-prep", "image": "registry/init:v3"},
+                        ],
+                    },
+                },
+            },
+            "status": {"active": 1},
+        }
+
+        result = manager._parse_job_info(job_data, "us-east-1")
+
+        # Sorted, deduplicated.
+        assert result.image_refs == [
+            "registry/aux:v2",
+            "registry/init:v3",
+            "registry/train:v1",
+        ]
+
+    def test_parse_job_info_image_refs_empty_when_template_missing(self):
+        """A historical Job manifest without a template (or recorded
+        without one in DynamoDB) still parses cleanly with an empty
+        ``image_refs`` rather than raising."""
+        from cli.jobs import JobManager
+
+        manager = JobManager()
+
+        job_data = {
+            "metadata": {
+                "name": "no-template",
+                "namespace": "default",
+                "creationTimestamp": "2024-01-01T00:00:00Z",
+            },
+            "spec": {"parallelism": 1, "completions": 1},
+            "status": {"active": 1},
+        }
+
+        result = manager._parse_job_info(job_data, "us-east-1")
+        assert result.image_refs == []
+
+    def test_parse_job_info_image_refs_dedupes_repeated_refs(self):
+        """Multi-container jobs that share an image (common for sidecar
+        patterns) collapse to a single entry."""
+        from cli.jobs import JobManager
+
+        manager = JobManager()
+
+        job_data = {
+            "metadata": {"name": "shared", "creationTimestamp": "2024-01-01T00:00:00Z"},
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [
+                            {"name": "a", "image": "shared/img:v1"},
+                            {"name": "b", "image": "shared/img:v1"},
+                        ],
+                        "initContainers": [
+                            {"name": "init", "image": "shared/img:v1"},
+                        ],
+                    },
+                },
+            },
+            "status": {"active": 1},
+        }
+
+        result = manager._parse_job_info(job_data, "us-east-1")
+        assert result.image_refs == ["shared/img:v1"]
+
+    def test_parse_job_info_image_refs_skips_invalid_entries(self):
+        """Entries without an ``image`` key, with empty image, or with
+        non-string image values are filtered rather than poisoning the
+        ref set."""
+        from cli.jobs import JobManager
+
+        manager = JobManager()
+
+        job_data = {
+            "metadata": {"name": "messy", "creationTimestamp": "2024-01-01T00:00:00Z"},
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [
+                            {"name": "real", "image": "good/img:v1"},
+                            {"name": "no-image"},
+                            {"name": "empty-image", "image": ""},
+                            {"name": "non-string", "image": 42},
+                            "not-even-a-dict",
+                        ],
+                    },
+                },
+            },
+            "status": {"active": 1},
+        }
+
+        result = manager._parse_job_info(job_data, "us-east-1")
+        assert result.image_refs == ["good/img:v1"]
+
 
 class TestJobManagerQueryJobsInRegion:
     """Tests for JobManager._query_jobs_in_region method."""

@@ -787,8 +787,155 @@ class TestInferenceImageRefs:
         with patch("cli.inference.InferenceManager", return_value=fake_inference):
             assert manager._collect_inference_image_refs() == set()
 
-    def test_recent_job_image_refs_documented_empty(self, manager: ImageManager) -> None:
-        assert manager._collect_recent_job_image_refs() == set()
+    def test_recent_job_image_refs_unions_across_regions(self, manager: ImageManager) -> None:
+        from datetime import UTC, datetime
+
+        from cli.jobs import JobInfo
+
+        recent = datetime.now(UTC)
+        fake_jm = MagicMock()
+        fake_jm.list_jobs.return_value = [
+            JobInfo(
+                name="j1",
+                namespace="gco-jobs",
+                region="us-east-1",
+                status="succeeded",
+                created_time=recent,
+                image_refs=["registry/a:v1", "registry/b:v2"],
+            ),
+            JobInfo(
+                name="j2",
+                namespace="gco-jobs",
+                region="us-west-2",
+                status="running",
+                created_time=recent,
+                image_refs=["registry/a:v1", "registry/c:v3"],
+            ),
+        ]
+        with patch("cli.jobs.JobManager", return_value=fake_jm):
+            refs = manager._collect_recent_job_image_refs()
+        assert refs == {"registry/a:v1", "registry/b:v2", "registry/c:v3"}
+        fake_jm.list_jobs.assert_called_once_with(all_regions=True)
+
+    def test_recent_job_image_refs_skips_jobs_older_than_threshold(
+        self, manager: ImageManager
+    ) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from cli.jobs import JobInfo
+
+        old = datetime.now(UTC) - timedelta(days=120)
+        recent = datetime.now(UTC) - timedelta(days=1)
+        fake_jm = MagicMock()
+        fake_jm.list_jobs.return_value = [
+            JobInfo(
+                name="ancient",
+                namespace="gco-jobs",
+                region="us-east-1",
+                status="succeeded",
+                created_time=old,
+                image_refs=["should/not:appear"],
+            ),
+            JobInfo(
+                name="recent",
+                namespace="gco-jobs",
+                region="us-east-1",
+                status="succeeded",
+                created_time=recent,
+                image_refs=["should/appear:v1"],
+            ),
+        ]
+        with patch("cli.jobs.JobManager", return_value=fake_jm):
+            refs = manager._collect_recent_job_image_refs(threshold_days=30)
+        assert refs == {"should/appear:v1"}
+
+    def test_recent_job_image_refs_treats_missing_created_time_as_in_window(
+        self, manager: ImageManager
+    ) -> None:
+        """A freshly-submitted job that hasn't been picked up by the
+        cluster's status loop yet has ``created_time=None``. The helper
+        keeps it so its image isn't accidentally orphan-pruned."""
+        from cli.jobs import JobInfo
+
+        fake_jm = MagicMock()
+        fake_jm.list_jobs.return_value = [
+            JobInfo(
+                name="just-submitted",
+                namespace="gco-jobs",
+                region="us-east-1",
+                status="pending",
+                created_time=None,
+                image_refs=["fresh/img:v1"],
+            ),
+        ]
+        with patch("cli.jobs.JobManager", return_value=fake_jm):
+            refs = manager._collect_recent_job_image_refs()
+        assert refs == {"fresh/img:v1"}
+
+    def test_recent_job_image_refs_handles_naive_datetime(self, manager: ImageManager) -> None:
+        """Some test fixtures build ``JobInfo`` without a tz. The helper
+        normalises so the cutoff comparison doesn't blow up with a
+        ``can't compare naive and aware`` ``TypeError``."""
+        from datetime import datetime
+
+        from cli.jobs import JobInfo
+
+        # Naive datetime — caller didn't attach tzinfo.
+        naive_recent = datetime.now()
+        fake_jm = MagicMock()
+        fake_jm.list_jobs.return_value = [
+            JobInfo(
+                name="j",
+                namespace="gco-jobs",
+                region="us-east-1",
+                status="succeeded",
+                created_time=naive_recent,
+                image_refs=["img:v1"],
+            ),
+        ]
+        with patch("cli.jobs.JobManager", return_value=fake_jm):
+            refs = manager._collect_recent_job_image_refs()
+        assert refs == {"img:v1"}
+
+    def test_recent_job_image_refs_empty_when_jobs_module_blows_up(
+        self, manager: ImageManager
+    ) -> None:
+        with patch("cli.jobs.JobManager", side_effect=RuntimeError("boom")):
+            assert manager._collect_recent_job_image_refs() == set()
+
+    def test_recent_job_image_refs_empty_when_list_jobs_blows_up(
+        self, manager: ImageManager
+    ) -> None:
+        fake_jm = MagicMock()
+        fake_jm.list_jobs.side_effect = RuntimeError("api gateway down")
+        with patch("cli.jobs.JobManager", return_value=fake_jm):
+            assert manager._collect_recent_job_image_refs() == set()
+
+    def test_recent_job_image_refs_skips_invalid_entries(self, manager: ImageManager) -> None:
+        """Entries with non-string or empty ``image_refs`` items are
+        ignored rather than crashing the union."""
+        from datetime import UTC, datetime
+
+        from cli.jobs import JobInfo
+
+        fake_jm = MagicMock()
+        fake_jm.list_jobs.return_value = [
+            JobInfo(
+                name="j",
+                namespace="gco-jobs",
+                region="us-east-1",
+                status="succeeded",
+                created_time=datetime.now(UTC),
+                image_refs=["good/img:v1", "", "  ", "another/img:v2"],
+            ),
+        ]
+        with patch("cli.jobs.JobManager", return_value=fake_jm):
+            refs = manager._collect_recent_job_image_refs()
+        # Empty strings are filtered, whitespace-only is preserved as-is
+        # (it is a string, just an unusual one — set membership semantics).
+        assert "good/img:v1" in refs
+        assert "another/img:v2" in refs
+        assert "" not in refs
 
 
 # ---------------------------------------------------------------------------

@@ -252,6 +252,22 @@ def _parse_job_to_dict(job: V1Job) -> dict[str, Any]:
     if computed_status == "pending" and (status.active or 0) > 0:
         computed_status = "running"
 
+    # Pull container image refs from the pod template so callers (e.g.
+    # the orphan-image cross-reference) can identify which ECR images
+    # are still in use without a second round-trip per job.
+    template = getattr(spec, "template", None)
+    pod_spec = getattr(template, "spec", None) if template is not None else None
+    containers = getattr(pod_spec, "containers", None) or []
+    init_containers = getattr(pod_spec, "init_containers", None) or []
+    container_specs = [
+        {"name": getattr(c, "name", ""), "image": getattr(c, "image", "")}
+        for c in containers
+    ]
+    init_container_specs = [
+        {"name": getattr(c, "name", ""), "image": getattr(c, "image", "")}
+        for c in init_containers
+    ]
+
     return {
         "metadata": {
             "name": metadata.name,
@@ -267,6 +283,12 @@ def _parse_job_to_dict(job: V1Job) -> dict[str, Any]:
             "parallelism": spec.parallelism,
             "completions": spec.completions,
             "backoffLimit": spec.backoff_limit,
+            "template": {
+                "spec": {
+                    "containers": container_specs,
+                    "initContainers": init_container_specs,
+                },
+            },
         },
         "status": {
             "active": status.active or 0,

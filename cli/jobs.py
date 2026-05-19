@@ -55,6 +55,33 @@ def _first_manifest_namespace(manifests: list[dict[str, Any]]) -> str | None:
     return None
 
 
+def _extract_image_refs(spec: dict[str, Any]) -> list[str]:
+    """Extract container image refs from a parsed Job spec.
+
+    The API surface for a Job carries ``spec.template.spec.containers`` and
+    ``spec.template.spec.initContainers`` lists, each entry of which has
+    a ``name`` and an ``image`` URI. Returns an alphabetically-sorted,
+    deduplicated list so the output is stable across calls — orphan-image
+    cross-references rely on set equality.
+    """
+    refs: set[str] = set()
+    template = spec.get("template") if isinstance(spec, dict) else None
+    pod_spec = template.get("spec") if isinstance(template, dict) else None
+    if not isinstance(pod_spec, dict):
+        return []
+    for key in ("containers", "initContainers"):
+        items = pod_spec.get(key, [])
+        if not isinstance(items, list):
+            continue
+        for entry in items:
+            if not isinstance(entry, dict):
+                continue
+            image = entry.get("image")
+            if isinstance(image, str) and image:
+                refs.add(image)
+    return sorted(refs)
+
+
 @dataclass
 class JobInfo:
     """Information about a Kubernetes job."""
@@ -72,6 +99,7 @@ class JobInfo:
     parallelism: int = 1
     completions: int = 1
     labels: dict[str, str] = field(default_factory=dict)
+    image_refs: list[str] = field(default_factory=list)
 
     @property
     def is_complete(self) -> bool:
@@ -500,6 +528,7 @@ class JobManager:
             parallelism=spec.get("parallelism", 1),
             completions=spec.get("completions", 1),
             labels=metadata.get("labels", {}),
+            image_refs=_extract_image_refs(spec),
         )
 
     def get_job(self, job_name: str, namespace: str, region: str | None = None) -> JobInfo | None:

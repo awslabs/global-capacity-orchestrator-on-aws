@@ -921,7 +921,7 @@ class ImageManager:
         cutoff = datetime.now(UTC) - timedelta(days=threshold_days)
         referenced: set[str] = set()
         referenced.update(self._collect_inference_image_refs())
-        referenced.update(self._collect_recent_job_image_refs())
+        referenced.update(self._collect_recent_job_image_refs(threshold_days))
 
         rows: list[dict[str, Any]] = []
         for repo in self.list_repos():
@@ -971,16 +971,52 @@ class ImageManager:
                 refs.add(canary["image"])
         return refs
 
-    def _collect_recent_job_image_refs(self) -> set[str]:
-        """Best-effort: image URIs referenced by recent job manifests.
+    def _collect_recent_job_image_refs(self, threshold_days: int = 30) -> set[str]:
+        """Return image URIs referenced by jobs newer than ``threshold_days``.
 
-        The queue table schema is currently outside this manager's
-        immediate reach, so this returns an empty set rather than
-        attempting a fragile direct DynamoDB lookup. Documented as a
-        limitation; callers can enhance with a project-specific source
-        once the queue table contract stabilises.
+        Walks every deployed region via :class:`cli.jobs.JobManager` and
+        unions the ``image_refs`` field on each ``JobInfo`` whose
+        ``created_time`` is within the cutoff. Treats jobs without a
+        ``created_time`` as in-window so a freshly-submitted job that
+        hasn't yet been picked up by the cluster's status loop isn't
+        accidentally considered orphaned.
+
+        Best-effort: any per-region failure is logged at debug and
+        skipped so the orphan scan still completes against the
+        regions that did respond. The deferred import breaks an
+        otherwise-circular ``cli.images`` ↔ ``cli.jobs`` dependency.
         """
-        return set()
+        try:
+            from .jobs import JobManager
+        except Exception as e:  # noqa: BLE001
+            logger.debug("JobManager unavailable: %s", e)
+            return set()
+
+        try:
+            manager = JobManager(self.config)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("JobManager init failed: %s", e)
+            return set()
+
+        try:
+            jobs = manager.list_jobs(all_regions=True)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("list_jobs(all_regions=True) failed: %s", e)
+            return set()
+
+        cutoff = datetime.now(UTC) - timedelta(days=threshold_days)
+        refs: set[str] = set()
+        for job in jobs or []:
+            created = getattr(job, "created_time", None)
+            if isinstance(created, datetime):
+                created_aware = created if created.tzinfo else created.replace(tzinfo=UTC)
+                if created_aware < cutoff:
+                    continue
+            image_refs = getattr(job, "image_refs", None) or []
+            for ref in image_refs:
+                if isinstance(ref, str) and ref:
+                    refs.add(ref)
+        return refs
 
     @staticmethod
     def _parse_iso(value: Any) -> datetime | None:
