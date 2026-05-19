@@ -109,6 +109,39 @@ class TestSanitizeArguments:
         result = run_mcp._sanitize_arguments(args)
         assert result["region"] is None
 
+    def test_unserializable_value_replaced_with_type_placeholder(self):
+        """FastMCP injects ``Context`` and ``Progress`` dependencies as
+        keyword arguments on every long-running tool. Those objects aren't
+        JSON-serializable, so without this guard the audit decorator raises
+        ``TypeError: Object of type Context is not JSON serializable``
+        before the tool ever runs. Replacing the value with a type-only
+        placeholder lets the audit log keep its shape and the tool keep
+        running."""
+
+        class _UnserializableContext:
+            pass
+
+        args = {"region": "us-east-1", "ctx": _UnserializableContext()}
+        result = run_mcp._sanitize_arguments(args)
+        assert result["region"] == "us-east-1"
+        assert result["ctx"] == "<unserializable: _UnserializableContext>"
+
+        # The whole sanitized dict must round-trip through json.dumps now.
+        json.dumps(result)
+
+    def test_unserializable_object_with_sensitive_key_still_redacted(self):
+        """Redaction takes priority over the unserializable-fallback so
+        objects sitting under sensitive key names never leak even a type
+        name."""
+
+        class _Token:
+            pass
+
+        args = {"auth_token": _Token()}
+        result = run_mcp._sanitize_arguments(args)
+        assert result["auth_token"] == "[REDACTED]"
+        json.dumps(result)
+
 
 class TestAuditLoggedDecorator:
     """Tests for the audit_logged decorator."""

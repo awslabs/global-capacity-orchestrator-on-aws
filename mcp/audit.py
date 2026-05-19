@@ -71,6 +71,15 @@ def _sanitize_arguments(kwargs: dict[str, Any]) -> dict[str, Any]:
 
     - Redact values whose key name matches sensitive patterns (token, secret, password, key).
     - Truncate string values longer than 1KB to first 100 chars + '[truncated]'.
+    - Replace values that aren't JSON-serializable (e.g. FastMCP ``Context``
+      and ``Progress`` dependencies injected as keyword arguments) with a
+      type-only placeholder so ``json.dumps(_build_audit_entry(...))`` can't
+      raise ``TypeError`` mid-tool. Without this guard, every long-running
+      tool that takes ``ctx``/``progress`` (deploy_all, destroy_all,
+      bootstrap_cdk, deploy_stack, destroy_stack, images_build,
+      images_push) crashes the wrapper with
+      ``Object of type Context is not JSON serializable`` before the
+      underlying CLI ever runs.
     """
     sanitized = {}
     for k, v in kwargs.items():
@@ -83,8 +92,18 @@ def _sanitize_arguments(kwargs: dict[str, Any]) -> dict[str, Any]:
         str_val = str(v) if not isinstance(v, str) else v
         if len(str_val.encode("utf-8", errors="replace")) > _MAX_ARG_VALUE_BYTES:
             sanitized[k] = str_val[:100] + "[truncated]"
-        else:
+            continue
+
+        # Probe JSON-serializability so injected dependencies (FastMCP
+        # Context / Progress, dataclasses without ``default``, etc.) don't
+        # blow up the audit emission. Bare primitives short-circuit the
+        # try/except since ``json.dumps`` on str/int/float/bool/None/list/
+        # dict-of-primitives is ~free.
+        try:
+            json.dumps(v)
             sanitized[k] = v
+        except (TypeError, ValueError):
+            sanitized[k] = f"<unserializable: {type(v).__name__}>"
     return sanitized
 
 
