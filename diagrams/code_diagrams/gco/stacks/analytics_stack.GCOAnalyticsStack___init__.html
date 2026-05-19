@@ -205,48 +205,48 @@ function base64ToSvgDocument(base64) {
         </script>
     </head>
     <body>
-        <div><textarea id="code" style="width: 100%;" rows="11">sub1813=>subroutine: super().__init__(scope, construct_id, **kwargs)
-op1815=>operation: self.config = config
-op1817=>operation: self.api_gateway_secret_arn = api_gateway_secret_arn
-op1819=>operation: cfg = config.get_analytics_config()
-op1821=>operation: self.hyperpod_enabled: bool = bool(cfg['hyperpod']['enabled'])
-op1823=>operation: self.canvas_enabled: bool = bool(cfg['canvas']['enabled'])
-op1825=>operation: self.efs_removal: RemovalPolicy = _parse_removal(cfg['efs']['removal_policy'])
-op1827=>operation: self.cognito_removal: RemovalPolicy = _parse_removal(cfg['cognito']['removal_policy'])
-op1829=>operation: self._cognito_domain_prefix_override: str | None = cfg['cognito'].get('domain_prefix')
-sub1831=>subroutine: self._create_kms_key()
-sub1833=>subroutine: self._create_vpc_and_endpoints()
-sub1835=>subroutine: self._create_access_logs_bucket()
-sub1837=>subroutine: self._create_studio_only_bucket()
-sub1839=>subroutine: self._create_studio_efs()
-sub1841=>subroutine: self._create_execution_role_and_grants()
-sub1843=>subroutine: self._grant_sagemaker_role_on_cluster_shared_bucket()
-sub1845=>subroutine: self._create_studio_domain()
-sub1847=>subroutine: self._create_emr_app()
-sub1849=>subroutine: self._create_cognito_pool()
-sub1851=>subroutine: self._create_presigned_url_lambda()
-sub1853=>subroutine: self._apply_nag_suppressions()
+        <div><textarea id="code" style="width: 100%;" rows="11">sub1852=>subroutine: super().__init__(scope, construct_id, **kwargs)
+op1854=>operation: self.config = config
+op1856=>operation: self.api_gateway_secret_arn = api_gateway_secret_arn
+op1858=>operation: cfg = config.get_analytics_config()
+op1860=>operation: self.hyperpod_enabled: bool = bool(cfg['hyperpod']['enabled'])
+op1862=>operation: self.canvas_enabled: bool = bool(cfg['canvas']['enabled'])
+op1864=>operation: self.efs_removal: RemovalPolicy = _parse_removal(cfg['efs']['removal_policy'])
+op1866=>operation: self.cognito_removal: RemovalPolicy = _parse_removal(cfg['cognito']['removal_policy'])
+op1868=>operation: self._cognito_domain_prefix_override: str | None = cfg['cognito'].get('domain_prefix')
+sub1870=>subroutine: self._create_kms_key()
+sub1872=>subroutine: self._create_vpc_and_endpoints()
+sub1874=>subroutine: self._create_access_logs_bucket()
+sub1876=>subroutine: self._create_studio_only_bucket()
+sub1878=>subroutine: self._create_studio_efs()
+sub1880=>subroutine: self._create_execution_role_and_grants()
+sub1882=>subroutine: self._grant_sagemaker_role_on_cluster_shared_bucket()
+sub1884=>subroutine: self._create_studio_domain()
+sub1886=>subroutine: self._create_emr_app()
+sub1888=>subroutine: self._create_cognito_pool()
+sub1890=>subroutine: self._create_presigned_url_lambda()
+sub1892=>subroutine: self._apply_nag_suppressions()
 
-sub1813->op1815
-op1815->op1817
-op1817->op1819
-op1819->op1821
-op1821->op1823
-op1823->op1825
-op1825->op1827
-op1827->op1829
-op1829->sub1831
-sub1831->sub1833
-sub1833->sub1835
-sub1835->sub1837
-sub1837->sub1839
-sub1839->sub1841
-sub1841->sub1843
-sub1843->sub1845
-sub1845->sub1847
-sub1847->sub1849
-sub1849->sub1851
-sub1851->sub1853
+sub1852->op1854
+op1854->op1856
+op1856->op1858
+op1858->op1860
+op1860->op1862
+op1862->op1864
+op1864->op1866
+op1866->op1868
+op1868->sub1870
+sub1870->sub1872
+sub1872->sub1874
+sub1874->sub1876
+sub1876->sub1878
+sub1878->sub1880
+sub1880->sub1882
+sub1882->sub1884
+sub1884->sub1886
+sub1886->sub1888
+sub1888->sub1890
+sub1890->sub1892
 </textarea></div>
         <div><button id="run" type="button">Run</button> <button onclick="HelpText()">Format Help</button></div>
         <div id="HelpTextBlock" style="display:none"><br/>Conditions can also be redirected like cond(yes, bottom) or cond(yes, right)

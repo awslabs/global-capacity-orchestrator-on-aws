@@ -28,12 +28,14 @@ from .commands import (
     costs,
     dag,
     files,
+    images,
     inference,
     jobs,
     models,
     nodepools,
     queue,
     stacks,
+    tasks,
     templates,
     webhooks,
 )
@@ -136,6 +138,7 @@ cli.add_command(templates)
 cli.add_command(webhooks)
 cli.add_command(capacity)
 cli.add_command(inference)
+cli.add_command(images)
 cli.add_command(models)
 cli.add_command(nodepools)
 cli.add_command(costs)
@@ -143,6 +146,7 @@ cli.add_command(stacks)
 cli.add_command(files)
 cli.add_command(config_cmd)
 cli.add_command(analytics)
+cli.add_command(tasks)
 
 
 def main() -> None:

@@ -101,6 +101,8 @@ class TestParseJobToDict:
         conditions=None,
         start_time=None,
         completion_time=None,
+        containers=None,
+        init_containers=None,
     ):
         ts = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
 
@@ -122,6 +124,20 @@ class TestParseJobToDict:
         job.spec.parallelism = 1
         job.spec.completions = 1
         job.spec.backoff_limit = 6
+
+        # The pod template carries the container image refs that the
+        # orphan-image cross-reference reads through ``image_refs`` on
+        # the JobInfo dataclass. Default to a single container so
+        # existing tests continue to exercise a realistic shape.
+        if containers is None:
+            container = MagicMock()
+            container.name = "main"
+            container.image = "registry/test-job:v1"
+            containers = [container]
+        if init_containers is None:
+            init_containers = []
+        job.spec.template.spec.containers = containers
+        job.spec.template.spec.init_containers = init_containers
 
         return job
 
@@ -199,6 +215,48 @@ class TestParseJobToDict:
         assert conds[0]["type"] == "Complete"
         assert conds[0]["status"] == "True"
         assert conds[0]["lastTransitionTime"] is not None
+
+    def test_template_carries_container_image_refs(self):
+        c1 = MagicMock()
+        c1.name = "trainer"
+        c1.image = "registry/train:v2"
+        c2 = MagicMock()
+        c2.name = "sidecar"
+        c2.image = "registry/aux:v1"
+
+        init = MagicMock()
+        init.name = "data-prep"
+        init.image = "registry/init:v3"
+
+        job = self._make_job(conditions=[], containers=[c1, c2], init_containers=[init])
+        result = _parse_job_to_dict(job)
+
+        template_spec = result["spec"]["template"]["spec"]
+        assert {c["name"] for c in template_spec["containers"]} == {"trainer", "sidecar"}
+        assert {c["image"] for c in template_spec["containers"]} == {
+            "registry/train:v2",
+            "registry/aux:v1",
+        }
+        assert template_spec["initContainers"] == [
+            {"name": "data-prep", "image": "registry/init:v3"}
+        ]
+
+    def test_template_handles_missing_containers_lists(self):
+        """Older serialised Jobs may lack ``containers`` / ``initContainers``
+        attributes entirely. The helper coerces missing collections to
+        empty lists rather than blowing up — the parse path must not
+        regress when reading historical Job objects."""
+        job = self._make_job(conditions=[])
+        # Force the container list attributes to None to simulate a
+        # malformed kubernetes-client response.
+        job.spec.template.spec.containers = None
+        job.spec.template.spec.init_containers = None
+
+        result = _parse_job_to_dict(job)
+
+        template_spec = result["spec"]["template"]["spec"]
+        assert template_spec["containers"] == []
+        assert template_spec["initContainers"] == []
 
 
 # ---------------------------------------------------------------------------

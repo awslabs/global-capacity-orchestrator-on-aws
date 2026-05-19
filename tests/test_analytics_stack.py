@@ -885,7 +885,7 @@ class TestSageMakerExecutionRole:
             for res in resources:
                 # Mock config sets project name = "gco-test", so the
                 # resolved pattern is ``arn:aws:sqs:*:<account>:gco-test-jobs-*``.
-                # The general shape is ``gco-*-jobs-*`` per the spec — assert
+                # The general shape is ``gco-*-jobs-*`` by design — assert
                 # the core of the pattern without pinning to the mock project.
                 if isinstance(res, str) and res.endswith("-jobs-*") and ":sqs:" in res:
                     matches.append(stmt)

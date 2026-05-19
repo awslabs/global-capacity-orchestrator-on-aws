@@ -381,7 +381,7 @@ class InferenceMonitor:
 
         # Check if image changed
         current_image = self._get_deployment_image(deployment)
-        desired_image = spec.get("image", "")
+        desired_image = self._resolve_image_for_region(spec) if spec.get("image") else ""
         if current_image and desired_image and current_image != desired_image:
             logger.info("Updating endpoint %s image: %s → %s", name, current_image, desired_image)
             self._update_deployment_image(name, namespace, desired_image)
@@ -500,10 +500,32 @@ class InferenceMonitor:
             return image
         return None
 
+    def _resolve_image_for_region(self, spec: dict[str, Any]) -> str:
+        """Pick the image URI this region should pull from.
+
+        ``cli.inference.InferenceManager.deploy`` populates
+        ``spec["region_image_uris"]`` with a per-region map when the
+        primary image is an ECR URI, so each cluster can pull from its
+        local replica instead of crossing the WAN. The map is omitted
+        for non-ECR refs and for deploys with ``rewrite_image=False``,
+        in which case we fall back to the flat ``spec["image"]`` URI.
+
+        When the map is present but lacks an entry for ``self.region``
+        (a target region was added after the spec was last written),
+        the flat URI is also used so the deployment doesn't break — the
+        next reconcile after a fresh deploy picks up the right URI.
+        """
+        region_map = spec.get("region_image_uris")
+        if isinstance(region_map, dict):
+            uri = region_map.get(self.region)
+            if isinstance(uri, str) and uri:
+                return uri
+        return str(spec["image"])
+
     def _create_deployment(self, name: str, namespace: str, spec: dict[str, Any]) -> None:
         """Create a Kubernetes Deployment for an inference endpoint."""
         replicas = spec.get("replicas", 1)
-        image = spec["image"]
+        image = self._resolve_image_for_region(spec)
         port = spec.get("port", 8000)
         gpu_count = spec.get("gpu_count", 1)
         health_path = spec.get("health_check_path", "/health")

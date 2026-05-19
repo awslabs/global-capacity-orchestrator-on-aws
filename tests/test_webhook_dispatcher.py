@@ -384,7 +384,19 @@ class TestWebhookDispatcher:
         job.status.start_time = None
         job.status.completion_time = None
 
-        with patch("httpx.AsyncClient") as mock_client_class:
+        # Bypass the SSRF DNS-resolution gate so the test doesn't depend on
+        # ``example1.com``/``example2.com`` resolving on the CI runner. The
+        # dispatcher calls ``validate_webhook_url`` before any HTTP request,
+        # and on hosted runners those bogus domains return ``gaierror``,
+        # which marks the delivery as a validation failure before httpx is
+        # ever touched.
+        with (
+            patch(
+                "gco.services.webhook_dispatcher.validate_webhook_url",
+                return_value=(True, None),
+            ),
+            patch("httpx.AsyncClient") as mock_client_class,
+        ):
             mock_client = AsyncMock()
             mock_response = MagicMock()
             mock_response.status_code = 200

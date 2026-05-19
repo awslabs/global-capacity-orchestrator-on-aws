@@ -5,7 +5,7 @@ from audit import audit_logged
 from server import mcp
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "costs"})
 @audit_logged
 def cost_summary(days: int = 30) -> str:
     """Get total GCO spend broken down by AWS service.
@@ -16,7 +16,7 @@ def cost_summary(days: int = 30) -> str:
     return cli_runner._run_cli("costs", "summary", "--days", str(days))
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "costs"})
 @audit_logged
 def cost_by_region(days: int = 30) -> str:
     """Get cost breakdown by AWS region.
@@ -27,7 +27,7 @@ def cost_by_region(days: int = 30) -> str:
     return cli_runner._run_cli("costs", "regions", "--days", str(days))
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "costs"})
 @audit_logged
 def cost_trend(days: int = 14) -> str:
     """Get daily cost trend.
@@ -38,7 +38,7 @@ def cost_trend(days: int = 14) -> str:
     return cli_runner._run_cli("costs", "trend", "--days", str(days))
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "costs"})
 @audit_logged
 def cost_forecast(days_ahead: int = 30) -> str:
     """Forecast GCO costs for the next N days.

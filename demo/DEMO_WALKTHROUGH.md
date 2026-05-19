@@ -40,7 +40,7 @@ To replicate this demo, you'll need:
 
 - An AWS account with GPU quota in at least one region
 - AWS CLI configured with appropriate credentials
-- Python 3.10+, Node.js (LTS), CDK CLI
+- Python 3.14+, Node.js (LTS), CDK CLI
 - A container runtime (Docker, Podman or Finch)
 
 ```bash

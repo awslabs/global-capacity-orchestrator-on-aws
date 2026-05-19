@@ -207,4 +207,44 @@ TARGETS: list[Target] = [
         function="GCOAnalyticsStack._create_studio_domain",
         title="Analytics stack Studio domain (Canvas override branch)",
     ),
+    # --- MCP server branchy modules --------------------------------------
+    # New code-diagram targets for the branchy MCP modules introduced by
+    # this work. Each one carries real control flow tied to feature
+    # flags, FastMCP Tasks cancellation, image-registry replication,
+    # or audit-log enrichment.
+    Target(
+        source="cli/_container_runtime.py",
+        function="detect_container_runtime",
+        title="Container runtime detection (docker > finch > podman)",
+    ),
+    Target(
+        source="cli/images.py",
+        function="ImageManager.build",
+        title="gco images build — context validation, login, build, push",
+    ),
+    Target(
+        source="cli/images.py",
+        function="ImageManager.push",
+        title="gco images push — auth + push existing local image",
+    ),
+    Target(
+        source="cli/images.py",
+        function="ImageManager.cleanup",
+        title="gco images cleanup — bulk tag delete with filter branches",
+    ),
+    Target(
+        source="mcp/audit.py",
+        function="audit_logged",
+        title="MCP audit_logged decorator (sync + async dispatch, Context capture)",
+    ),
+    Target(
+        source="mcp/tools/_long_task.py",
+        function="_run_long_task",
+        title="MCP long-task runner (drain, progress, cancel + SIGTERM/SIGKILL)",
+    ),
+    Target(
+        source="lambda/image-lookup/handler.py",
+        function="lambda_handler",
+        title="Image-lookup-or-create custom resource Lambda",
+    ),
 ]

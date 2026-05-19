@@ -10,11 +10,22 @@ def register_all_tools() -> None:
     # Intentionally unused — each submodule registers @mcp.tool() handlers
     # at import time. The noqa silences F401.
     from tools import (  # noqa: F401
+        analytics,
         capacity,
+        config,
         costs,
+        dag,
+        docs,
+        examples,
+        images,
         inference,
         jobs,
         models,
+        nodepools,
+        queue,
         stacks,
         storage,
+        tasks,
+        templates,
+        webhooks,
     )

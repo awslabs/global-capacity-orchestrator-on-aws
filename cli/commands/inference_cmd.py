@@ -70,6 +70,13 @@ def inference(config: Any) -> None:
     multiple=True,
     help="Node selector (key=value). Repeatable. E.g. --node-selector eks.amazonaws.com/instance-family=inf2",
 )
+@click.option(
+    "--no-rewrite-image",
+    is_flag=True,
+    default=False,
+    help="Skip the per-region ECR URI rewrite. The image URI is sent verbatim "
+    "to every target region (operator owns cross-region pulls).",
+)
 @pass_config
 def inference_deploy(
     config: Any,
@@ -93,6 +100,7 @@ def inference_deploy(
     extra_args: Any,
     accelerator: Any,
     node_selector: Any,
+    no_rewrite_image: Any,
 ) -> None:
     """Deploy an inference endpoint to one or more regions.
 
@@ -170,6 +178,7 @@ def inference_deploy(
             extra_args=list(extra_args) if extra_args else None,
             accelerator=accelerator,
             node_selector=node_selector_dict if node_selector_dict else None,
+            rewrite_image=not no_rewrite_image,
         )
 
         formatter.print_success(f"Endpoint '{endpoint_name}' registered for deployment")

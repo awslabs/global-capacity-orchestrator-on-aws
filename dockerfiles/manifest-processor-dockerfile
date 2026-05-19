@@ -7,9 +7,19 @@ FROM python:3.14.5-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
+# Install system dependencies and apply security upgrades.
+#
+# ``apt-get upgrade`` pulls security-only patches that are newer than
+# what ships in the base image's snapshot. The ``python:3.14.5-slim``
+# tag is pinned to a Debian trixie snapshot, and security fixes for
+# CVEs in libcap2, libsystemd0, libudev1, and similar transitive
+# packages are released into ``trixie-security`` between snapshots.
+# Running ``upgrade`` here picks them up at build time so the resulting
+# image doesn't ship known-fixed HIGH CVEs.
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+        curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,11 +29,21 @@ RUN groupadd -r gco && useradd -r -g gco -u 1000 gco
 # Copy project metadata and install Python dependencies
 # Use the lockfile for reproducible transitive dependency versions,
 # then install the project itself without re-resolving.
+#
+# pip flags + bash retry loop guard against transient PyPI/CDN drops
+# (see Dockerfile.dev for the rationale; same pattern across every
+# image build in the repo).
 COPY requirements-lock.txt ./
 COPY pyproject.toml ./
 COPY gco/ ./gco/
 COPY cli/ ./cli/
-RUN pip install --no-cache-dir -r requirements-lock.txt \
+RUN for attempt in 1 2 3; do \
+        pip install --no-cache-dir \
+            --retries 10 --timeout 120 --resume-retries 5 \
+            -r requirements-lock.txt && break; \
+        echo "pip install attempt ${attempt} failed; retrying in 10s..."; \
+        sleep 10; \
+    done \
     && pip install --no-cache-dir --no-deps .
 
 # Set Python path

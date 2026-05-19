@@ -40,7 +40,7 @@ The container itself ships Python 3.14, Node.js 24, CDK, kubectl, AWS CLI, and e
 
 **Host development path additionally needs:**
 
-- Python 3.10+ (required for type union syntax `str | None`)
+- Python 3.14+ (required for the un-parenthesized except-tuple syntax in `mcp/resources/config.py`)
 - Node.js 24+ (for CDK)
 - kubectl
 - A clean virtualenv (or pipx) for the GCO Python deps — see the warning under [Local Development Environment (Advanced)](#local-development-environment-advanced).
@@ -152,7 +152,7 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-If `pip install` fails with `ResolutionImpossible` or "the conflict is caused by..." messages, your venv is not actually clean (or you're on a Python version older than 3.10). Recreate the venv from scratch or switch to the dev container — please don't loosen the pins in `pyproject.toml` or `requirements-lock.txt` to make local install work, since CI will reject the lockfile drift.
+If `pip install` fails with `ResolutionImpossible` or "the conflict is caused by..." messages, your venv is not actually clean (or you're on a Python version older than 3.14). Recreate the venv from scratch or switch to the dev container — please don't loosen the pins in `pyproject.toml` or `requirements-lock.txt` to make local install work, since CI will reject the lockfile drift.
 
 ## Development Workflow
 
@@ -359,7 +359,7 @@ pytest tests/
 pytest tests/test_integration.py
 
 # Run with coverage
-pytest --cov=gco --cov=cli tests/
+pytest --cov=gco --cov=cli --cov=mcp tests/
 
 # Run with verbose output
 pytest tests/ -v
@@ -432,7 +432,7 @@ mypy gco/stacks/ app.py
 bandit -r gco/ cli/ -c pyproject.toml --severity-level medium
 
 # Run tests with coverage (matches unit:pytest:core)
-pytest tests/ --cov=gco --cov=cli --cov-report=html --cov-fail-under=90 \
+pytest tests/ --cov=gco --cov=cli --cov=mcp --cov-report=html --cov-fail-under=90 \
     --ignore=tests/test_nag_compliance.py
 
 # Run cdk-nag compliance matrix (matches unit:cdk:nag-compliance)

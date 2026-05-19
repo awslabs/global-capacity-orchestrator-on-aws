@@ -23,9 +23,18 @@ RUN curl -LO "https://dl.k8s.io/release/v1.35.4/bin/linux/amd64/kubectl" && \
     chmod +x kubectl && \
     mv kubectl /usr/local/bin/kubectl
 
-# Install Python dependencies
+# Install Python dependencies.
+#
+# pip flags + bash retry loop guard against transient PyPI/CDN drops
+# (see Dockerfile.dev for the rationale).
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN for attempt in 1 2 3; do \
+        pip install --no-cache-dir \
+            --retries 10 --timeout 120 --resume-retries 5 \
+            -r requirements.txt && break; \
+        echo "pip install attempt ${attempt} failed; retrying in 10s..."; \
+        sleep 10; \
+    done
 
 # Copy handler code
 COPY handler.py .

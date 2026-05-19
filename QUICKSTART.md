@@ -40,7 +40,7 @@ docker info         # confirms the daemon is running
 You'll additionally need:
 
 ```bash
-# Python 3.10+ (3.14 used in CI)
+# Python 3.14+ (3.14 used in CI)
 python3 --version
 
 # Node.js LTS (v24) and CDK CLI
@@ -291,7 +291,7 @@ The inference_monitor in each target region automatically creates the Kubernetes
 
 ### MCP Server (for Cursor / Kiro / LLM integration)
 
-GCO includes an MCP server with 44 tools that wrap the CLI. The dev container already has the `[mcp]` extras installed, so all you need is the client-side config. The most portable form passes an absolute path in `args` (works in Cursor, Kiro, Claude Desktop, etc.):
+GCO includes an MCP server with 90 tools by default (up to 111 with feature flags) that wrap the CLI. The dev container already has the `[mcp]` extras installed, so all you need is the client-side config. The most portable form passes an absolute path in `args` (works in Cursor, Kiro, Claude Desktop, etc.):
 
 ```jsonc
 // ~/.cursor/mcp.json  (or ~/.kiro/settings/mcp.json)

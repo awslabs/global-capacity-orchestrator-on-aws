@@ -109,6 +109,39 @@ class TestSanitizeArguments:
         result = run_mcp._sanitize_arguments(args)
         assert result["region"] is None
 
+    def test_unserializable_value_replaced_with_type_placeholder(self):
+        """FastMCP injects ``Context`` and ``Progress`` dependencies as
+        keyword arguments on every long-running tool. Those objects aren't
+        JSON-serializable, so without this guard the audit decorator raises
+        ``TypeError: Object of type Context is not JSON serializable``
+        before the tool ever runs. Replacing the value with a type-only
+        placeholder lets the audit log keep its shape and the tool keep
+        running."""
+
+        class _UnserializableContext:
+            pass
+
+        args = {"region": "us-east-1", "ctx": _UnserializableContext()}
+        result = run_mcp._sanitize_arguments(args)
+        assert result["region"] == "us-east-1"
+        assert result["ctx"] == "<unserializable: _UnserializableContext>"
+
+        # The whole sanitized dict must round-trip through json.dumps now.
+        json.dumps(result)
+
+    def test_unserializable_object_with_sensitive_key_still_redacted(self):
+        """Redaction takes priority over the unserializable-fallback so
+        objects sitting under sensitive key names never leak even a type
+        name."""
+
+        class _Token:
+            pass
+
+        args = {"auth_token": _Token()}
+        result = run_mcp._sanitize_arguments(args)
+        assert result["auth_token"] == "[REDACTED]"
+        json.dumps(result)
+
 
 class TestAuditLoggedDecorator:
     """Tests for the audit_logged decorator."""
@@ -493,3 +526,270 @@ class TestMcpAuditLogSanitizationProperty:
         assert large_sensitive_value not in sanitized_str, (
             "Original large sensitive value leaked in sanitized output"
         )
+
+
+# =============================================================================
+# Async wrapper + Context-aware audit entry tests (Tasks 3.1–3.4)
+# =============================================================================
+
+import asyncio  # noqa: E402
+
+import audit  # noqa: E402
+from audit_middleware import AuditCaptureMiddleware  # noqa: E402
+from fastmcp import Client, FastMCP  # noqa: E402
+from fastmcp.client.elicitation import ElicitResult  # noqa: E402
+from fastmcp.server.dependencies import get_context  # noqa: E402
+
+
+def _audit_entries(caplog) -> list[dict]:
+    """Pull the JSON audit entries out of caplog, in order."""
+    return [json.loads(r.message) for r in caplog.records if r.name == "gco.mcp.audit"]
+
+
+def _last_invocation_entry(caplog) -> dict:
+    """Return the last `mcp.tool.invocation` entry from caplog."""
+    invocations = [e for e in _audit_entries(caplog) if e.get("event") == "mcp.tool.invocation"]
+    assert invocations, "no tool-invocation audit entries captured"
+    return invocations[-1]
+
+
+class TestAsyncAuditDecorator:
+    """audit_logged dispatches on asyncio.iscoroutinefunction."""
+
+    def test_async_tool_success_emits_entry(self, caplog):
+        """An async tool returning JSON-string emits a success entry.
+
+        Direct-invocation path (no active FastMCP request), so request_id is
+        not asserted here — that's covered by the Client round-trip tests
+        below. The point of this test is the dispatch on
+        ``asyncio.iscoroutinefunction``.
+        """
+
+        @run_mcp.audit_logged
+        async def async_tool(name: str = "test") -> str:
+            return '{"ok": true}'
+
+        with caplog.at_level(logging.INFO, logger="gco.mcp.audit"):
+            result = asyncio.run(async_tool(name="test"))
+
+        assert result == '{"ok": true}'
+        entry = _last_invocation_entry(caplog)
+        assert entry["status"] == "success"
+        assert entry["tool"] == "async_tool"
+        assert entry["arguments"] == {"name": "test"}
+        assert "duration_ms" in entry
+        assert entry["duration_ms"] >= 0
+        assert "timestamp" in entry
+        # No active MCP request → no request_id field.
+        assert "request_id" not in entry
+
+    def test_async_tool_error_emits_entry(self, caplog):
+        """An async tool that raises emits an error entry with truncated text."""
+
+        long_msg = "boom " * 100  # ~500 chars
+
+        @run_mcp.audit_logged
+        async def async_failing_tool() -> str:
+            raise RuntimeError(long_msg)
+
+        with (
+            caplog.at_level(logging.INFO, logger="gco.mcp.audit"),
+            pytest.raises(RuntimeError),
+        ):
+            asyncio.run(async_failing_tool())
+
+        entry = _last_invocation_entry(caplog)
+        assert entry["status"] == "error"
+        assert entry["tool"] == "async_failing_tool"
+        assert "error" in entry
+        # Error text capped at 200 chars per audit decorator contract.
+        assert len(entry["error"]) <= 200
+
+    def test_audit_omits_request_id_when_context_absent(self, caplog):
+        """No active MCP request → no request_id, client_id, or task_id."""
+
+        @run_mcp.audit_logged
+        async def standalone_tool() -> str:
+            return "ok"
+
+        with caplog.at_level(logging.INFO, logger="gco.mcp.audit"):
+            asyncio.run(standalone_tool())
+
+        entry = _last_invocation_entry(caplog)
+        assert "request_id" not in entry
+        assert "client_id" not in entry
+        assert "task_id" not in entry
+        # And no Context-driven capture buffers either.
+        assert "client_messages" not in entry
+        assert "elicitations" not in entry
+
+
+class TestAuditContextCapture:
+    """End-to-end Client round-trip captures Context messages, elicitations, task_id."""
+
+    @pytest.mark.asyncio
+    async def test_audit_captures_client_warning(self, caplog):
+        """ctx.warning() during a tool call lands in client_messages."""
+
+        test_mcp = FastMCP("audit-test-warning")
+        test_mcp.add_middleware(AuditCaptureMiddleware())
+
+        @test_mcp.tool
+        @run_mcp.audit_logged
+        async def warner() -> str:
+            """Tool that emits a warning."""
+            ctx = get_context()
+            await ctx.warning("hello world")
+            await ctx.info("an info line")
+            return "ok"
+
+        with caplog.at_level(logging.INFO, logger="gco.mcp.audit"):
+            async with Client(test_mcp) as client:
+                await client.call_tool("warner", {})
+
+        entry = _last_invocation_entry(caplog)
+        assert entry["status"] == "success"
+        assert entry["tool"] == "warner"
+        # request_id is set by FastMCP's session for every request.
+        assert "request_id" in entry
+        assert "client_messages" in entry
+        msgs = entry["client_messages"]
+        assert any(
+            m.get("level") == "warning" and m.get("message") == "hello world" for m in msgs
+        ), msgs
+        assert any(m.get("level") == "info" and m.get("message") == "an info line" for m in msgs), (
+            msgs
+        )
+
+    @pytest.mark.asyncio
+    async def test_audit_captures_elicitation_response(self, caplog):
+        """ctx.elicit() returning accept lands in the elicitations field."""
+
+        test_mcp = FastMCP("audit-test-elicit")
+        test_mcp.add_middleware(AuditCaptureMiddleware())
+
+        @test_mcp.tool
+        @run_mcp.audit_logged
+        async def elicitor() -> str:
+            """Tool that elicits user confirmation."""
+            ctx = get_context()
+            res = await ctx.elicit("Please confirm", response_type=str)
+            return f"action={getattr(res, 'action', 'unknown')}"
+
+        async def handler(message, response_type, params, context):
+            return ElicitResult(action="accept", content="yes")
+
+        with caplog.at_level(logging.INFO, logger="gco.mcp.audit"):
+            async with Client(test_mcp, elicitation_handler=handler) as client:
+                await client.call_tool("elicitor", {})
+
+        entry = _last_invocation_entry(caplog)
+        assert entry["status"] == "success"
+        assert "elicitations" in entry
+        elics = entry["elicitations"]
+        assert len(elics) == 1
+        assert elics[0]["action"] == "accept"
+        # Message text is preserved.
+        assert elics[0].get("message") == "Please confirm"
+
+    def test_audit_includes_task_id(self, caplog, monkeypatch):
+        """When request_context.meta.task_id is set, the audit entry exposes it."""
+
+        # Build a fake context with the right nested attributes. The audit
+        # decorator only walks ``request_context`` → ``meta`` → ``task_id``
+        # and ``client_id`` / ``request_id`` directly off the context, so a
+        # plain MagicMock with explicit attribute values is enough.
+        meta = MagicMock(spec=["task_id"])
+        meta.task_id = "test-task-123"
+        request_context = MagicMock()
+        request_context.meta = meta
+        fake_ctx = MagicMock()
+        fake_ctx.request_context = request_context
+        fake_ctx.request_id = "fake-req-id"
+        fake_ctx.client_id = None  # must be falsy → field omitted
+
+        monkeypatch.setattr(audit, "_try_get_fastmcp_context", lambda: fake_ctx)
+
+        @run_mcp.audit_logged
+        async def task_tool() -> str:
+            return "ok"
+
+        with caplog.at_level(logging.INFO, logger="gco.mcp.audit"):
+            asyncio.run(task_tool())
+
+        entry = _last_invocation_entry(caplog)
+        assert entry["task_id"] == "test-task-123"
+        assert entry["request_id"] == "fake-req-id"
+        # client_id was None — must be omitted, not emitted as null.
+        assert "client_id" not in entry
+
+
+# =============================================================================
+# Startup-log tests for the new all_tools_enabled / tool_search fields (3.7)
+# =============================================================================
+
+
+def _last_startup_entry(caplog) -> dict:
+    """Return the last `mcp.server.startup` entry from caplog."""
+    startups = [e for e in _audit_entries(caplog) if e.get("event") == "mcp.server.startup"]
+    assert startups, "no startup audit entries captured"
+    return startups[-1]
+
+
+class TestStartupLogNewFields:
+    """emit_startup_log() conditionally emits all_tools_enabled and tool_search."""
+
+    def test_emit_startup_log_includes_all_tools_enabled_when_set(self, caplog, monkeypatch):
+        monkeypatch.setenv("GCO_ENABLE_ALL_TOOLS", "true")
+        monkeypatch.delenv("GCO_MCP_TOOL_SEARCH", raising=False)
+
+        with caplog.at_level(logging.INFO, logger="gco.mcp.audit"):
+            run_mcp.emit_startup_log()
+
+        entry = _last_startup_entry(caplog)
+        assert entry["all_tools_enabled"] is True
+
+    @pytest.mark.parametrize(
+        "value",
+        ["bm25", "regex", "code_mode", "off"],
+    )
+    def test_emit_startup_log_includes_tool_search_when_set(self, caplog, monkeypatch, value):
+        monkeypatch.delenv("GCO_ENABLE_ALL_TOOLS", raising=False)
+        monkeypatch.setenv("GCO_MCP_TOOL_SEARCH", value)
+
+        with caplog.at_level(logging.INFO, logger="gco.mcp.audit"):
+            run_mcp.emit_startup_log()
+
+        entry = _last_startup_entry(caplog)
+        assert entry["tool_search"] == value
+        if value == "code_mode":
+            # Experimental-tier API path → flag for audit consumers.
+            assert entry["code_mode_experimental"] is True
+        else:
+            assert "code_mode_experimental" not in entry
+
+    def test_emit_startup_log_omits_optional_fields_by_default(self, caplog, monkeypatch):
+        monkeypatch.setenv("GCO_ENABLE_ALL_TOOLS", "")
+        monkeypatch.delenv("GCO_MCP_TOOL_SEARCH", raising=False)
+
+        with caplog.at_level(logging.INFO, logger="gco.mcp.audit"):
+            run_mcp.emit_startup_log()
+
+        entry = _last_startup_entry(caplog)
+        # all_tools_enabled is omitted when the umbrella flag is unset.
+        assert "all_tools_enabled" not in entry
+        # tool_search is ALWAYS emitted — the resolver falls back to "bm25"
+        # when the env var is unset, mirroring mcp/server.py's wiring.
+        assert entry["tool_search"] == "bm25"
+        assert "code_mode_experimental" not in entry
+
+    def test_emit_startup_log_unknown_tool_search_falls_back_to_bm25(self, caplog, monkeypatch):
+        monkeypatch.delenv("GCO_ENABLE_ALL_TOOLS", raising=False)
+        monkeypatch.setenv("GCO_MCP_TOOL_SEARCH", "banana")
+
+        with caplog.at_level(logging.INFO, logger="gco.mcp.audit"):
+            run_mcp.emit_startup_log()
+
+        entry = _last_startup_entry(caplog)
+        assert entry["tool_search"] == "bm25"
+        assert "code_mode_experimental" not in entry

@@ -80,7 +80,7 @@ The `docker.sock` mount lets `gco stacks deploy-all` bundle Lambda assets throug
 <details>
 <summary>Prefer to install on your host? (advanced)</summary>
 
-This path requires Python 3.10+ and works best in a fresh virtual environment. With a lot of pinned dependencies, mixing GCO into an existing environment will frequently produce resolver conflicts — use a clean venv or pipx.
+This path requires Python 3.14+ and works best in a fresh virtual environment. With a lot of pinned dependencies, mixing GCO into an existing environment will frequently produce resolver conflicts — use a clean venv or pipx.
 
 ```bash
 git clone git@github.com:awslabs/global-capacity-orchestrator-on-aws.git
@@ -91,7 +91,7 @@ cd global-capacity-orchestrator-on-aws && pipx install -e .
 
 See the [Quick Start](#quick-start) for the full install + first-job walkthrough, or [`docs/CLI.md`](docs/CLI.md) for every CLI command.
 
-> **💡 New to the codebase?** GCO ships with an [MCP server](mcp/) exposing 44 tools that index the whole project — docs, examples, source code, K8s manifests, scripts. Connect it to an AI-powered IDE (like [Kiro](https://kiro.dev)) and ask in natural language: *"How does region recommendation work?"*, *"Walk me through the inference deployment flow"*. See [mcp/README.md](mcp/README.md).
+> **💡 New to the codebase?** GCO ships with an [MCP server](mcp/) exposing 90 tools by default (up to 111 with feature flags) that index the whole project — docs, examples, source code, K8s manifests, scripts. Connect it to an AI-powered IDE (like [Kiro](https://kiro.dev)) and ask in natural language: *"How does region recommendation work?"*, *"Walk me through the inference deployment flow"*. See [mcp/README.md](mcp/README.md).
 
 <details>
 <summary><b>Table of contents</b></summary>
@@ -360,7 +360,7 @@ This is host-socket pass-through, not true Docker-in-Docker. Anyone with access 
 **Host install path (advanced):**
 
 - AWS CLI configured with appropriate credentials
-- Python 3.10+ and Node.js LTS (v24)
+- Python 3.14+ and Node.js LTS (v24)
 - AWS CDK CLI (`npm install -g aws-cdk`)
 - Docker or Finch (for building container images)
 - A **clean** Python virtual environment or pipx — GCO pins exact versions of many packages, so installing it into an existing environment will commonly fail with dependency-resolver errors. If you hit `ResolutionImpossible`, switch to the dev container instead of debugging your local env.
@@ -386,18 +386,22 @@ This is host-socket pass-through, not true Docker-in-Docker. Anyone with access 
 │
 ├── lambda/                              # Lambda functions
 │   ├── alb-header-validator/            # ALB header validation for auth tokens
+│   ├── analytics-cleanup/               # Custom resource that deletes Studio user profiles + EFS access points on stack destroy
+│   ├── analytics-presigned-url/         # Generates presigned SageMaker Studio URLs for Cognito-authenticated users
 │   ├── api-gateway-proxy/               # API Gateway → Global Accelerator proxy
 │   ├── cross-region-aggregator/         # Cross-region job/health aggregation
+│   ├── drift-detection/                 # Scheduled drift checks against deployed CDK stacks
 │   ├── ga-registration/                 # Global Accelerator endpoint registration
 │   ├── helm-installer/                  # Installs Helm charts (schedulers, GPU operators, cert-manager)
 │   │   └── charts.yaml                  # Helm chart configuration (schedulers, GPU operators, cert-manager)
+│   ├── image-lookup/                    # Adopt-or-create custom resource for the project's gco/* ECR repositories
 │   ├── kubectl-applier-simple/          # Applies K8s manifests during deployment
 │   │   └── manifests/                   # Kubernetes manifests (nodepools, RBAC, services, storage)
 │   ├── proxy-shared/                    # Shared utilities for proxy Lambdas
 │   ├── regional-api-proxy/              # Regional API Gateway → internal ALB proxy
 │   └── secret-rotation/                 # Daily secret rotation
 │
-├── mcp/                                 # MCP server for LLM interaction (44 tools wrapping the CLI)
+├── mcp/                                 # MCP server for LLM interaction (90 tools default, up to 111 with feature flags)
 ├── scripts/                             # Utility scripts (version bump, cluster access setup)
 └── tests/                               # PyTest + BATS test suites (counts tracked via badges)
 ```
@@ -410,7 +414,7 @@ Quick start for contributors (dev container — recommended):
 
 ```bash
 docker build -f Dockerfile.dev -t gco-dev .
-docker run --rm -v $(pwd):/workspace -w /workspace gco-dev pytest tests/ -v --cov=gco --cov=cli
+docker run --rm -v $(pwd):/workspace -w /workspace gco-dev pytest tests/ -v --cov=gco --cov=cli --cov=mcp
 ```
 
 Or, in a clean virtual environment on your host:
@@ -418,7 +422,7 @@ Or, in a clean virtual environment on your host:
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest tests/ -v --cov=gco --cov=cli
+pytest tests/ -v --cov=gco --cov=cli --cov=mcp
 ```
 
 > If `pip install -e ".[dev]"` fails with dependency-resolver errors, that's the pinned-versions issue mentioned in [Prerequisites](#prerequisites). Use the dev container instead — it ships everything at the exact versions CI uses.

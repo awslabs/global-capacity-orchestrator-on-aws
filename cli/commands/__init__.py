@@ -11,12 +11,14 @@ from .config_cmd import config_cmd
 from .costs_cmd import costs
 from .dag_cmd import dag
 from .files_cmd import files
+from .images_cmd import images
 from .inference_cmd import inference
 from .jobs_cmd import jobs
 from .models_cmd import models
 from .nodepools_cmd import nodepools
 from .queue_cmd import queue
 from .stacks_cmd import stacks
+from .tasks_cmd import tasks
 from .templates_cmd import templates
 from .webhooks_cmd import webhooks
 
@@ -27,12 +29,14 @@ __all__ = [
     "costs",
     "dag",
     "files",
+    "images",
     "inference",
     "jobs",
     "models",
     "nodepools",
     "queue",
     "stacks",
+    "tasks",
     "templates",
     "webhooks",
 ]

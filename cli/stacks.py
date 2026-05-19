@@ -39,6 +39,7 @@ import os
 import shutil
 import site
 import subprocess
+import sys
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -112,6 +113,16 @@ def _safe_rmtree(path: Path) -> None:
         subprocess.run(["rm", "-rf", "--", str(resolved)], check=True)
 
 
+# Container runtime detection lives in cli/_container_runtime.py so it can
+# be shared between StackManager (CDK asset bundling) and ImageManager
+# (gco images build/push). The uncached probe is imported from there;
+# this module keeps its own small cache so existing tests that reset
+# ``cli.stacks._container_runtime_cache`` continue to work without
+# touching the new module's cache.
+from cli._container_runtime import (  # noqa: E402
+    _detect_container_runtime_uncached,
+)
+
 # Cached result for container runtime detection (None = not yet checked)
 _container_runtime_cache: str | None = None
 _container_runtime_checked: bool = False
@@ -121,19 +132,10 @@ def _detect_container_runtime() -> str | None:
     """
     Detect available container runtime for CDK asset bundling.
 
-    CDK requires a container runtime to build Lambda function assets.
-    This function checks for available runtimes in order of preference
-    and verifies they are actually running (not just installed).
-
-    Priority order: docker > finch > podman
-
-    Returns:
-        Runtime name ('docker', 'finch', or 'podman') if found and running,
-        None if no runtime is available.
-
-    Note:
-        If CDK_DOCKER environment variable is already set, that value
-        is returned without checking if the runtime is available.
+    Thin caching wrapper around the shared
+    ``cli._container_runtime._detect_container_runtime_uncached`` probe.
+    The cache state is held on this module so tests that patch or reset
+    ``cli.stacks._container_runtime_cache`` keep working unchanged.
     """
     global _container_runtime_cache, _container_runtime_checked
     if _container_runtime_checked:
@@ -142,55 +144,6 @@ def _detect_container_runtime() -> str | None:
     _container_runtime_cache = _detect_container_runtime_uncached()
     _container_runtime_checked = True
     return _container_runtime_cache
-
-
-def _detect_container_runtime_uncached() -> str | None:
-    """Uncached implementation of container runtime detection."""
-    # Check if CDK_DOCKER is already set
-    if os.environ.get("CDK_DOCKER"):
-        return os.environ["CDK_DOCKER"]
-
-    # Try docker first
-    if shutil.which("docker"):
-        # Verify docker is actually running
-        try:
-            result = subprocess.run(
-                ["docker", "info"],
-                capture_output=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                return "docker"
-        except Exception as e:
-            logger.debug("docker info check failed: %s", e)
-
-    # Try finch as fallback
-    if shutil.which("finch"):
-        try:
-            result = subprocess.run(
-                ["finch", "info"],
-                capture_output=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                return "finch"
-        except Exception as e:
-            logger.debug("finch info check failed: %s", e)
-
-    # Try podman as last resort
-    if shutil.which("podman"):
-        try:
-            result = subprocess.run(
-                ["podman", "info"],
-                capture_output=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                return "podman"
-        except Exception as e:
-            logger.debug("podman info check failed: %s", e)
-
-    return None
 
 
 class StackManager:
@@ -537,8 +490,24 @@ class StackManager:
         command: list[str],
         capture_output: bool = False,
         env: dict[str, str] | None = None,
+        timeout: float | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        """Run a CDK command."""
+        """Run a CDK command.
+
+        Args:
+            command: CDK subcommand argv (e.g. ``["destroy", "gco-us-east-1", "--force"]``).
+            capture_output: Capture stdout / stderr instead of streaming.
+            env: Extra env vars merged onto the parent process environment.
+            timeout: Wall-clock timeout in seconds. ``None`` (default) waits
+                forever — preserving the old behaviour for ``synth`` / ``list``.
+                When set, on timeout we send SIGTERM, give the CDK process up
+                to 30 seconds to exit cleanly, then SIGKILL, and finally
+                re-raise ``subprocess.TimeoutExpired`` so callers can decide
+                how to handle a hung subprocess. ``deploy()`` and ``destroy()``
+                pass a per-stack budget so a wedged ``cdk destroy`` (e.g. its
+                post-delete polling loop hanging after CloudFormation has
+                already finished) can't block the orchestrator forever.
+        """
         full_env = os.environ.copy()
 
         # Inject PYTHONPATH so CDK's python3 subprocess can find aws_cdk
@@ -550,20 +519,33 @@ class StackManager:
 
         cdk_cmd = self._cdk_path.split() + command
 
-        if capture_output:
+        try:
+            if capture_output:
+                return subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit - cdk_cmd is a list of static CDK subcommands, no user-controlled shell injection
+                    cdk_cmd,
+                    cwd=self.project_root,
+                    capture_output=True,
+                    text=True,
+                    env=full_env,
+                    timeout=timeout,
+                )
             return subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit - cdk_cmd is a list of static CDK subcommands, no user-controlled shell injection
                 cdk_cmd,
                 cwd=self.project_root,
-                capture_output=True,
-                text=True,
                 env=full_env,
+                text=True,
+                timeout=timeout,
             )
-        return subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit - cdk_cmd is a list of static CDK subcommands, no user-controlled shell injection
-            cdk_cmd,
-            cwd=self.project_root,
-            env=full_env,
-            text=True,
-        )
+        except subprocess.TimeoutExpired:
+            # subprocess.run already sent SIGKILL and reaped the child by
+            # the time TimeoutExpired propagates. Surface the timeout so
+            # callers (deploy / destroy) can verify post-state via CFN.
+            logger.warning(
+                "cdk command timed out after %ss: %s",
+                timeout,
+                " ".join(cdk_cmd),
+            )
+            raise
 
     def list_stacks(self) -> list[str]:
         """List all available CDK stacks."""
@@ -693,8 +675,34 @@ class StackManager:
         # Set CDK_DOCKER env var if not already set
         env = {"CDK_DOCKER": runtime} if not os.environ.get("CDK_DOCKER") else None
 
-        result = self._run_cdk(cmd, env=env)
-        success = result.returncode == 0
+        # Per-stack wall-clock cap so a wedged ``cdk deploy`` (e.g. an
+        # IAM eventual-consistency wait that never completes) can't block
+        # the orchestrator forever. Default 60 minutes — long enough for
+        # a fresh EKS cluster cold start. Override via
+        # GCO_CDK_DEPLOY_TIMEOUT_SECONDS.
+        timeout_s = float(os.environ.get("GCO_CDK_DEPLOY_TIMEOUT_SECONDS", "3600"))
+
+        try:
+            result = self._run_cdk(cmd, env=env, timeout=timeout_s)
+            success = result.returncode == 0
+        except subprocess.TimeoutExpired:
+            print(
+                f"  cdk deploy timed out after {timeout_s}s for "
+                f"{stack_name or 'all stacks'}; verifying CloudFormation state..."
+            )
+            success = False
+
+        # Reconcile against CloudFormation. If the stack is in a terminal
+        # CREATE/UPDATE_COMPLETE state, the deploy actually succeeded
+        # despite cdk's exit code or timeout.
+        if stack_name and not all_stacks and not success:
+            cfn_status = self._get_stack_status(stack_name)
+            if cfn_status in ("CREATE_COMPLETE", "UPDATE_COMPLETE"):
+                print(
+                    f"  cdk reported a non-zero exit but {stack_name} is in "
+                    f"{cfn_status} in CloudFormation — treating as success."
+                )
+                success = True
 
         if not success and stack_name:
             self._diagnose_deploy_failure(stack_name)
@@ -734,6 +742,18 @@ class StackManager:
             force: Skip confirmation prompts
             output_dir: Custom CDK output directory (for parallel deployments)
         """
+        # Image-registry pre-destroy guards. Only fires for the global
+        # stack (where the registry lives) and only when the operator
+        # has explicitly chosen ``removal_policy: "destroy"``. The
+        # default ``retain`` posture is a no-op here. See
+        # ``_image_registry_destroy_preflight`` for the exact rules.
+        if (
+            stack_name == "gco-global"
+            and not all_stacks
+            and not self._image_registry_destroy_preflight(force=force)
+        ):
+            return False
+
         # If destroying a specific stack that exists in CloudFormation but
         # might not be in the CDK app, temporarily enable its toggle.
         toggle_restored = False
@@ -779,22 +799,197 @@ class StackManager:
         if output_dir:
             cmd.extend(["--output", output_dir])
 
-        result = self._run_cdk(cmd)
+        # Per-stack wall-clock cap so a wedged ``cdk destroy`` (its
+        # post-delete polling loop hanging after CloudFormation has
+        # already finished) can't block the orchestrator forever. Default
+        # 45 minutes — enough for an EKS regional teardown which can take
+        # 25-30 minutes when SG / ENI cleanup serialises. Override via
+        # GCO_CDK_DESTROY_TIMEOUT_SECONDS.
+        timeout_s = float(os.environ.get("GCO_CDK_DESTROY_TIMEOUT_SECONDS", "2700"))
+
+        try:
+            result = self._run_cdk(cmd, timeout=timeout_s)
+            cdk_succeeded = result.returncode == 0
+        except subprocess.TimeoutExpired:
+            # CDK hung. Verify the AWS-side state below — if the stack
+            # is gone in CloudFormation, the destroy actually succeeded
+            # and the timeout was just CDK's polling loop wedged.
+            print(
+                f"  cdk destroy timed out after {timeout_s}s; verifying "
+                f"CloudFormation state for {stack_name}..."
+            )
+            cdk_succeeded = False
 
         # Restore the toggle if we changed it
         if toggle_restored:
             self._restore_analytics_disabled()
 
-        # If CDK still didn't delete it, fall back to CloudFormation directly
-        if (
-            result.returncode == 0
-            and stack_name
-            and not all_stacks
-            and self._stack_exists_in_cloudformation(stack_name)
-        ):
-            return self._cloudformation_delete_stack(stack_name)
+        # Reconcile against CloudFormation. Three outcomes:
+        # 1. cdk succeeded AND stack is gone → success
+        # 2. stack is gone (regardless of cdk return code or timeout) → success
+        # 3. stack still exists → fall back to direct CFN delete or surface failure
+        if stack_name and not all_stacks:
+            still_present = self._stack_exists_in_cloudformation(stack_name)
+            if not still_present:
+                # Whatever cdk did or didn't do, AWS confirms the stack
+                # is gone. Treat as success.
+                if not cdk_succeeded:
+                    print(
+                        f"  cdk reported a non-zero exit but {stack_name} is "
+                        f"already deleted in CloudFormation — treating as success."
+                    )
+                return True
+            # Stack still there. If cdk succeeded but CFN still has it,
+            # fall back to a direct CFN delete (existing behaviour).
+            if cdk_succeeded:
+                return self._cloudformation_delete_stack(stack_name)
+            # cdk failed AND stack is still present → real failure.
+            return False
 
-        return result.returncode == 0
+        return cdk_succeeded
+
+    # ------------------------------------------------------------------
+    # Image registry pre-destroy guards
+    # ------------------------------------------------------------------
+    def _read_images_config(self) -> dict[str, Any]:
+        """Read the ``images`` block from cdk.json with defaults applied.
+
+        Mirrors the parser in ``gco/stacks/global_stack.py`` so the CLI
+        can reason about the same fields without importing the CDK
+        module (which pulls aws_cdk and the full constructs surface).
+        Defaults stay aligned with the global-stack parser; any value
+        that fails validation (e.g. an unexpected ``removal_policy``)
+        is silently coerced to ``"retain"`` here so the CLI never blocks
+        on a typo — the actual deploy-time validation is the global
+        stack's responsibility.
+        """
+        import json
+
+        cdk_json_path = _find_cdk_json()
+        if not cdk_json_path:
+            return {
+                "removal_policy": "retain",
+                "empty_on_delete": False,
+            }
+        try:
+            with open(cdk_json_path, encoding="utf-8") as f:
+                ctx = json.load(f).get("context", {}) or {}
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.debug("Failed to read cdk.json for images config: %s", exc)
+            return {"removal_policy": "retain", "empty_on_delete": False}
+
+        raw = ctx.get("images") or {}
+        removal_policy = str(raw.get("removal_policy", "retain")).strip().lower()
+        if removal_policy not in ("retain", "destroy"):
+            removal_policy = "retain"
+        return {
+            "removal_policy": removal_policy,
+            "empty_on_delete": bool(raw.get("empty_on_delete", False)),
+        }
+
+    def _build_image_registry_inventory(self) -> dict[str, Any]:
+        """Aggregate repo / tag / size / reference counts for the registry.
+
+        Returns a dict shape suitable for printing to the operator. Best
+        effort: a missing ImageManager dependency or an AWS error
+        produces a partially-populated dict rather than raising.
+        """
+        inventory: dict[str, Any] = {
+            "repo_count": 0,
+            "tag_count": 0,
+            "total_bytes": 0,
+            "endpoint_refs": 0,
+            "job_refs": 0,
+        }
+        try:
+            from cli.images import ImageManager
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("ImageManager import failed during preflight: %s", exc)
+            return inventory
+
+        try:
+            manager = ImageManager(config=self.config)
+            repos = manager.list_repos()
+            inventory["repo_count"] = len(repos)
+            for repo in repos:
+                repo_name = repo.get("name", "")
+                if not repo_name.startswith("gco/"):
+                    continue
+                short = repo_name.removeprefix("gco/")
+                try:
+                    tags = manager.list_tags(short)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("list_tags failed for %s: %s", repo_name, exc)
+                    continue
+                inventory["tag_count"] += len(tags)
+                for row in tags:
+                    size = row.get("size_bytes")
+                    if isinstance(size, int):
+                        inventory["total_bytes"] += size
+            try:
+                inventory["endpoint_refs"] = len(manager._collect_inference_image_refs())
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("inference ref collection failed: %s", exc)
+            try:
+                inventory["job_refs"] = len(manager._collect_recent_job_image_refs())
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("job ref collection failed: %s", exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Image registry inventory failed: %s", exc)
+        return inventory
+
+    def _image_registry_destroy_preflight(self, *, force: bool) -> bool:
+        """Validate the image-registry destroy posture before invoking CFN.
+
+        Two rules:
+
+          1. ``removal_policy: "destroy"`` AND ``empty_on_delete: false``
+             → refuse with the literal helpful-error message pointing
+             the operator at ``gco images cleanup --all`` or at flipping
+             ``empty_on_delete: true``.
+
+          2. ``removal_policy: "destroy"`` AND ``empty_on_delete: true``
+             → print the inventory summary first. On a TTY the operator
+             is also prompted for confirmation; non-TTY runs proceed
+             (the operator presumably passed ``-y`` or is automating).
+
+        Returns True when the destroy may proceed, False when it has
+        been refused or declined.
+        """
+        cfg = self._read_images_config()
+        if cfg["removal_policy"] != "destroy":
+            return True
+
+        if not cfg["empty_on_delete"]:
+            print(
+                "Repos under gco/* are not empty and empty_on_delete is "
+                "false. Run 'gco images cleanup --all' first, or set "
+                "images.empty_on_delete: true in cdk.json."
+            )
+            return False
+
+        inventory = self._build_image_registry_inventory()
+        gib = inventory["total_bytes"] / (1024**3) if inventory["total_bytes"] else 0.0
+        print("Image registry inventory before destroy:")
+        print(f"  repos:            {inventory['repo_count']}")
+        print(f"  tags:             {inventory['tag_count']}")
+        print(f"  total size:       {gib:.2f} GiB")
+        print(f"  referencing endpoints: {inventory['endpoint_refs']}")
+        print(f"  recent job refs:  {inventory['job_refs']}")
+
+        # Already confirmed via -y, or non-interactive — proceed.
+        if force or not sys.stdin.isatty():
+            return True
+
+        try:
+            response = input("Destroy gco-global and delete every gco/* repo? [y/N]: ")
+        except EOFError, KeyboardInterrupt:
+            print("Aborted.")
+            return False
+        if response.strip().lower() not in ("y", "yes"):
+            print("Aborted.")
+            return False
+        return True
 
     def _stack_exists_in_cloudformation(self, stack_name: str) -> bool:
         """Check if a stack exists and is not in a deleted state."""
@@ -808,6 +1003,27 @@ class StackManager:
             return "DELETE" not in status
         except Exception:
             return False
+
+    def _get_stack_status(self, stack_name: str) -> str | None:
+        """Return the live CloudFormation status of ``stack_name`` or None.
+
+        Used by ``deploy()`` to reconcile against AWS-side state when ``cdk
+        deploy`` returns a non-zero exit code or times out — if the stack
+        actually finished CREATE_COMPLETE or UPDATE_COMPLETE on the AWS
+        side, the deploy succeeded regardless of what cdk reported.
+        Returns None when the stack does not exist or the lookup itself
+        fails (network blip, perms, etc.) so callers can treat the
+        unknown case as 'cdk's verdict stands'.
+        """
+        import boto3
+
+        region = self._get_destroy_region(stack_name)
+        cfn = boto3.client("cloudformation", region_name=region)
+        try:
+            resp = cfn.describe_stacks(StackName=stack_name)
+            return str(resp["Stacks"][0]["StackStatus"])
+        except Exception:
+            return None
 
     def _cloudformation_delete_stack(self, stack_name: str) -> bool:
         """Delete a stack directly via CloudFormation API."""
@@ -1406,6 +1622,15 @@ class StackManager:
             Tuple of (overall_success, successful_stacks, failed_stacks)
         """
         stacks = self.list_stacks()
+
+        # Image-registry pre-destroy guard — fires before ANY teardown so
+        # operators don't end up with monitoring + regional + api-gateway
+        # already destroyed when the global-stack ECR delete fails on a
+        # non-empty repo. Skipped entirely under the default
+        # ``removal_policy: "retain"`` posture. See
+        # ``_image_registry_destroy_preflight`` for the exact rules.
+        if not self._image_registry_destroy_preflight(force=force):
+            return False, [], list(stacks)
 
         # Phase 0: Clean up backup vault recovery points so the global stack
         # can be deleted cleanly by CloudFormation.

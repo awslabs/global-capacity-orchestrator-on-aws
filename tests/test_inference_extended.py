@@ -1047,3 +1047,97 @@ class TestInferenceManagerDeployExtended:
         assert spec["model_source"] == "s3://bucket/models/llama"
         assert spec["env"] == {"KEY": "VAL"}
         assert spec["autoscaling"]["enabled"] is True
+
+
+# ---------------------------------------------------------------------------
+# _resolve_image_for_region — per-region URI selection on pod materialisation
+# ---------------------------------------------------------------------------
+#
+# ``cli.inference.InferenceManager.deploy`` builds a per-region image-URI map
+# under ``spec["region_image_uris"]``. The monitor running in each region
+# must pick its own entry rather than always using the flat ``spec["image"]``
+# URI, so each cluster pulls from its local ECR replica instead of crossing
+# the WAN.
+
+
+class TestResolveImageForRegion:
+    """``_resolve_image_for_region`` picks the in-region replica when set."""
+
+    def test_returns_per_region_uri_when_present(self) -> None:
+        monitor = _make_monitor()
+        # Default ``_make_monitor`` builds the monitor in ``us-east-1``.
+        spec = {
+            "image": "111111111111.dkr.ecr.us-east-2.amazonaws.com/gco/svc:v1",
+            "region_image_uris": {
+                "us-east-1": "111111111111.dkr.ecr.us-east-1.amazonaws.com/gco/svc:v1",
+                "us-west-2": "111111111111.dkr.ecr.us-west-2.amazonaws.com/gco/svc:v1",
+            },
+        }
+        resolved = monitor._resolve_image_for_region(spec)
+        assert resolved == "111111111111.dkr.ecr.us-east-1.amazonaws.com/gco/svc:v1"
+
+    def test_falls_back_to_flat_image_when_region_absent(self) -> None:
+        monitor = _make_monitor()
+        spec = {
+            "image": "global-registry/svc:v1",
+            "region_image_uris": {
+                "us-west-2": "us-west-2-replica/svc:v1",
+            },
+        }
+        resolved = monitor._resolve_image_for_region(spec)
+        assert resolved == "global-registry/svc:v1"
+
+    def test_falls_back_when_no_map_present(self) -> None:
+        monitor = _make_monitor()
+        spec = {"image": "docker.io/library/python:3.14"}
+        resolved = monitor._resolve_image_for_region(spec)
+        assert resolved == "docker.io/library/python:3.14"
+
+    def test_ignores_non_dict_region_image_uris(self) -> None:
+        """A malformed map (e.g. accidentally serialised as a list) must
+        not blow up — the helper falls back to the flat URI."""
+        monitor = _make_monitor()
+        spec = {
+            "image": "fallback/img:v1",
+            "region_image_uris": ["us-east-1", "us-west-2"],  # type: ignore[dict-item]
+        }
+        resolved = monitor._resolve_image_for_region(spec)
+        assert resolved == "fallback/img:v1"
+
+    def test_ignores_non_string_per_region_value(self) -> None:
+        monitor = _make_monitor()
+        spec = {
+            "image": "fallback/img:v1",
+            "region_image_uris": {"us-east-1": None},
+        }
+        resolved = monitor._resolve_image_for_region(spec)
+        assert resolved == "fallback/img:v1"
+
+    def test_ignores_empty_string_per_region_value(self) -> None:
+        monitor = _make_monitor()
+        spec = {
+            "image": "fallback/img:v1",
+            "region_image_uris": {"us-east-1": ""},
+        }
+        resolved = monitor._resolve_image_for_region(spec)
+        assert resolved == "fallback/img:v1"
+
+    def test_create_deployment_uses_per_region_uri(self) -> None:
+        """The full pipeline through ``_create_deployment`` picks the
+        regional URI — verifies the helper is wired into the spot where
+        the TODO previously lived."""
+        monitor = _make_monitor()
+        spec = {
+            "image": "111111111111.dkr.ecr.us-east-2.amazonaws.com/gco/svc:v1",
+            "region_image_uris": {
+                "us-east-1": "111111111111.dkr.ecr.us-east-1.amazonaws.com/gco/svc:v1",
+            },
+            "replicas": 1,
+            "port": 8000,
+            "gpu_count": 0,
+        }
+        monitor._create_deployment("ep", "ns", spec)
+        call_args = monitor.apps_v1.create_namespaced_deployment.call_args
+        deployment = call_args[0][1]
+        container = deployment.spec.template.spec.containers[0]
+        assert container.image == "111111111111.dkr.ecr.us-east-1.amazonaws.com/gco/svc:v1"

@@ -15,6 +15,7 @@ AWS Lambda functions that power GCO's infrastructure layer. These are deployed a
 |-----------|-------------|
 | `kubectl-applier-simple/` | Applies Kubernetes manifests to EKS clusters during CDK deployment. Contains the nodepool, RBAC, service, and storage manifests in `manifests/`. |
 | `helm-installer/` | Installs Helm charts (KEDA, Volcano, KubeRay, Kueue, GPU Operator, DRA) into EKS clusters during deployment. |
+| `image-lookup/` | CloudFormation custom resource that adopts-or-creates `gco/<name>` ECR repositories so retained repos from a prior deploy are rebound rather than failing the stack with `RepositoryAlreadyExistsException`. Honors `gco:retain=true` on Delete. |
 | `api-gateway-proxy/` | Proxies requests from the global API Gateway through Global Accelerator to regional ALBs. Injects the secret authentication header. |
 | `regional-api-proxy/` | Proxies requests from regional API Gateways directly to the internal NLB via VPC Link. Used for private cluster access. |
 | `cross-region-aggregator/` | Aggregates job status, health, and inference data across all deployed regions into a single response. Powers the global API endpoints. |
@@ -75,6 +76,7 @@ JavaScript can't run.
 | `drift-detection` | [HTML](../diagrams/code_diagrams/lambda/drift-detection/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/drift-detection/handler.lambda_handler.png) |
 | `ga-registration` | [HTML](../diagrams/code_diagrams/lambda/ga-registration/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/ga-registration/handler.lambda_handler.png) |
 | `helm-installer` | [HTML](../diagrams/code_diagrams/lambda/helm-installer/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/helm-installer/handler.lambda_handler.png) |
+| `image-lookup` | [HTML](../diagrams/code_diagrams/lambda/image-lookup/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/image-lookup/handler.lambda_handler.png) |
 | `kubectl-applier-simple` | [HTML](../diagrams/code_diagrams/lambda/kubectl-applier-simple/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/kubectl-applier-simple/handler.lambda_handler.png) |
 | `secret-rotation` | [HTML](../diagrams/code_diagrams/lambda/secret-rotation/handler.lambda_handler.html) · [PNG](../diagrams/code_diagrams/lambda/secret-rotation/handler.lambda_handler.png) |
 

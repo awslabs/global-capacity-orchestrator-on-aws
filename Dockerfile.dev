@@ -81,13 +81,18 @@ RUN case "${TARGETARCH}" in \
         *)      echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    git \
-    unzip \
-    groff \
-    less \
+# Install system dependencies. ``apt-get upgrade`` pulls security-only
+# patches that landed in ``trixie-security`` after the
+# ``python:3.14.5-slim`` snapshot was cut, so the resulting dev image
+# doesn't ship known-fixed HIGH CVEs in libcap2, libsystemd0, etc.
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+        curl \
+        git \
+        unzip \
+        groff \
+        less \
     && rm -rf /var/lib/apt/lists/*
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -177,8 +182,27 @@ WORKDIR /workspace
 COPY pyproject.toml ./
 COPY gco/_version.py ./gco/_version.py
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -e ".[dev,mcp]"
+# Install Python dependencies.
+#
+# PyPI / CDN connections occasionally drop mid-download — most often
+# during large wheels like ``pydantic-monty`` or ``aws-cdk-lib`` — and
+# the build then fails with ``IncompleteRead``. To make rebuilds
+# deterministic in CI:
+#   - ``--retries 10`` raises pip's per-connection retry budget from
+#     the default of 5.
+#   - ``--timeout 120`` widens the socket timeout from the default 15s.
+#   - ``--resume-retries 5`` (pip 24.1+) tells pip to resume partial
+#     downloads instead of restarting them from byte 0.
+#   - The shell-level ``for`` loop around the call provides a final
+#     belt-and-suspenders retry if all the above still hits an
+#     unrecoverable network blip; pip is idempotent under re-run.
+RUN for attempt in 1 2 3; do \
+        pip install --no-cache-dir \
+            --retries 10 --timeout 120 --resume-retries 5 \
+            -e ".[dev,mcp]" && break; \
+        echo "pip install attempt ${attempt} failed; retrying in 10s..."; \
+        sleep 10; \
+    done
 
 # Copy the rest of the project
 COPY . .

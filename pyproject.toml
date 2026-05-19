@@ -15,7 +15,7 @@ name = "gco-cli"
 dynamic = ["version"]
 description = "CLI for managing GCO multi-region EKS clusters"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 license = "MIT-0"
 license-files = ["LICENSE"]
 authors = [
@@ -25,10 +25,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
@@ -44,6 +40,17 @@ dependencies = [
     "prometheus-client==0.25.0",
     "httpx==0.28.1",
     "urllib3==2.7.0",
+    # FastMCP powers the in-tree MCP server (mcp/run_mcp.py). The ``tasks``
+    # extra pulls in the protocol-native background task support
+    # (SEP-1686) used by the long-running stack lifecycle and image
+    # build/push tools. The ``code-mode`` extra pulls in the
+    # ``fastmcp.experimental.transforms.code_mode`` dependencies (the
+    # MontySandboxProvider runtime + the GetTags/Search/GetSchemas
+    # discovery tools) used when GCO_MCP_TOOL_SEARCH=code_mode.
+    "fastmcp[tasks,code-mode]==3.2.4",
+    # BM25 ranking backend for FastMCP's tool-search transform when
+    # GCO_MCP_TOOL_SEARCH=bm25.
+    "rank-bm25==0.2.2",
 ]
 
 [project.optional-dependencies]
@@ -76,7 +83,11 @@ inference-monitor = [
     "pyyaml==6.0.3",
 ]
 mcp = [
-    "fastmcp>=3.2.0",
+    # Kept as an alias of the base ``fastmcp[tasks,code-mode]`` dependency
+    # so the documented ``pip install -e ".[mcp]"`` install path keeps
+    # working. Pinned to match the base ``dependencies`` entry exactly to
+    # avoid resolver thrash.
+    "fastmcp[tasks,code-mode]==3.2.4",
 ]
 lint = [
     "ruff==0.15.7",
@@ -244,7 +255,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["gco", "cli"]
+source = ["gco", "cli", "mcp"]
 branch = true
 omit = [
     "*/tests/*",
@@ -264,7 +275,7 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "if typing.TYPE_CHECKING:",
 ]
-fail_under = 85
+fail_under = 90
 show_missing = true
 
 [tool.coverage.html]
