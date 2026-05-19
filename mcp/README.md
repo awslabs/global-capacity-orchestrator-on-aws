@@ -938,4 +938,17 @@ If a tool you expect to see is missing from your client's tool list, check these
 
 ### Timeout on long operations
 
-The default subprocess timeout is 120 seconds. Long-running tools (`deploy_stack`, `deploy_all`, `destroy_stack`, `destroy_all`, `bootstrap_cdk`, `images_build`, `images_push`) bypass that limit by running as FastMCP background tasks — your client receives a task ID immediately and polls `tasks://gco/{task_id}` for progress. Tools that don't use the task protocol still hit the 120-second cap; for those, fall back to the CLI directly.
+The default subprocess timeout is 120 seconds. Long-running tools (`deploy_stack`, `deploy_all`, `destroy_stack`, `destroy_all`, `bootstrap_cdk`, `images_build`, `images_push`) bypass that limit by running through `_run_long_task`, which streams progress through FastMCP's Progress dependency rather than buffering output for a single 120 s response. They opt into the FastMCP task protocol with `mode="optional"` so clients can choose between two execution shapes:
+
+- **Inline (synchronous)** — the call blocks for the full duration (15-60 minutes for a multi-stack deploy or destroy) and returns a JSON payload at the end. Progress messages stream through `await ctx.info(...)` / `await progress.set_message(...)` so a client that observes the same call can render them in real time, but a client that doesn't (e.g. a `call_tool` proxy) only sees the final result.
+- **Background task** — when the client passes `task_meta` on the request, the tool returns a `task_id` immediately and runs the CDK process in the background. Any client (including a *different* client/session) can read `tasks://gco/{task_id}` to get the current status, message, and progress count without blocking on the original call.
+
+### Observing a long-running call
+
+Three observation paths exist depending on how the tool was invoked:
+
+1. **FastMCP Progress (calling client only)** — for both inline and task-mode calls, every line of CDK stdout/stderr is forwarded through `await progress.set_message(line[:200])` and `await progress.increment()` is called on every `(CREATE|UPDATE|DELETE)_COMPLETE` line. Clients that observe the Progress channel render these inline. Clients that don't (synchronous proxies) only see the final return value.
+2. **`tasks://gco/{task_id}` (any client, task-mode only)** — when the call was kicked off with `task_meta` set, the FastMCP docket store records status, message, and progress under that ID. Any MCP client can read the resource — including a different agent or a parallel session — without holding open the original call. Inline calls don't have a task_id and so don't populate this resource.
+3. **CloudFormation / `stack_status` (any observer, any invocation)** — independent of the MCP layer entirely. Run `stack_status(stack_name="gco-us-east-1", region="us-east-1")` (read-only, no auth gate), `list_stacks`, or `aws cloudformation describe-stack-events --stack-name gco-us-east-1 --region us-east-1` from a terminal. This always works regardless of how the destroy/deploy was started — the source of truth is CloudFormation, not the MCP server's view of it — and is the recommended way for human operators or secondary agents to track a destroy/deploy that's already running.
+
+When in doubt, the CloudFormation path is the most reliable because it observes the actual AWS-side state rather than the MCP server's view of it.
