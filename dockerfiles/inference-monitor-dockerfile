@@ -23,10 +23,20 @@ WORKDIR /app
 # Copy project metadata and install inference-monitor dependencies only
 # Use the lockfile for reproducible transitive dependency versions,
 # then install the project with inference-monitor extras without re-resolving.
+#
+# pip flags + bash retry loop guard against transient PyPI/CDN drops
+# (see Dockerfile.dev for the rationale; same pattern across every
+# image build in the repo).
 COPY requirements-lock.txt ./
 COPY pyproject.toml ./
 COPY gco/ ./gco/
-RUN pip install --no-cache-dir -r requirements-lock.txt \
+RUN for attempt in 1 2 3; do \
+        pip install --no-cache-dir \
+            --retries 10 --timeout 120 --resume-retries 5 \
+            -r requirements-lock.txt && break; \
+        echo "pip install attempt ${attempt} failed; retrying in 10s..."; \
+        sleep 10; \
+    done \
     && pip install --no-cache-dir --no-deps ".[inference-monitor]"
 
 # Switch to non-root user
