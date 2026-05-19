@@ -386,11 +386,15 @@ This is host-socket pass-through, not true Docker-in-Docker. Anyone with access 
 │
 ├── lambda/                              # Lambda functions
 │   ├── alb-header-validator/            # ALB header validation for auth tokens
+│   ├── analytics-cleanup/               # Custom resource that deletes Studio user profiles + EFS access points on stack destroy
+│   ├── analytics-presigned-url/         # Generates presigned SageMaker Studio URLs for Cognito-authenticated users
 │   ├── api-gateway-proxy/               # API Gateway → Global Accelerator proxy
 │   ├── cross-region-aggregator/         # Cross-region job/health aggregation
+│   ├── drift-detection/                 # Scheduled drift checks against deployed CDK stacks
 │   ├── ga-registration/                 # Global Accelerator endpoint registration
 │   ├── helm-installer/                  # Installs Helm charts (schedulers, GPU operators, cert-manager)
 │   │   └── charts.yaml                  # Helm chart configuration (schedulers, GPU operators, cert-manager)
+│   ├── image-lookup/                    # Adopt-or-create custom resource for the project's gco/* ECR repositories
 │   ├── kubectl-applier-simple/          # Applies K8s manifests during deployment
 │   │   └── manifests/                   # Kubernetes manifests (nodepools, RBAC, services, storage)
 │   ├── proxy-shared/                    # Shared utilities for proxy Lambdas
