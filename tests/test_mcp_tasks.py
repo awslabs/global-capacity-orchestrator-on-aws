@@ -578,3 +578,63 @@ class TestDeployStackAuditTaskId:
         assert entry["task_id"] == "deploy-task-xyz"
         assert entry["request_id"] == "req-deploy-001"
         assert entry["client_id"] == "kiro"
+
+
+# =============================================================================
+# Task-config mode contract — deploy/destroy tools must be optional, not required
+# =============================================================================
+
+
+class TestInfrastructureToolTaskMode:
+    """The five long-running infrastructure tools opt into the FastMCP task
+    protocol with ``mode="optional"`` rather than ``mode="required"``.
+
+    Required mode locks out clients that don't speak the task protocol —
+    notably the GCO MCP orchestrator's ``call_tool`` proxy and any other
+    client that calls a tool synchronously without sending ``task_meta``.
+    Optional mode lets clients with task-protocol support poll
+    ``tasks://gco/{task_id}`` while clients without it run the tool
+    inline with progress streamed through the FastMCP Progress dependency.
+
+    If the running fastmcp version doesn't expose ``task_config`` on its
+    registered Tool objects, the tests skip gracefully — TaskConfig is
+    best-effort wired in the tool module.
+    """
+
+    def _expect_optional_mode(self, tool_name: str) -> None:
+        """Assert ``tool_name`` is registered with ``task_config.mode == "optional"``."""
+        tools = asyncio.run(run_mcp.mcp._list_tools())
+        tool = next((t for t in tools if t.name == tool_name), None)
+        assert tool is not None, f"{tool_name} must register under its feature flag"
+        cfg = getattr(tool, "task_config", None)
+        if cfg is None:
+            pytest.skip("fastmcp build doesn't expose task_config on registered tools")
+        assert getattr(cfg, "mode", None) == "optional", (
+            f"{tool_name}.task_config.mode must be 'optional' so clients without "
+            "task-protocol support can call it inline"
+        )
+
+    @patch.dict(os.environ, {"GCO_ENABLE_INFRASTRUCTURE_DEPLOY": "true"})
+    def test_deploy_stack_task_mode_is_optional(self):
+        importlib.reload(run_mcp)
+        self._expect_optional_mode("deploy_stack")
+
+    @patch.dict(os.environ, {"GCO_ENABLE_INFRASTRUCTURE_DEPLOY": "true"})
+    def test_deploy_all_task_mode_is_optional(self):
+        importlib.reload(run_mcp)
+        self._expect_optional_mode("deploy_all")
+
+    @patch.dict(os.environ, {"GCO_ENABLE_INFRASTRUCTURE_DEPLOY": "true"})
+    def test_bootstrap_cdk_task_mode_is_optional(self):
+        importlib.reload(run_mcp)
+        self._expect_optional_mode("bootstrap_cdk")
+
+    @patch.dict(os.environ, {"GCO_ENABLE_INFRASTRUCTURE_DESTROY": "true"})
+    def test_destroy_stack_task_mode_is_optional(self):
+        importlib.reload(run_mcp)
+        self._expect_optional_mode("destroy_stack")
+
+    @patch.dict(os.environ, {"GCO_ENABLE_INFRASTRUCTURE_DESTROY": "true"})
+    def test_destroy_all_task_mode_is_optional(self):
+        importlib.reload(run_mcp)
+        self._expect_optional_mode("destroy_all")

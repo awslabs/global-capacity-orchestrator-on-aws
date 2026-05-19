@@ -27,16 +27,21 @@ except ImportError:  # pragma: no cover - degraded fastmcp install
     Progress = None  # type: ignore[misc,assignment]
 
 # TaskConfig opts the gated stack-lifecycle tools into FastMCP's
-# task protocol with ``mode="required"``. Clients without task-protocol
-# support receive a clear protocol-level error rather than blocking on
-# a 15-30 minute call. If the import path moves between fastmcp
-# versions, the tools register without it and run synchronously.
+# task protocol with ``mode="optional"`` — clients that support the task
+# protocol receive a task ID immediately and poll for progress, while
+# clients without task-protocol support fall back to inline execution
+# with progress streamed through FastMCP's Progress dependency.
+# Required-mode would lock out clients that don't speak the task protocol
+# (e.g. the GCO MCP orchestrator's ``call_tool`` proxy), and these tools
+# are useful enough that the inline fallback is worth keeping.
+# If the import path moves between fastmcp versions, the tools register
+# without the task config and run synchronously.
 try:
     from fastmcp.server.tasks.config import TaskConfig
 
-    _TASK_CONFIG_REQUIRED: Any = TaskConfig(mode="required")
+    _TASK_CONFIG_OPTIONAL: Any = TaskConfig(mode="optional")
 except ImportError:  # pragma: no cover - degraded fastmcp install
-    _TASK_CONFIG_REQUIRED = None
+    _TASK_CONFIG_OPTIONAL = None
 
 
 @mcp.tool(tags={"safe", "stacks"})
@@ -234,8 +239,8 @@ if is_enabled(FLAG_INFRASTRUCTURE_DEPLOY):
     # Build the decorator kwargs dict so we only pass ``task=...`` when
     # TaskConfig was importable on this fastmcp version.
     _deploy_decorator_kwargs: dict[str, Any] = {"tags": {"infrastructure", "stacks"}}
-    if _TASK_CONFIG_REQUIRED is not None:
-        _deploy_decorator_kwargs["task"] = _TASK_CONFIG_REQUIRED
+    if _TASK_CONFIG_OPTIONAL is not None:
+        _deploy_decorator_kwargs["task"] = _TASK_CONFIG_OPTIONAL
 
     if Progress is not None and CurrentContext is not None:
 
@@ -254,9 +259,11 @@ if is_enabled(FLAG_INFRASTRUCTURE_DEPLOY):
 
             `gco stacks deploy` — deploy a single CDK stack to AWS.
 
-            Typical wall-clock: 15-30 minutes per regional stack. Invoke with
-            the task-protocol flag set so clients receive a task ID immediately
-            and poll for progress; cancellation sends SIGTERM to the running
+            Typical wall-clock: 15-30 minutes per regional stack. Clients that
+            speak FastMCP's task protocol can receive a task ID immediately
+            and poll `tasks://gco/{task_id}` for progress; clients that don't
+            run the tool inline with progress streamed through the FastMCP
+            Progress dependency. Cancellation sends SIGTERM to the running
             CDK process and partial CloudFormation state may remain — inspect
             via stack_status or the AWS console.
 
@@ -299,8 +306,10 @@ if is_enabled(FLAG_INFRASTRUCTURE_DEPLOY):
             `gco stacks deploy-all` — deploy every CDK stack in dependency order.
 
             Typical wall-clock: 30-60 minutes for a fresh multi-region deploy.
-            Invoke with the task-protocol flag set so clients receive a task ID
-            immediately and poll for progress; cancellation sends SIGTERM to the
+            Clients that speak FastMCP's task protocol can receive a task ID
+            immediately and poll `tasks://gco/{task_id}` for progress; clients
+            that don't run the tool inline with progress streamed through the
+            FastMCP Progress dependency. Cancellation sends SIGTERM to the
             running CDK process and partial CloudFormation state may remain —
             inspect via stack_status or the AWS console.
 
@@ -344,9 +353,11 @@ if is_enabled(FLAG_INFRASTRUCTURE_DEPLOY):
             `gco stacks bootstrap` — bootstrap CDK in an AWS account/region.
 
             Typical wall-clock: 2-5 minutes. Required before any stack can be
-            deployed to a new account/region. Invoke with the task-protocol
-            flag set so clients receive a task ID immediately and poll for
-            progress; cancellation sends SIGTERM to the running CDK process
+            deployed to a new account/region. Clients that speak FastMCP's
+            task protocol can receive a task ID immediately and poll
+            `tasks://gco/{task_id}` for progress; clients that don't run the
+            tool inline with progress streamed through the FastMCP Progress
+            dependency. Cancellation sends SIGTERM to the running CDK process
             and partial CloudFormation state may remain — inspect via
             stack_status or the AWS console.
 
@@ -366,8 +377,8 @@ if is_enabled(FLAG_INFRASTRUCTURE_DEPLOY):
 
 if is_enabled(FLAG_INFRASTRUCTURE_DESTROY):
     _destroy_decorator_kwargs: dict[str, Any] = {"tags": {"infrastructure", "stacks"}}
-    if _TASK_CONFIG_REQUIRED is not None:
-        _destroy_decorator_kwargs["task"] = _TASK_CONFIG_REQUIRED
+    if _TASK_CONFIG_OPTIONAL is not None:
+        _destroy_decorator_kwargs["task"] = _TASK_CONFIG_OPTIONAL
 
     if Progress is not None and CurrentContext is not None:
 
@@ -384,9 +395,11 @@ if is_enabled(FLAG_INFRASTRUCTURE_DESTROY):
 
             `gco stacks destroy` — destroy a single CDK stack.
 
-            Typical wall-clock: 5-20 minutes per stack. Invoke with the
-            task-protocol flag set so clients receive a task ID immediately
-            and poll for progress. Cancellation sends SIGTERM to the running
+            Typical wall-clock: 5-20 minutes per stack. Clients that speak
+            FastMCP's task protocol can receive a task ID immediately and
+            poll `tasks://gco/{task_id}` for progress; clients that don't
+            run the tool inline with progress streamed through the FastMCP
+            Progress dependency. Cancellation sends SIGTERM to the running
             CDK process and partial CloudFormation state may remain —
             inspect via stack_status or the AWS console before retrying.
 
@@ -414,11 +427,13 @@ if is_enabled(FLAG_INFRASTRUCTURE_DESTROY):
             `gco stacks destroy-all` — destroy every CDK stack in reverse dependency order.
 
             Typical wall-clock: 20-40 minutes for a multi-region teardown.
-            Invoke with the task-protocol flag set so clients receive a task
-            ID immediately and poll for progress. Cancellation sends SIGTERM
-            to the running CDK process and partial CloudFormation state may
-            remain — inspect via stack_status or the AWS console before
-            retrying.
+            Clients that speak FastMCP's task protocol can receive a task
+            ID immediately and poll `tasks://gco/{task_id}` for progress;
+            clients that don't run the tool inline with progress streamed
+            through the FastMCP Progress dependency. Cancellation sends
+            SIGTERM to the running CDK process and partial CloudFormation
+            state may remain — inspect via stack_status or the AWS console
+            before retrying.
 
             Args:
                 yes: Skip the confirmation prompt (passes ``-y``). Defaults to True.
