@@ -123,6 +123,14 @@ spec:
             # cdk.json::job_validation_policy.allowed_namespaces.
             - name: ALLOWED_NAMESPACES
               value: "{{MP_ALLOWED_NAMESPACES}}"
+            # Image registry allowlist — shared with the queue processor via
+            # cdk.json::job_validation_policy.{trusted_registries,trusted_dockerhub_orgs}.
+            # Must include the project's own ECR registry hostnames so jobs
+            # built via `gco images build` aren't rejected as untrusted.
+            - name: TRUSTED_REGISTRIES
+              value: "{{MP_TRUSTED_REGISTRIES}}"
+            - name: TRUSTED_DOCKERHUB_ORGS
+              value: "{{MP_TRUSTED_DOCKERHUB_ORGS}}"
           resources:
             requests:
               cpu: 500m

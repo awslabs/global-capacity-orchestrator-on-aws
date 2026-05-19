@@ -150,6 +150,39 @@ def _compute_kubectl_cluster_shared_replacements(
     }
 
 
+def _augment_trusted_registries_with_project_ecr(
+    base: list[str],
+    *,
+    account: str,
+    regions: list[str],
+    global_region: str,
+) -> list[str]:
+    """Return the configured trusted registries plus the project's own ECR.
+
+    The new ``gco images build`` flow pushes images to a per-account ECR
+    registry under ``<account>.dkr.ecr.<region>.amazonaws.com/gco/<name>``.
+    Without this augmentation the queue/manifest validators would treat
+    those URIs as untrusted and reject every job that uses one — which
+    defeats the whole point of the image registry feature.
+
+    Returns the unique union of the operator-configured ``base`` list
+    plus the per-region project ECR hostnames (one per deployed region,
+    plus the global region where ``gco-global`` provisions the source
+    repo). Order is stable so the rendered ConfigMap doesn't churn
+    between deploys.
+    """
+    augmented: list[str] = list(base)
+    seen = set(augmented)
+    targets = list(dict.fromkeys([global_region, *regions]))
+    if account:
+        for region in targets:
+            host = f"{account}.dkr.ecr.{region}.amazonaws.com"
+            if host not in seen:
+                augmented.append(host)
+                seen.add(host)
+    return augmented
+
+
 class GCORegionalStack(Stack):
     """
     Regional resources stack for a single AWS region.
@@ -1889,6 +1922,20 @@ class GCORegionalStack(Stack):
             "{{MP_ALLOWED_NAMESPACES}}": ",".join(
                 job_policy.get("allowed_namespaces", ["default", "gco-jobs"])
             ),
+            # Manifest processor image registry allowlist (sourced from shared
+            # policy). Augmented with the project's own ECR registry hostnames
+            # so jobs built via ``gco images build`` aren't rejected by the
+            # REST submission path. Identical augmentation runs on the SQS
+            # path below — see ``{{QP_TRUSTED_REGISTRIES}}``.
+            "{{MP_TRUSTED_REGISTRIES}}": ",".join(
+                _augment_trusted_registries_with_project_ecr(
+                    job_policy.get("trusted_registries", []),
+                    account=self.account,
+                    regions=self.config.get_regions(),
+                    global_region=self.config.get_global_region(),
+                )
+            ),
+            "{{MP_TRUSTED_DOCKERHUB_ORGS}}": ",".join(job_policy.get("trusted_dockerhub_orgs", [])),
             # Manifest processor request body size cap (HTTP 413 middleware).
             # Lives at cdk.json::manifest_processor.max_request_body_bytes.
             "{{MP_MAX_REQUEST_BODY_BYTES}}": str(
@@ -1969,7 +2016,12 @@ class GCORegionalStack(Stack):
                 job_quotas.get("max_memory_per_manifest", "32Gi")
             )
             image_replacements["{{QP_TRUSTED_REGISTRIES}}"] = ",".join(
-                job_policy.get("trusted_registries", [])
+                _augment_trusted_registries_with_project_ecr(
+                    job_policy.get("trusted_registries", []),
+                    account=self.account,
+                    regions=self.config.get_regions(),
+                    global_region=self.config.get_global_region(),
+                )
             )
             image_replacements["{{QP_TRUSTED_DOCKERHUB_ORGS}}"] = ",".join(
                 job_policy.get("trusted_dockerhub_orgs", [])

@@ -1252,4 +1252,20 @@ def create_manifest_processor_from_env() -> ManifestProcessor:
         "validation_enabled": os.getenv("VALIDATION_ENABLED", "true").lower() == "true",
     }
 
+    # Image registry allowlist — sourced from the same CDK env vars the
+    # queue_processor reads, so an attacker who holds sqs:SendMessage on
+    # the regional queue can't reach an image source the REST path
+    # rejects. When unset (or empty) the ManifestProcessor falls back
+    # to its hardcoded default. Empty/missing values are dropped to
+    # match the queue_processor's parsing rules.
+    trusted_registries_env = os.getenv("TRUSTED_REGISTRIES", "")
+    trusted_registries = [r.strip() for r in trusted_registries_env.split(",") if r.strip()]
+    if trusted_registries:
+        config_dict["trusted_registries"] = trusted_registries
+
+    trusted_dockerhub_orgs_env = os.getenv("TRUSTED_DOCKERHUB_ORGS", "")
+    trusted_dockerhub_orgs = [o.strip() for o in trusted_dockerhub_orgs_env.split(",") if o.strip()]
+    if trusted_dockerhub_orgs:
+        config_dict["trusted_dockerhub_orgs"] = trusted_dockerhub_orgs
+
     return ManifestProcessor(cluster_id, region, config_dict)
