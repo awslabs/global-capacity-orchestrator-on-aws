@@ -260,12 +260,10 @@ def _parse_job_to_dict(job: V1Job) -> dict[str, Any]:
     containers = getattr(pod_spec, "containers", None) or []
     init_containers = getattr(pod_spec, "init_containers", None) or []
     container_specs = [
-        {"name": getattr(c, "name", ""), "image": getattr(c, "image", "")}
-        for c in containers
+        {"name": getattr(c, "name", ""), "image": getattr(c, "image", "")} for c in containers
     ]
     init_container_specs = [
-        {"name": getattr(c, "name", ""), "image": getattr(c, "image", "")}
-        for c in init_containers
+        {"name": getattr(c, "name", ""), "image": getattr(c, "image", "")} for c in init_containers
     ]
 
     return {

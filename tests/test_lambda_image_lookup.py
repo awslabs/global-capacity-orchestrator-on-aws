@@ -186,9 +186,7 @@ class TestHasRetainTag:
 
     def test_finds_retain_true_case_insensitive(self, image_lookup_module: Any) -> None:
         handler, ecr = image_lookup_module
-        ecr.list_tags_for_resource.return_value = {
-            "tags": [{"Key": "gco:retain", "Value": "True"}]
-        }
+        ecr.list_tags_for_resource.return_value = {"tags": [{"Key": "gco:retain", "Value": "True"}]}
         assert handler._has_retain_tag(ecr, "arn:..") is True
 
     def test_other_value_returns_false(self, image_lookup_module: Any) -> None:
@@ -404,9 +402,7 @@ class TestCreateOrUpdate:
 class TestDelete:
     def test_idempotent_when_repository_absent(self, image_lookup_module: Any) -> None:
         handler, ecr = image_lookup_module
-        ecr.describe_repositories.side_effect = ecr.exceptions.RepositoryNotFoundException(
-            "gone"
-        )
+        ecr.describe_repositories.side_effect = ecr.exceptions.RepositoryNotFoundException("gone")
         result = handler.lambda_handler(
             {
                 "RequestType": "Delete",
@@ -427,13 +423,9 @@ class TestDelete:
     ) -> None:
         handler, ecr = image_lookup_module
         ecr.describe_repositories.return_value = {
-            "repositories": [
-                {"repositoryArn": "arn:aws:ecr:us-east-1:1:repository/gco/svc"}
-            ]
+            "repositories": [{"repositoryArn": "arn:aws:ecr:us-east-1:1:repository/gco/svc"}]
         }
-        ecr.list_tags_for_resource.return_value = {
-            "tags": [{"Key": "gco:retain", "Value": "true"}]
-        }
+        ecr.list_tags_for_resource.return_value = {"tags": [{"Key": "gco:retain", "Value": "true"}]}
 
         result = handler.lambda_handler(
             {
@@ -455,9 +447,7 @@ class TestDelete:
     def test_removal_policy_retain_skips_delete(self, image_lookup_module: Any) -> None:
         handler, ecr = image_lookup_module
         ecr.describe_repositories.return_value = {
-            "repositories": [
-                {"repositoryArn": "arn:aws:ecr:us-east-1:1:repository/gco/svc"}
-            ]
+            "repositories": [{"repositoryArn": "arn:aws:ecr:us-east-1:1:repository/gco/svc"}]
         }
         ecr.list_tags_for_resource.return_value = {"tags": []}
 
@@ -482,15 +472,11 @@ class TestDelete:
     ) -> None:
         handler, ecr = image_lookup_module
         ecr.describe_repositories.return_value = {
-            "repositories": [
-                {"repositoryArn": "arn:aws:ecr:us-east-1:1:repository/gco/svc"}
-            ]
+            "repositories": [{"repositoryArn": "arn:aws:ecr:us-east-1:1:repository/gco/svc"}]
         }
         ecr.list_tags_for_resource.return_value = {"tags": []}
         paginator = MagicMock()
-        paginator.paginate.return_value = iter(
-            [{"imageDetails": [{"imageDigest": "sha256:aaa"}]}]
-        )
+        paginator.paginate.return_value = iter([{"imageDetails": [{"imageDigest": "sha256:aaa"}]}])
         ecr.get_paginator.return_value = paginator
         ecr.batch_delete_image.return_value = {"imageIds": [{"imageDigest": "sha256:aaa"}]}
 
@@ -518,9 +504,7 @@ class TestDelete:
     ) -> None:
         handler, ecr = image_lookup_module
         ecr.describe_repositories.return_value = {
-            "repositories": [
-                {"repositoryArn": "arn:aws:ecr:us-east-1:1:repository/gco/svc"}
-            ]
+            "repositories": [{"repositoryArn": "arn:aws:ecr:us-east-1:1:repository/gco/svc"}]
         }
         ecr.list_tags_for_resource.return_value = {"tags": []}
 

@@ -905,7 +905,11 @@ class TestTasksResourceFallbacks:
         stub."""
         from resources import tasks as tasks_mod
 
-        original_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__  # type: ignore[index]
+        original_import = (
+            __builtins__["__import__"]
+            if isinstance(__builtins__, dict)
+            else __builtins__.__import__
+        )  # type: ignore[index]
 
         def _raising_import(name: str, *args: Any, **kwargs: Any) -> Any:
             if name == "server":

@@ -749,9 +749,7 @@ class TestFsxCliErrorPaths:
         from cli.main import cli
 
         with patch("cli.stacks.update_fsx_config") as mock_update:
-            result = CliRunner().invoke(
-                cli, ["stacks", "fsx", "enable", "-y", "-r", "us-west-2"]
-            )
+            result = CliRunner().invoke(cli, ["stacks", "fsx", "enable", "-y", "-r", "us-west-2"])
         assert result.exit_code == 0
         # Per-region invocations show the regional deploy hint.
         assert "gco-us-west-2" in result.output
@@ -796,9 +794,7 @@ class TestFsxCliErrorPaths:
         from cli.main import cli
 
         with patch("cli.stacks.update_fsx_config") as mock_update:
-            result = CliRunner().invoke(
-                cli, ["stacks", "fsx", "disable", "-y", "-r", "eu-west-1"]
-            )
+            result = CliRunner().invoke(cli, ["stacks", "fsx", "disable", "-y", "-r", "eu-west-1"])
         assert result.exit_code == 0
         assert "gco-eu-west-1" in result.output
         mock_update.assert_called_once_with({"enabled": False}, "eu-west-1")
@@ -920,9 +916,7 @@ class TestAuroraCli:
 
         from cli.main import cli
 
-        result = CliRunner().invoke(
-            cli, ["stacks", "aurora", "enable", "-y", "--min-acu", "-1"]
-        )
+        result = CliRunner().invoke(cli, ["stacks", "aurora", "enable", "-y", "--min-acu", "-1"])
         assert result.exit_code == 1
         assert "Minimum ACU must be >= 0" in result.output
 
@@ -931,9 +925,7 @@ class TestAuroraCli:
 
         from cli.main import cli
 
-        result = CliRunner().invoke(
-            cli, ["stacks", "aurora", "enable", "-y", "--max-acu", "0"]
-        )
+        result = CliRunner().invoke(cli, ["stacks", "aurora", "enable", "-y", "--max-acu", "0"])
         assert result.exit_code == 1
         assert "Maximum ACU must be >= 1" in result.output
 
