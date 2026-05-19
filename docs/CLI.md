@@ -22,6 +22,7 @@ Complete command-line interface documentation for GCO (Global Capacity Orchestra
   - [nodepools](#nodepools-commands)
   - [analytics](#analytics-commands)
   - [config-cmd](#config-cmd-commands)
+  - [tasks](#tasks-commands)
 - [Configuration](#configuration)
 - [Environment Variables](#environment-variables)
 - [Examples](#examples)
@@ -2765,6 +2766,94 @@ environment-variable overrides).
 
 ```bash
 gco config-cmd show
+```
+
+---
+
+### Tasks Commands
+
+Inspect long-running MCP tool invocations through their disk-backed
+status surface. Every long-running tool (`deploy_all`, `destroy_all`,
+`bootstrap_cdk`, `deploy_stack`, `destroy_stack`, `images_build`,
+`images_push`) writes a JSON status file plus a raw output log under
+`~/.gco/tasks/{task_id}.{json,log}` on every line, so an operator
+with a terminal can see real-time progress even when the MCP client
+drops or buries notifications.
+
+The directory is configurable via `GCO_TASK_STATUS_DIR`. Set
+`GCO_DISABLE_TASK_STATUS=1` to skip disk emission for sandboxed
+environments where `~/.gco` isn't writable.
+
+#### `gco tasks list`
+
+List recent tasks, newest first. Reports the state, elapsed time,
+stack count, last stack name, and task ID for each. Tasks whose
+recorded PID is no longer alive but whose state still says `running`
+are reported as `orphaned` so callers see honest data even when the
+original MCP wrapper exited unexpectedly.
+
+```bash
+gco tasks list [OPTIONS]
+```
+
+**Options:**
+- `-n, --limit INTEGER` — Maximum tasks to show (default: 20)
+- `--json` — Emit raw JSON instead of a table
+
+```bash
+gco tasks list
+gco tasks list -n 5
+gco tasks list --json | jq '.tasks[] | select(.state == "orphaned")'
+```
+
+#### `gco tasks show TASK_ID`
+
+Print the full JSON status record for a single task. Includes the
+original argv, the last 20 output lines, the recorded PID, and the
+path to the full log file. Useful when `gco tasks list` shows a
+state worth digging into (failed/orphaned/cancelled).
+
+```bash
+gco tasks show deploy_all-1747683123-42
+```
+
+#### `gco tasks tail TASK_ID`
+
+Print the last N lines of a task's raw output log. Each line is
+prefixed with `[stdout]` or `[stderr]` so streams stay distinguishable
+in the interleaved order the subprocess produced them. The `--follow`
+mode polls the log file like `tail -f`.
+
+```bash
+gco tasks tail TASK_ID [OPTIONS]
+```
+
+**Options:**
+- `-n, --lines INTEGER` — Lines to show from the end of the log (default: 100)
+- `-f, --follow` — Stream new lines as they're written
+- `--interval FLOAT` — Polling interval in seconds when `--follow` is set (default: 1.0)
+
+```bash
+gco tasks tail deploy_all-1747683123-42
+gco tasks tail deploy_all-1747683123-42 -n 500
+gco tasks tail deploy_all-1747683123-42 -f
+```
+
+#### `gco tasks prune`
+
+Remove all but the most-recent N task files. Pruning happens
+automatically when new tasks start, but a manual sweep is sometimes
+useful (e.g. after a flurry of failed retries cluttered the directory).
+
+```bash
+gco tasks prune [OPTIONS]
+```
+
+**Options:**
+- `--keep INTEGER` — Number of most-recent tasks to keep (default: 50)
+
+```bash
+gco tasks prune --keep 10
 ```
 
 ---

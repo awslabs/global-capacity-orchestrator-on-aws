@@ -95,6 +95,7 @@ _ALWAYS_VISIBLE = [
     "list_jobs",
     "submit_job_sqs",
     "list_inference_endpoints",
+    "task_status",
 ]
 if _TOOL_SEARCH == "bm25":
     mcp.add_transform(BM25SearchTransform(always_visible=_ALWAYS_VISIBLE))

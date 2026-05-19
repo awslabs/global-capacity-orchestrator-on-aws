@@ -35,6 +35,7 @@ from .commands import (
     nodepools,
     queue,
     stacks,
+    tasks,
     templates,
     webhooks,
 )
@@ -145,6 +146,7 @@ cli.add_command(stacks)
 cli.add_command(files)
 cli.add_command(config_cmd)
 cli.add_command(analytics)
+cli.add_command(tasks)
 
 
 def main() -> None:

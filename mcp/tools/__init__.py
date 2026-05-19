@@ -25,6 +25,7 @@ def register_all_tools() -> None:
         queue,
         stacks,
         storage,
+        tasks,
         templates,
         webhooks,
     )

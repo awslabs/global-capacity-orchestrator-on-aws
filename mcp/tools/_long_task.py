@@ -6,6 +6,14 @@ stderr for failure surfacing, and raises ``ToolError`` on non-zero exit
 with a structured error message so MCP clients can render failures
 properly instead of treating them as opaque success-shaped JSON blobs.
 
+In parallel with the MCP wire, every invocation also writes a JSON
+status file plus a raw log file under ``~/.gco/tasks/`` via
+``_task_status.TaskStatusWriter``. That gives operators (and other
+agents) an out-of-band view of what's happening even when the MCP
+client drops or buries the streamed notifications. The disk surface
+is read by the ``task_status`` / ``task_tail`` MCP tools and by
+``gco tasks list/tail``.
+
 Used by every long-running stack-lifecycle tool (deploy_stack, deploy_all,
 bootstrap_cdk, destroy_stack, destroy_all) and by images_build / images_push.
 """
@@ -23,6 +31,8 @@ from collections.abc import Sequence
 from typing import Any
 
 from fastmcp.exceptions import ToolError
+
+from tools._task_status import TaskStatusWriter, make_task_id
 
 # <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
 # Flowchart(s) generated from this file:
@@ -153,6 +163,31 @@ async def _run_long_task(
         stderr=asyncio.subprocess.PIPE,
     )
 
+    # Disk-backed status: parallel observability channel that doesn't
+    # depend on the MCP client surfacing notifications. Reads land in
+    # the task_status / task_tail tools and in ``gco tasks``.
+    #
+    # Derive a human-readable tool name from the argv. ``gco stacks
+    # deploy-all`` → ``stacks_deploy_all``; the dash is normalized to
+    # an underscore so the IDs are filesystem-safe and grep-friendly.
+    # Plain ``argv[0]`` (the bare interpreter or finch path) is the
+    # fallback for non-gco invocations like ``images_build`` which
+    # may shell out directly.
+    if len(argv) >= 3 and argv[0] == "gco":
+        tool_name = f"{argv[1]}_{argv[2].replace('-', '_')}"
+    elif len(argv) >= 2 and argv[0] == "gco":
+        tool_name = argv[1]
+    else:
+        tool_name = argv[0] if argv else "task"
+    task_id = make_task_id(tool_name)
+    status_writer = TaskStatusWriter(
+        task_id=task_id,
+        tool=tool_name,
+        argv=list(argv),
+        pid=proc.pid,
+        total_units=total_units,
+    )
+
     stacks_completed = 0
     failed_lines: list[str] = []
     stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
@@ -169,6 +204,7 @@ async def _run_long_task(
                 continue
             last_activity = time.monotonic()
             await progress.set_message(line[:200])
+            status_writer.record_line(line, stream=label)
             stack_done = _CDK_STACK_DONE_RE.search(line)
             if stack_done is not None:
                 # Increment once per unique stack — CDK can echo the
@@ -179,11 +215,13 @@ async def _run_long_task(
                     completed_stacks_set.add(name)
                     stacks_completed += 1
                     await progress.increment()
+                    status_writer.increment_stacks(name)
             if _CFN_FAILED_RE.search(line):
                 failed_lines.append(line[:200])
             stack_match = _CDK_STACK_LINE_RE.search(line)
             if stack_match:
                 last_stack = stack_match.group(1)
+                status_writer.set_last_stack(last_stack)
             if label == "stderr":
                 stderr_tail.append(line)
                 await ctx.info(f"stderr: {line[:200]}")
@@ -228,6 +266,11 @@ async def _run_long_task(
         for d in drains:
             d.cancel()
         heartbeat.cancel()
+        status_writer.finish(
+            state="cancelled",
+            exit_code=proc.returncode,
+            error=_PARTIAL_STATE_DISCLAIMER if is_stack_op else "cancelled",
+        )
         if is_stack_op:
             raise asyncio.CancelledError(_PARTIAL_STATE_DISCLAIMER) from None
         raise
@@ -243,6 +286,7 @@ async def _run_long_task(
         payload: dict[str, Any] = {
             "error": f"exit_code={rc}",
             "exit_code": rc,
+            "task_id": task_id,
             "stacks_completed": stacks_completed,
             "duration_seconds": duration,
             "last_stack": last_stack,
@@ -251,15 +295,18 @@ async def _run_long_task(
         }
         if is_stack_op:
             payload["disclaimer"] = _PARTIAL_STATE_DISCLAIMER
+        status_writer.finish(state="failed", exit_code=rc, error=f"exit_code={rc}")
         # ToolError surfaces the payload to the client as a tool-level
         # failure (CallToolResult.is_error=True). Inline callers see it
         # via the FastMCP transport; agent clients render it as a
         # tool-error message rather than success-shaped data.
         raise ToolError(json.dumps(payload))
 
+    status_writer.finish(state="succeeded", exit_code=rc)
     return json.dumps(
         {
             "status": "ok",
+            "task_id": task_id,
             "stacks_completed": stacks_completed,
             "duration_seconds": duration,
             "last_stack": last_stack,

@@ -184,6 +184,7 @@ from tools.storage import (  # noqa: E402, F401
     list_file_systems,
     list_storage_contents,
 )
+from tools.tasks import task_status, task_tail  # noqa: E402, F401
 from tools.templates import (  # noqa: E402, F401
     templates_create,
     templates_get,
@@ -506,6 +507,8 @@ __all__ = [
     "stop_inference",
     "submit_job_api",
     "submit_job_sqs",
+    "task_status",
+    "task_tail",
     "templates_create",
     "templates_get",
     "templates_list",

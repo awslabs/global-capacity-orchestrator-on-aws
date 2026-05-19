@@ -429,6 +429,124 @@ async def test_run_long_task_dedupes_repeated_stack_done_lines() -> None:
     assert progress.increments == 2
 
 
+async def test_run_long_task_writes_disk_status_artifacts(tmp_path, monkeypatch) -> None:
+    """A successful invocation leaves a JSON status file and a raw log
+    file in the configured status directory, with terminal state set
+    and the log capturing both stdout and stderr lines.
+
+    This is the integration test for the disk-backed observability
+    channel — it proves the writer is wired through ``_run_long_task``
+    and that operators (or other agents) reading the directory will
+    see the same state the MCP wire surfaces.
+    """
+    monkeypatch.setenv("GCO_TASK_STATUS_DIR", str(tmp_path))
+    monkeypatch.delenv("GCO_DISABLE_TASK_STATUS", raising=False)
+
+    progress = _FakeProgress()
+    ctx = _FakeCtx()
+    argv = [
+        sys.executable,
+        "-c",
+        (
+            "import sys\n"
+            "print('hello stdout', flush=True)\n"
+            "print('worry stderr', file=sys.stderr, flush=True)\n"
+            "print('\\u2705  gco-global', flush=True)\n"
+        ),
+    ]
+
+    result = await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=False)
+    parsed = json.loads(result)
+    task_id = parsed["task_id"]
+    assert task_id, "success payload must include the task_id"
+
+    status_path = tmp_path / f"{task_id}.json"
+    log_path = tmp_path / f"{task_id}.log"
+    assert status_path.exists()
+    assert log_path.exists()
+
+    record = json.loads(status_path.read_text())
+    assert record["state"] == "succeeded"
+    assert record["exit_code"] == 0
+    assert record["stacks_completed"] == 1
+    assert record["last_stack"] == "gco-global"
+
+    log_text = log_path.read_text()
+    assert "[stdout] hello stdout" in log_text
+    assert "[stderr] worry stderr" in log_text
+
+
+async def test_run_long_task_tool_name_derived_from_gco_argv(tmp_path, monkeypatch) -> None:
+    """When argv looks like ``gco stacks deploy-all -y``, the recorded
+    ``tool`` field is ``stacks_deploy_all`` so operators reading the
+    status directory can tell at a glance what the task was doing,
+    without grovelling through the argv array."""
+    monkeypatch.setenv("GCO_TASK_STATUS_DIR", str(tmp_path))
+    monkeypatch.delenv("GCO_DISABLE_TASK_STATUS", raising=False)
+
+    progress = _FakeProgress()
+    ctx = _FakeCtx()
+    # Argv mirrors what tools.stacks.deploy_all builds.
+    argv = [
+        sys.executable,
+        "-c",
+        "print('done', flush=True)",
+    ]
+    # We can't actually run "gco stacks deploy-all" in a unit test, so
+    # patch the subprocess spawn to capture the argv our wrapper builds
+    # and feed our short python invocation instead. The name derivation
+    # logic only looks at argv[0:3], so we test it directly with a
+    # synthetic argv.
+    from tools._long_task import _run_long_task as runner
+
+    fake_argv = ["gco", "stacks", "deploy-all", "-y"]
+    # Substitute the spawn so we don't actually try to execute "gco".
+    from unittest.mock import patch
+
+    real_spawn = asyncio.create_subprocess_exec
+
+    async def fake_spawn(*spawn_argv, **kwargs):
+        # Ignore the gco argv; run a benign quick command instead.
+        return await real_spawn(*argv, **kwargs)
+
+    with patch("tools._long_task.asyncio.create_subprocess_exec", side_effect=fake_spawn):
+        result = await runner(fake_argv, ctx=ctx, progress=progress, is_stack_op=False)
+
+    parsed = json.loads(result)
+    task_id = parsed["task_id"]
+    assert task_id.startswith("stacks_deploy_all-"), task_id
+
+    record = json.loads((tmp_path / f"{task_id}.json").read_text())
+    assert record["tool"] == "stacks_deploy_all"
+
+
+async def test_run_long_task_failure_writes_failed_state_to_disk(tmp_path, monkeypatch) -> None:
+    """A non-zero exit leaves ``state=failed`` and the recorded
+    exit_code on disk so observers see the same outcome the MCP
+    client gets via the structured ToolError."""
+    from fastmcp.exceptions import ToolError
+
+    monkeypatch.setenv("GCO_TASK_STATUS_DIR", str(tmp_path))
+    monkeypatch.delenv("GCO_DISABLE_TASK_STATUS", raising=False)
+
+    progress = _FakeProgress()
+    ctx = _FakeCtx()
+    argv = [
+        sys.executable,
+        "-c",
+        "import sys; print('boom', file=sys.stderr, flush=True); sys.exit(2)",
+    ]
+
+    with pytest.raises(ToolError) as excinfo:
+        await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=False)
+
+    payload = json.loads(str(excinfo.value))
+    task_id = payload["task_id"]
+    record = json.loads((tmp_path / f"{task_id}.json").read_text())
+    assert record["state"] == "failed"
+    assert record["exit_code"] == 2
+
+
 # =============================================================================
 # Long-running stack lifecycle tools — registration + argv kick-off
 # =============================================================================

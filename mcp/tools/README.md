@@ -19,6 +19,7 @@ MCP tool definitions — one file per domain. Each module registers tools agains
 | `stacks.py` | 4 | `list_stacks`, `stack_status`, `setup_cluster_access`, `fsx_status` |
 | `storage.py` | 2 | `list_storage_contents`, `list_file_systems` |
 | `models.py` | 2 | `list_models`, `get_model_uri` |
+| `tasks.py` | 2 | `task_status`, `task_tail` (read-only observability for long-running tools) |
 
 ## How Tools Work
 
