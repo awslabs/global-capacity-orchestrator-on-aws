@@ -780,3 +780,235 @@ class TestImagesCtxWarning:
         with patch("fastmcp.server.dependencies.get_context", return_value=_AngryCtx()):
             # Must not raise.
             asyncio.run(images_mod._ctx_warning("oh no"))
+
+
+# ---------------------------------------------------------------------------
+# mcp/resources/tasks.py — fallback chain branches
+# ---------------------------------------------------------------------------
+#
+# The earlier ``TestTasksResource`` class covers the happy ``get_task``
+# path, the ``invalid task_id`` regex branch, and the no-accessor stub.
+# These extra cases cover the older-build fallbacks: the ``_docket``
+# attribute name, the ``fetch_task`` accessor, the ``model_dump``
+# coercion, and the unconvertible-record ``str(record)`` last-resort.
+
+
+class TestTasksResourceFallbacks:
+    def test_docket_underscore_attribute_used_when_get_task_absent(self) -> None:
+        """Older FastMCP builds expose state via ``_docket``."""
+        from resources import tasks as tasks_mod
+
+        fake_docket = MagicMock(spec=["get"])
+        fake_docket.get.return_value = {"status": "running"}
+
+        fake_mcp = MagicMock(spec=["_docket"])
+        fake_mcp._docket = fake_docket
+
+        with patch.dict(sys.modules, {"server": MagicMock(mcp=fake_mcp)}):
+            body = tasks_mod._task_resource("task-123")
+        payload = json.loads(body)
+        assert payload["task_id"] == "task-123"
+        assert payload["state"]["status"] == "running"
+
+    def test_fetch_task_accessor_used_when_get_and_get_task_absent(self) -> None:
+        """Some builds expose the lookup as ``fetch_task``."""
+        from resources import tasks as tasks_mod
+
+        fake_docket = MagicMock(spec=["fetch_task"])
+        fake_docket.fetch_task.return_value = {"status": "complete"}
+
+        fake_mcp = MagicMock(spec=["docket"])
+        fake_mcp.docket = fake_docket
+
+        with patch.dict(sys.modules, {"server": MagicMock(mcp=fake_mcp)}):
+            body = tasks_mod._task_resource("task-abc")
+        payload = json.loads(body)
+        assert payload["state"]["status"] == "complete"
+
+    def test_docket_accessor_swallows_exceptions(self) -> None:
+        """A misbehaving accessor must skip to the next without surfacing."""
+        from resources import tasks as tasks_mod
+
+        fake_docket = MagicMock(spec=["get_task", "get"])
+        fake_docket.get_task.side_effect = RuntimeError("boom")
+        fake_docket.get.return_value = {"status": "fallback"}
+
+        fake_mcp = MagicMock(spec=["_docket"])
+        fake_mcp._docket = fake_docket
+
+        with patch.dict(sys.modules, {"server": MagicMock(mcp=fake_mcp)}):
+            body = tasks_mod._task_resource("task-xyz")
+        payload = json.loads(body)
+        assert payload["state"]["status"] == "fallback"
+
+    def test_coerce_to_dict_uses_model_dump(self) -> None:
+        from resources.tasks import _coerce_to_dict
+
+        class Pydantic:
+            def model_dump(self) -> dict[str, str]:
+                return {"a": "b"}
+
+        assert _coerce_to_dict(Pydantic()) == {"a": "b"}
+
+    def test_coerce_to_dict_skips_methods_that_raise(self) -> None:
+        from resources.tasks import _coerce_to_dict
+
+        class Bad:
+            def model_dump(self) -> dict[str, str]:
+                raise RuntimeError("nope")
+
+            def to_dict(self) -> dict[str, str]:
+                return {"x": "y"}
+
+        assert _coerce_to_dict(Bad()) == {"x": "y"}
+
+    def test_coerce_to_dict_skips_methods_returning_non_dict(self) -> None:
+        from resources.tasks import _coerce_to_dict
+
+        class WeirdDump:
+            def model_dump(self) -> str:  # type: ignore[override]
+                return "not a dict"
+
+            def to_dict(self) -> dict[str, str]:
+                return {"ok": "yes"}
+
+        assert _coerce_to_dict(WeirdDump()) == {"ok": "yes"}
+
+    def test_coerce_to_dict_falls_through_to_vars(self) -> None:
+        from resources.tasks import _coerce_to_dict
+
+        class Plain:
+            def __init__(self) -> None:
+                self.public = 1
+                self._private = 2
+
+        out = _coerce_to_dict(Plain())
+        assert out == {"public": 1}
+
+    def test_coerce_to_dict_str_fallback_for_unconvertible(self) -> None:
+        """Slotted objects without ``__dict__`` and no model methods land
+        on ``str(record)``."""
+        from resources.tasks import _coerce_to_dict
+
+        class Slotted:
+            __slots__ = ()
+
+            def __repr__(self) -> str:
+                return "Slotted()"
+
+        out = _coerce_to_dict(Slotted())
+        assert out == {"value": "Slotted()"}
+
+    def test_server_import_failure_returns_protocol_unavailable_stub(self) -> None:
+        """If the ``server`` module itself fails to import, the lookup
+        returns ``None`` and the resource emits the protocol-unavailable
+        stub."""
+        from resources import tasks as tasks_mod
+
+        original_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__  # type: ignore[index]
+
+        def _raising_import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "server":
+                raise ImportError("server vanished")
+            return original_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=_raising_import):
+            body = tasks_mod._task_resource("task-1")
+        payload = json.loads(body)
+        assert payload["error"] == "task protocol not available"
+
+
+# ---------------------------------------------------------------------------
+# mcp/resources/docs.py — by-category, by-use-case, by-topic, by-related
+# ---------------------------------------------------------------------------
+
+
+class TestDocsCategoryAndUseCaseResources:
+    """Per-bucket resource handlers in ``mcp/resources/docs.py``."""
+
+    def test_examples_by_category_lists_matches(self) -> None:
+        # ``Jobs & Training`` is the largest bucket — matches case-insensitive.
+        body = _read_resource("docs://gco/examples/by-category/jobs%20%26%20training")
+        assert "# Examples in category" in body
+        assert "`docs://gco/examples/" in body
+
+    def test_examples_by_category_unknown(self) -> None:
+        body = _read_resource("docs://gco/examples/by-category/nonexistent-bucket")
+        assert "not found" in body
+        assert "Available:" in body
+
+    def test_examples_by_use_case_substring_match(self) -> None:
+        body = _read_resource("docs://gco/examples/by-use-case/smoke%20test")
+        assert "# Examples matching use case" in body
+        assert "`docs://gco/examples/" in body
+
+    def test_examples_by_use_case_no_match(self) -> None:
+        body = _read_resource("docs://gco/examples/by-use-case/utterly-fictional-need")
+        assert "No examples match" in body
+        assert "find_examples" in body
+
+    def test_docs_by_topic_lists_matches(self) -> None:
+        body = _read_resource("docs://gco/docs/by-topic/inference")
+        assert "# Docs matching topic" in body
+        assert "`docs://gco/docs/" in body
+
+    def test_docs_by_topic_unknown_returns_available(self) -> None:
+        body = _read_resource("docs://gco/docs/by-topic/zzz-not-real")
+        assert "not found" in body
+        assert "Available:" in body
+
+    def test_docs_by_related_unknown_doc(self) -> None:
+        body = _read_resource("docs://gco/docs/by-related/NOT_A_DOC")
+        assert "not found" in body
+        assert "Available:" in body
+
+    def test_docs_by_related_known_doc_renders_both_directions(self) -> None:
+        # ``CLI`` is referenced by other docs and references others itself,
+        # so the response must contain both H2 sections.
+        body = _read_resource("docs://gco/docs/by-related/CLI")
+        assert "# Docs related to CLI" in body
+        # At least one direction must produce a bullet.
+        assert "`docs://gco/docs/" in body
+
+
+class TestExampleResourceMetadataHeader:
+    """The metadata header rendering branches in ``example_resource``."""
+
+    def test_unknown_example_lists_available(self) -> None:
+        body = _read_resource("docs://gco/examples/no-such-example")
+        assert "not found" in body
+        assert "Available:" in body
+
+    def test_known_gpu_example_emits_full_header(self) -> None:
+        # ``gpu-job`` has every metadata field set: gpu, instance_types,
+        # use_cases, related, keywords. Ensures every conditional branch
+        # of the header builder runs at least once.
+        body = _read_resource("docs://gco/examples/gpu-job")
+        assert "# Example: gpu-job" in body
+        assert "# GPU/Accelerator: NVIDIA" in body
+        assert "# Submit with:" in body
+        assert "# Keywords:" in body
+        assert "# Instance Types:" in body
+        assert "# Use Cases:" in body
+        assert "# Related:" in body
+        assert "# --- Manifest begins below ---" in body
+
+    def test_simple_job_no_gpu_skips_gpu_line(self) -> None:
+        body = _read_resource("docs://gco/examples/simple-job")
+        # ``gpu`` is "no" — that line must be omitted from the header.
+        assert "# GPU/Accelerator" not in body
+
+
+class TestDocResourceMetadataHeader:
+    """The HTML-comment header in ``doc_resource``."""
+
+    def test_known_doc_renders_topics_and_related_header(self) -> None:
+        body = _read_resource("docs://gco/docs/CLI")
+        # ``CLI`` ships with both topics and related metadata, so both
+        # HTML-comment headers must render.
+        assert body.startswith("<!-- Topics:")
+        assert "<!-- Related:" in body
+
+    def test_unknown_doc_returns_not_found(self) -> None:
+        body = _read_resource("docs://gco/docs/NOT_A_REAL_DOC")
+        assert "not found" in body

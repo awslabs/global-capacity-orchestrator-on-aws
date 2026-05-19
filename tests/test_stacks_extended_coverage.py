@@ -693,3 +693,327 @@ class TestEksSgWatchdog:
             thread = manager._start_eks_sg_watchdog("gco-us-east-1", stop)
             thread.join(timeout=5)
         assert thread.is_alive() is False
+
+
+# ---------------------------------------------------------------------------
+# CLI subcommands: ``gco stacks fsx/valkey/aurora`` enable / disable / status
+# ---------------------------------------------------------------------------
+#
+# The underlying ``update_*_config`` helpers are exercised by
+# ``tests/test_feature_toggles.py``. These tests target the click-handler
+# bodies in ``cli/commands/stacks_cmd.py``: validation, the confirmation
+# branch, the success branch, and the catch-all ``except Exception`` path
+# that prints an error and exits non-zero.
+
+
+class TestFsxCliErrorPaths:
+    """``gco stacks fsx`` enable/disable/status — error and edge branches."""
+
+    def test_status_propagates_underlying_failure(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.get_fsx_config", side_effect=RuntimeError("boom")):
+            result = CliRunner().invoke(cli, ["stacks", "fsx", "status"])
+        assert result.exit_code == 1
+        assert "Failed to get FSx config: boom" in result.output
+
+    def test_status_with_region_prints_region_label(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch(
+            "cli.stacks.get_fsx_config",
+            return_value={"enabled": True, "storage_capacity_gib": 1200},
+        ) as mock_get:
+            result = CliRunner().invoke(cli, ["stacks", "fsx", "status", "-r", "us-east-1"])
+        assert result.exit_code == 0
+        assert "us-east-1" in result.output
+        mock_get.assert_called_once_with("us-east-1")
+
+    def test_enable_update_raises(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.update_fsx_config", side_effect=RuntimeError("disk full")):
+            result = CliRunner().invoke(cli, ["stacks", "fsx", "enable", "-y"])
+        assert result.exit_code == 1
+        assert "Failed to enable FSx: disk full" in result.output
+
+    def test_enable_per_region_prints_region_specific_followup(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.update_fsx_config") as mock_update:
+            result = CliRunner().invoke(
+                cli, ["stacks", "fsx", "enable", "-y", "-r", "us-west-2"]
+            )
+        assert result.exit_code == 0
+        # Per-region invocations show the regional deploy hint.
+        assert "gco-us-west-2" in result.output
+        mock_update.assert_called_once()
+
+    def test_enable_with_export_path_passes_through(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.update_fsx_config") as mock_update:
+            result = CliRunner().invoke(
+                cli,
+                [
+                    "stacks",
+                    "fsx",
+                    "enable",
+                    "-y",
+                    "--export-path",
+                    "s3://bucket/out",
+                ],
+            )
+        assert result.exit_code == 0
+        kwargs = mock_update.call_args.args[0]
+        assert kwargs["export_path"] == "s3://bucket/out"
+        # No import_path given, auto_import_policy must remain None.
+        assert kwargs["auto_import_policy"] is None
+
+    def test_disable_update_raises(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.update_fsx_config", side_effect=RuntimeError("locked")):
+            result = CliRunner().invoke(cli, ["stacks", "fsx", "disable", "-y"])
+        assert result.exit_code == 1
+        assert "Failed to disable FSx: locked" in result.output
+
+    def test_disable_per_region_prints_region_specific_followup(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.update_fsx_config") as mock_update:
+            result = CliRunner().invoke(
+                cli, ["stacks", "fsx", "disable", "-y", "-r", "eu-west-1"]
+            )
+        assert result.exit_code == 0
+        assert "gco-eu-west-1" in result.output
+        mock_update.assert_called_once_with({"enabled": False}, "eu-west-1")
+
+
+class TestValkeyCli:
+    """``gco stacks valkey`` enable/disable/status — full surface."""
+
+    def test_status_happy(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch(
+            "cli.stacks.get_valkey_config",
+            return_value={"enabled": False},
+        ):
+            result = CliRunner().invoke(cli, ["stacks", "valkey", "status"])
+        assert result.exit_code == 0
+        assert "Valkey config" in result.output
+
+    def test_status_failure(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.get_valkey_config", side_effect=RuntimeError("nope")):
+            result = CliRunner().invoke(cli, ["stacks", "valkey", "status"])
+        assert result.exit_code == 1
+        assert "Failed to get Valkey config: nope" in result.output
+
+    def test_enable_happy(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.update_valkey_config") as mock_update:
+            result = CliRunner().invoke(
+                cli,
+                [
+                    "stacks",
+                    "valkey",
+                    "enable",
+                    "-y",
+                    "--max-storage",
+                    "10",
+                    "--max-ecpu",
+                    "8000",
+                    "--snapshot-retention",
+                    "3",
+                ],
+            )
+        assert result.exit_code == 0
+        kwargs = mock_update.call_args.args[0]
+        assert kwargs["enabled"] is True
+        assert kwargs["max_data_storage_gb"] == 10
+        assert kwargs["max_ecpu_per_second"] == 8000
+        assert kwargs["snapshot_retention_limit"] == 3
+
+    def test_enable_update_raises(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.update_valkey_config", side_effect=RuntimeError("kaboom")):
+            result = CliRunner().invoke(cli, ["stacks", "valkey", "enable", "-y"])
+        assert result.exit_code == 1
+        assert "Failed to enable Valkey: kaboom" in result.output
+
+    def test_disable_happy(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.update_valkey_config") as mock_update:
+            result = CliRunner().invoke(cli, ["stacks", "valkey", "disable", "-y"])
+        assert result.exit_code == 0
+        mock_update.assert_called_once_with({"enabled": False})
+
+    def test_disable_update_raises(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.update_valkey_config", side_effect=RuntimeError("locked")):
+            result = CliRunner().invoke(cli, ["stacks", "valkey", "disable", "-y"])
+        assert result.exit_code == 1
+        assert "Failed to disable Valkey: locked" in result.output
+
+
+class TestAuroraCli:
+    """``gco stacks aurora`` enable/disable/status — full surface."""
+
+    def test_status_happy(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch(
+            "cli.stacks.get_aurora_config",
+            return_value={"enabled": False, "min_acu": 0, "max_acu": 16},
+        ):
+            result = CliRunner().invoke(cli, ["stacks", "aurora", "status"])
+        assert result.exit_code == 0
+        assert "Aurora pgvector config" in result.output
+
+    def test_status_failure(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.get_aurora_config", side_effect=RuntimeError("denied")):
+            result = CliRunner().invoke(cli, ["stacks", "aurora", "status"])
+        assert result.exit_code == 1
+        assert "Failed to get Aurora config: denied" in result.output
+
+    def test_enable_rejects_negative_min_acu(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        result = CliRunner().invoke(
+            cli, ["stacks", "aurora", "enable", "-y", "--min-acu", "-1"]
+        )
+        assert result.exit_code == 1
+        assert "Minimum ACU must be >= 0" in result.output
+
+    def test_enable_rejects_zero_max_acu(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        result = CliRunner().invoke(
+            cli, ["stacks", "aurora", "enable", "-y", "--max-acu", "0"]
+        )
+        assert result.exit_code == 1
+        assert "Maximum ACU must be >= 1" in result.output
+
+    def test_enable_rejects_max_below_min(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        result = CliRunner().invoke(
+            cli,
+            [
+                "stacks",
+                "aurora",
+                "enable",
+                "-y",
+                "--min-acu",
+                "10",
+                "--max-acu",
+                "5",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "Maximum ACU must be >= minimum ACU" in result.output
+
+    def test_enable_happy_with_deletion_protection(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.update_aurora_config") as mock_update:
+            result = CliRunner().invoke(
+                cli,
+                [
+                    "stacks",
+                    "aurora",
+                    "enable",
+                    "-y",
+                    "--min-acu",
+                    "2",
+                    "--max-acu",
+                    "32",
+                    "--backup-retention",
+                    "14",
+                    "--deletion-protection",
+                ],
+            )
+        assert result.exit_code == 0
+        kwargs = mock_update.call_args.args[0]
+        assert kwargs["enabled"] is True
+        assert kwargs["min_acu"] == 2
+        assert kwargs["max_acu"] == 32
+        assert kwargs["backup_retention_days"] == 14
+        assert kwargs["deletion_protection"] is True
+
+    def test_enable_update_raises(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.update_aurora_config", side_effect=RuntimeError("limit")):
+            result = CliRunner().invoke(cli, ["stacks", "aurora", "enable", "-y"])
+        assert result.exit_code == 1
+        assert "Failed to enable Aurora: limit" in result.output
+
+    def test_disable_happy(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.update_aurora_config") as mock_update:
+            result = CliRunner().invoke(cli, ["stacks", "aurora", "disable", "-y"])
+        assert result.exit_code == 0
+        mock_update.assert_called_once_with({"enabled": False})
+
+    def test_disable_update_raises(self) -> None:
+        from click.testing import CliRunner
+
+        from cli.main import cli
+
+        with patch("cli.stacks.update_aurora_config", side_effect=RuntimeError("snapshot")):
+            result = CliRunner().invoke(cli, ["stacks", "aurora", "disable", "-y"])
+        assert result.exit_code == 1
+        assert "Failed to disable Aurora: snapshot" in result.output
