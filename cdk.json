@@ -75,7 +75,9 @@
       "metrics_enabled": true,
       "tracing_enabled": true
     },
-    "vpc_endpoint_cidrs": ["10.0.0.0/16"],
+    "vpc_endpoint_cidrs": [
+      "10.0.0.0/16"
+    ],
     "resource_quota": {
       "max_cpu": "100",
       "max_memory": "512Gi",
@@ -132,18 +134,42 @@
       }
     },
     "helm": {
-      "keda": { "enabled": true },
-      "nvidia_gpu_operator": { "enabled": true },
-      "nvidia_dra_driver": { "enabled": true },
-      "nvidia_network_operator": { "enabled": true },
-      "aws_efa_device_plugin": { "enabled": true },
-      "aws_neuron_device_plugin": { "enabled": true },
-      "volcano": { "enabled": true },
-      "kuberay": { "enabled": true },
-      "cert_manager": { "enabled": true },
-      "slurm": { "enabled": false },
-      "yunikorn": { "enabled": false },
-      "kueue": { "enabled": true }
+      "keda": {
+        "enabled": true
+      },
+      "nvidia_gpu_operator": {
+        "enabled": true
+      },
+      "nvidia_dra_driver": {
+        "enabled": true
+      },
+      "nvidia_network_operator": {
+        "enabled": true
+      },
+      "aws_efa_device_plugin": {
+        "enabled": true
+      },
+      "aws_neuron_device_plugin": {
+        "enabled": true
+      },
+      "volcano": {
+        "enabled": true
+      },
+      "kuberay": {
+        "enabled": true
+      },
+      "cert_manager": {
+        "enabled": true
+      },
+      "slurm": {
+        "enabled": false
+      },
+      "yunikorn": {
+        "enabled": false
+      },
+      "kueue": {
+        "enabled": true
+      }
     },
     "queue_processor": {
       "enabled": true,
@@ -194,7 +220,16 @@
         "block_added_capabilities": true,
         "block_run_as_root": false
       },
-      "allowed_kinds": ["Job", "CronJob", "Deployment", "StatefulSet", "DaemonSet", "Service", "ConfigMap", "Pod"]
+      "allowed_kinds": [
+        "Job",
+        "CronJob",
+        "Deployment",
+        "StatefulSet",
+        "DaemonSet",
+        "Service",
+        "ConfigMap",
+        "Pod"
+      ]
     },
     "inference_monitor": {
       "reconcile_interval": 15,
@@ -251,6 +286,9 @@
     "@aws-cdk/aws-apigateway:authorizerChangeDeploymentLogicalId": true,
     "@aws-cdk/aws-ec2:launchTemplateDefaultUserData": true,
     "@aws-cdk/aws-stepfunctions-tasks:enableLogging": true,
-    "@aws-cdk/aws-ec2:restrictDefaultSecurityGroup": true
+    "@aws-cdk/aws-ec2:restrictDefaultSecurityGroup": true,
+    "images": {
+      "removal_policy": "retain"
+    }
   }
 }
