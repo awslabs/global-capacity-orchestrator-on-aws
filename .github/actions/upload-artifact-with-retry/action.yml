@@ -1,0 +1,85 @@
+name: "Upload Artifact (with retry)"
+description: |
+  Wraps `actions/upload-artifact@v7.0.1` with retry-on-failure. The GitHub Actions
+  artifact backend occasionally returns 5xx or 403s during the finalize step,
+  even after the bytes are fully uploaded. Those errors are transient — a
+  retry typically succeeds within seconds — but the default `upload-artifact`
+  action surfaces them as a hard job failure. This composite retries the
+  upload step up to 3 times with a 30-second backoff so a flaky finalize
+  doesn't fail an otherwise-green CI run.
+
+  Behaviour matches `actions/upload-artifact@v7.0.1` for every successful path;
+  the only observable difference is on transient failures.
+
+inputs:
+  name:
+    description: "Artifact name (passed straight through)."
+    required: true
+  path:
+    description: "File or directory path(s) to upload (passed straight through)."
+    required: true
+  retention-days:
+    description: "Retention period in days (passed straight through)."
+    required: false
+    default: ""
+  if-no-files-found:
+    description: "Behaviour when no matching files exist: `warn` (default), `error`, or `ignore`."
+    required: false
+    default: "warn"
+  overwrite:
+    description: "Whether to overwrite an existing artifact with the same name."
+    required: false
+    default: "false"
+  include-hidden-files:
+    description: "Whether to include hidden files in the upload."
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Upload (attempt 1 of 3)
+      id: try1
+      uses: actions/upload-artifact@v7.0.1
+      continue-on-error: true
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: ${{ inputs.if-no-files-found }}
+        overwrite: ${{ inputs.overwrite }}
+        include-hidden-files: ${{ inputs.include-hidden-files }}
+
+    - name: Wait before retry 1
+      if: steps.try1.outcome == 'failure'
+      shell: bash
+      run: sleep 30
+
+    - name: Upload (attempt 2 of 3)
+      id: try2
+      if: steps.try1.outcome == 'failure'
+      uses: actions/upload-artifact@v7.0.1
+      continue-on-error: true
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: ${{ inputs.if-no-files-found }}
+        overwrite: ${{ inputs.overwrite }}
+        include-hidden-files: ${{ inputs.include-hidden-files }}
+
+    - name: Wait before retry 2
+      if: steps.try1.outcome == 'failure' && steps.try2.outcome == 'failure'
+      shell: bash
+      run: sleep 60
+
+    - name: Upload (attempt 3 of 3 — final)
+      if: steps.try1.outcome == 'failure' && steps.try2.outcome == 'failure'
+      uses: actions/upload-artifact@v7.0.1
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: ${{ inputs.if-no-files-found }}
+        overwrite: ${{ inputs.overwrite }}
+        include-hidden-files: ${{ inputs.include-hidden-files }}
