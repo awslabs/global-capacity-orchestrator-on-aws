@@ -1233,3 +1233,41 @@ class GCOGlobalStack(Stack):
             ),
             export_name=f"{project_name}-image-lookup-function-arn",
         )
+
+        # The ECR repository policy uses ``arn:aws:ecr:*:<account>:repository/gco/*``
+        # which cdk-nag flags as ``AwsSolutions-IAM5`` because of the trailing
+        # ``*``. The wildcard here is the documented IAM way to express
+        # "every repository in this project's prefix", which is exactly the
+        # blast radius we want for a Lambda whose contract is to manage
+        # ECR repos under that prefix. Suppression is scoped to the specific
+        # ARN pattern (and to all ECR Describe/Read action wildcards in
+        # the policy below) rather than a blanket ``Resource::*`` bypass.
+        #
+        # ``self.account`` resolves to the unresolved CDK token
+        # ``<AWS::AccountId>`` at synth time, which is the literal form
+        # cdk-nag uses when it reports the finding's ``finding_id``. The
+        # ``appliesTo`` value below has to match that literal form exactly,
+        # so we hard-code the token rather than interpolating ``self.account``.
+        from cdk_nag import NagSuppressions
+
+        NagSuppressions.add_resource_suppressions(
+            self.image_lookup_lambda.role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "The ImageLookupFunction's contract is to look up "
+                        "or create any ECR repository under the project's "
+                        "``gco/*`` prefix. The ARN pattern "
+                        "``arn:aws:ecr:*:<account>:repository/gco/*`` is "
+                        "the documented IAM way to express that scope: it "
+                        "covers exactly the repositories the function is "
+                        "allowed to touch and nothing else."
+                    ),
+                    "appliesTo": [
+                        "Resource::arn:aws:ecr:*:<AWS::AccountId>:repository/gco/*",
+                    ],
+                },
+            ],
+            apply_to_children=True,
+        )

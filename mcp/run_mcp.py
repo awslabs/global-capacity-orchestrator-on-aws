@@ -90,6 +90,7 @@ register_all_resources()
 # Conditionally re-export reserve_capacity if it was registered.
 # contextlib.suppress is the idiomatic "swallow this exception" form.
 import contextlib as _contextlib  # noqa: E402
+import importlib as _importlib  # noqa: E402
 import os as _os  # noqa: E402
 
 from tools.analytics import (  # noqa: E402, F401
@@ -250,8 +251,6 @@ if (
     _os.environ.get("GCO_ENABLE_CAPACITY_PURCHASE", "").lower() == "true"
     or _os.environ.get("GCO_ENABLE_ALL_TOOLS", "").lower() == "true"
 ):
-    import importlib as _importlib  # noqa: E402
-
     from tools import capacity as _cap_mod  # noqa: E402
 
     _importlib.reload(_cap_mod)
@@ -266,8 +265,6 @@ if (
     or _os.environ.get("GCO_ENABLE_DESTRUCTIVE_OPERATIONS", "").lower() == "true"
     or _os.environ.get("GCO_ENABLE_ALL_TOOLS", "").lower() == "true"
 ):
-    import importlib as _importlib  # noqa: E402, F811
-
     from tools import images as _img_mod  # noqa: E402
 
     _importlib.reload(_img_mod)
@@ -290,8 +287,6 @@ if (
     or _os.environ.get("GCO_ENABLE_INFRASTRUCTURE_DESTROY", "").lower() == "true"
     or _os.environ.get("GCO_ENABLE_ALL_TOOLS", "").lower() == "true"
 ):
-    import importlib as _importlib  # noqa: E402, F811
-
     from tools import stacks as _stacks_mod  # noqa: E402
 
     _importlib.reload(_stacks_mod)
@@ -318,8 +313,6 @@ _MODEL_UPLOAD_FLAG_ON = (
 )
 
 if _DESTRUCTIVE_FLAG_ON:
-    import importlib as _importlib  # noqa: E402, F811
-
     from tools import jobs as _jobs_mod  # noqa: E402
 
     _importlib.reload(_jobs_mod)
@@ -366,8 +359,6 @@ if _DESTRUCTIVE_FLAG_ON:
 # or the model-upload flag (models_upload) is set, so do it once here
 # regardless of which (or both) flipped.
 if _DESTRUCTIVE_FLAG_ON or _MODEL_UPLOAD_FLAG_ON:
-    import importlib as _importlib  # noqa: E402, F811
-
     from tools import models as _models_mod  # noqa: E402
 
     _importlib.reload(_models_mod)

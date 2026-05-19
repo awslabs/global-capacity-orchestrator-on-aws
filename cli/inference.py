@@ -108,12 +108,17 @@ class InferenceManager:
         # inference_monitor's pod-spec materialiser pulls in-region
         # rather than across the WAN. Non-ECR URIs come back unchanged
         # from the helper, so this is a no-op for Docker Hub / GHCR refs.
+        #
+        # The helper lives in ``cli._image_uri`` rather than ``cli.images``
+        # so this import doesn't create a module-level cycle:
+        # ``cli.images`` itself imports the same helper. ``cli._image_uri``
+        # is a leaf module with no project-side dependencies.
         region_image_map: dict[str, str] = {}
         if rewrite_image:
-            from .images import _rewrite_image_uri_for_region
+            from ._image_uri import rewrite_image_uri_for_region
 
             for region in target_regions:
-                region_image_map[region] = _rewrite_image_uri_for_region(image, region)
+                region_image_map[region] = rewrite_image_uri_for_region(image, region)
 
         spec = {
             "image": image,

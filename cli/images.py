@@ -39,6 +39,9 @@ import boto3
 from botocore.exceptions import ClientError
 
 from ._container_runtime import detect_container_runtime
+from ._image_uri import (
+    rewrite_image_uri_for_region as _rewrite_image_uri_for_region,  # noqa: F401
+)
 from .config import GCOConfig, get_config
 
 # <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
@@ -68,10 +71,6 @@ _NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 # 128 chars max.
 _TAG_RE = re.compile(r"^[a-zA-Z0-9_][a-zA-Z0-9_.\-]{0,127}$")
 
-# ECR registry host shape:
-#   <account-id>.dkr.ecr.<region>.amazonaws.com
-_ECR_HOST_RE = re.compile(r"^(?P<account>\d+)\.dkr\.ecr\.(?P<region>[a-z0-9-]+)\.amazonaws\.com$")
-
 # Project repository prefix. Every repo this manager creates lives
 # under ``gco/`` so a single replication / lifecycle / removal policy
 # rule can target the whole project.
@@ -84,36 +83,6 @@ _DEFAULT_EXPIRE_UNTAGGED_DAYS = 7
 # Digest extraction from ``docker push`` stdout/stderr. The runtime
 # emits a line of the form ``... digest: sha256:... size: ...``.
 _DIGEST_RE = re.compile(r"sha256:[a-f0-9]{64}")
-
-
-def _rewrite_image_uri_for_region(uri: str, region: str) -> str:
-    """Rewrite an ECR image URI to target a specific region's replica.
-
-    Pure helper — no AWS calls. Detects ECR URIs by matching the
-    ``<account>.dkr.ecr.<region>.amazonaws.com`` host shape and swaps
-    the region segment when it matches. Non-ECR refs (Docker Hub,
-    GHCR, etc.) are returned unchanged.
-
-    Args:
-        uri: The image URI (with optional ``host/path:tag`` shape).
-        region: Target AWS region for the rewrite.
-
-    Returns:
-        The rewritten URI when the input is an ECR URI; otherwise the
-        original input.
-    """
-    if "://" in uri:
-        # Not a bare image ref (looks like a URL with a scheme).
-        return uri
-    parts = uri.split("/", 1)
-    host = parts[0]
-    match = _ECR_HOST_RE.match(host)
-    if match is None:
-        return uri
-    new_host = f"{match.group('account')}.dkr.ecr.{region}.amazonaws.com"
-    if len(parts) > 1:
-        return f"{new_host}/{parts[1]}"
-    return new_host
 
 
 class ImageManager:
@@ -694,7 +663,11 @@ class ImageManager:
             )
             created = True
         except ecr.exceptions.RepositoryAlreadyExistsException:
-            pass
+            # Idempotent init — re-running ``gco images init`` against an
+            # already-provisioned repo is a no-op for create_repository.
+            # We still flow through the lifecycle/retain blocks below so
+            # any drift in policy is healed on every call.
+            logger.debug("repository %s already exists; skipping create", repo_name)
         except ClientError as e:
             code = e.response.get("Error", {}).get("Code", "")
             if code != "RepositoryAlreadyExistsException":

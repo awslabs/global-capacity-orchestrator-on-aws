@@ -13,10 +13,13 @@ Wires up two pieces:
    decorator (``mcp/audit.py::_build_audit_entry``) reads those buffers
    when emitting the entry.
 
-The Context class only has its methods patched once. The wrapped methods
-short-circuit to the originals when no capture buffer is active, so this
-patch is a no-op for any code that uses Context outside of a tool call
-(e.g. unit tests that construct a Context directly).
+The Context class only has its methods patched once. Idempotency is
+enforced by inspecting an attribute we set on the patched function;
+re-imports (test reloads, hot-reload during dev) detect the marker
+and skip re-patching. The wrapped methods short-circuit to the
+originals when no capture buffer is active, so this patch is a no-op
+for any code that uses Context outside of a tool call (e.g. unit
+tests that construct a Context directly).
 """
 
 from __future__ import annotations
@@ -27,15 +30,17 @@ from audit import audit_elicitations_var, audit_messages_var
 from fastmcp.server.context import Context
 from fastmcp.server.middleware import Middleware
 
-# Module-level guard so ``_install_context_patches`` is idempotent. Re-imports
-# (test reloads, hot-reload during dev) don't double-wrap the methods.
-_PATCHES_INSTALLED = False
+# Attribute we tag each spy function with so ``_install_context_patches``
+# can detect that the wrappers are already in place. Reading an
+# attribute on the live class method is more robust than a separate
+# module-level boolean: if a re-import re-runs this module, the same
+# marker survives because the patched method on ``Context`` survives.
+_SPY_MARKER = "_gco_audit_spy"
 
 
 def _install_context_patches() -> None:
     """Install the class-level Context method wrappers (once)."""
-    global _PATCHES_INSTALLED
-    if _PATCHES_INSTALLED:
+    if getattr(Context.warning, _SPY_MARKER, False):
         return
 
     _orig_warning = Context.warning
@@ -77,12 +82,15 @@ def _install_context_patches() -> None:
             lst.append(entry)
         return result
 
+    # Tag each spy with the marker before attaching so a concurrent
+    # re-entry observes the marker as soon as the assignment lands.
+    for spy in (_spy_warning, _spy_info, _spy_error, _spy_elicit):
+        setattr(spy, _SPY_MARKER, True)
+
     Context.warning = _spy_warning  # type: ignore[method-assign]
     Context.info = _spy_info  # type: ignore[method-assign]
     Context.error = _spy_error  # type: ignore[method-assign]
     Context.elicit = _spy_elicit  # type: ignore[method-assign]
-
-    _PATCHES_INSTALLED = True
 
 
 class AuditCaptureMiddleware(Middleware):

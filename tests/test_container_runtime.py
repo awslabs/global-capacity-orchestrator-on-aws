@@ -5,8 +5,8 @@ ImageManager (image build/push).
 
 Covers the priority order docker > finch > podman, the CDK_DOCKER env
 var override, and the no-runtime case. Each test reloads the module so
-the global cache (``_container_runtime_cache`` / ``_container_runtime_checked``)
-starts empty.
+the global cache (``_container_runtime_cache``) starts in its
+unchecked sentinel state.
 """
 
 from __future__ import annotations

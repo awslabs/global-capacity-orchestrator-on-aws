@@ -28,7 +28,7 @@ def _list_nodepools(region: str) -> dict[str, Any]:
     raw = cli_runner._run_cli("nodepools", "list", "-r", region)
     try:
         parsed = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
+    except json.JSONDecodeError, ValueError:
         return {"error": "failed to parse nodepools output", "raw": raw}
     if isinstance(parsed, dict):
         return parsed
@@ -65,7 +65,7 @@ def _pending_pods(region: str) -> dict[str, Any]:
         return {"error": err or "kubectl command failed", "exit_code": result.returncode}
     try:
         parsed = json.loads(result.stdout)
-    except (json.JSONDecodeError, ValueError):
+    except json.JSONDecodeError, ValueError:
         return {"error": "failed to parse kubectl output", "raw": result.stdout}
     if isinstance(parsed, dict):
         return parsed

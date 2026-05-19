@@ -19,7 +19,7 @@ def _summary_resource(days_window: str) -> str:
     """Return the cost summary for a positive-integer day window."""
     try:
         days = int(days_window)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return json.dumps({"error": "days_window must be a positive integer", "value": days_window})
     if days <= 0:
         return json.dumps({"error": "days_window must be a positive integer", "value": days_window})

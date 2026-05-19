@@ -34,9 +34,16 @@ import subprocess
 
 logger = logging.getLogger(__name__)
 
-# Cached result for container runtime detection (None = not yet checked)
-_container_runtime_cache: str | None = None
-_container_runtime_checked: bool = False
+# Cached result for container runtime detection.
+#
+# Sentinel pattern: ``_UNCHECKED`` means the probe has not run yet;
+# any other value (including ``None``, which means "no runtime found")
+# is the cached result of the last probe. Using a single sentinel
+# instead of two separate ``_cache`` / ``_checked`` globals keeps the
+# cache state idempotent under concurrent first-callers and avoids
+# the static-analysis false positive on a stand-alone bool flag.
+_UNCHECKED: object = object()
+_container_runtime_cache: str | None | object = _UNCHECKED
 
 
 def detect_container_runtime() -> str | None:
@@ -51,13 +58,16 @@ def detect_container_runtime() -> str | None:
         If the ``CDK_DOCKER`` environment variable is set, that value
         is returned without checking if the runtime is available.
     """
-    global _container_runtime_cache, _container_runtime_checked
-    if _container_runtime_checked:
-        return _container_runtime_cache
+    global _container_runtime_cache
+    if _container_runtime_cache is not _UNCHECKED:
+        # ``_container_runtime_cache`` is narrowed to ``str | None`` once
+        # past the sentinel check, but mypy can't infer that across the
+        # ``object`` union. The runtime cast is explicit.
+        return _container_runtime_cache  # type: ignore[return-value]
 
-    _container_runtime_cache = _detect_container_runtime_uncached()
-    _container_runtime_checked = True
-    return _container_runtime_cache
+    result = _detect_container_runtime_uncached()
+    _container_runtime_cache = result
+    return result
 
 
 def _detect_container_runtime_uncached() -> str | None:

@@ -81,13 +81,18 @@ RUN case "${TARGETARCH}" in \
         *)      echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    git \
-    unzip \
-    groff \
-    less \
+# Install system dependencies. ``apt-get upgrade`` pulls security-only
+# patches that landed in ``trixie-security`` after the
+# ``python:3.14.5-slim`` snapshot was cut, so the resulting dev image
+# doesn't ship known-fixed HIGH CVEs in libcap2, libsystemd0, etc.
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+        curl \
+        git \
+        unzip \
+        groff \
+        less \
     && rm -rf /var/lib/apt/lists/*
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
