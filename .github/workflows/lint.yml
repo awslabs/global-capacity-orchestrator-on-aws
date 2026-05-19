@@ -223,7 +223,10 @@ jobs:
           path: .mypy_cache
           key: mypy-strict-${{ hashFiles('pyproject.toml', 'requirements-lock.txt') }}
       - name: Run mypy
-        run: mypy gco/ cli/ mcp/ scripts/ --exclude 'gco/stacks/'
+        # scripts/tmp/ contains one-shot debug helpers that aren't part of the
+        # shipped surface; they're explicitly excluded so a quick GitHub-API
+        # script doesn't have to satisfy strict typing.
+        run: mypy gco/ cli/ mcp/ scripts/ --exclude 'gco/stacks/' --exclude 'scripts/tmp/'
 
   lint-mypy-stacks:
     name: "lint:mypy:stacks"
