@@ -102,7 +102,11 @@ def _sanitize_arguments(kwargs: dict[str, Any]) -> dict[str, Any]:
         try:
             json.dumps(v)
             sanitized[k] = v
-        except TypeError, ValueError:
+        except Exception:
+            # Best-effort: any serialization failure (TypeError on unknown
+            # types, ValueError on circular refs / NaN with allow_nan=False)
+            # falls through to a type-only placeholder so the audit log
+            # always emits valid JSON.
             sanitized[k] = f"<unserializable: {type(v).__name__}>"
     return sanitized
 
