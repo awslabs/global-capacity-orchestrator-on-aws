@@ -86,7 +86,7 @@
       "container_max_gpu": "4"
     },
     "eks_cluster": {
-      "endpoint_access": "PRIVATE"
+      "endpoint_access": "PUBLIC_AND_PRIVATE"
     },
     "fsx_lustre": {
       "enabled": false,

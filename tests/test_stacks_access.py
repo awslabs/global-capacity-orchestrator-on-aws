@@ -144,3 +144,93 @@ class TestStacksAccessCommand:
             result = runner.invoke(stacks, ["access", "-r", "us-east-1"])
             # Should not fail — handles existing entry gracefully
             assert "Access entry may already exist" in result.output
+
+
+class TestStacksAccessEndpointWarning:
+    """Endpoint-access warning surfaced when the cluster is private-only.
+
+    When the EKS cluster's ``resourcesVpcConfig`` reports
+    ``endpointPublicAccess=false``, ``gco stacks access`` still attempts the
+    access-entry creation and policy association (those go through the EKS
+    control plane via boto3, not through the cluster endpoint), but the
+    final ``kubectl get nodes`` call cannot reach the API server from
+    outside the VPC. The command surfaces a structured warning that
+    points the operator at the ``cdk.json`` knob and the redeploy command.
+    """
+
+    def _patch_describe_endpoint(
+        self, *, public: bool, public_cidrs: list[str] | None = None
+    ):
+        """Build a ``subprocess.run`` side effect that returns the right
+        cluster-endpoint payload for the describe-cluster call and the
+        usual success exit codes for everything else, with kubectl
+        reporting a network timeout to mimic a private-only cluster.
+        """
+        import json
+        import subprocess
+
+        def side_effect(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+            mock = MagicMock(returncode=0, stderr="")
+            if "describe-cluster" in cmd_str and "resourcesVpcConfig" in cmd_str:
+                mock.stdout = json.dumps(
+                    {
+                        "public": public,
+                        "private": True,
+                        "publicCidrs": public_cidrs or [],
+                    }
+                )
+            elif "get-caller-identity" in cmd_str and "Arn" in cmd_str:
+                mock.stdout = "arn:aws:iam::123456789012:user/dev\n"
+            elif "kubectl" in cmd_str and not public:
+                # Mimic the laptop-from-outside-the-VPC failure mode.
+                mock.returncode = 1
+                mock.stderr = (
+                    "Unable to connect to the server: dial tcp 10.0.0.1:443: "
+                    "i/o timeout"
+                )
+            elif "kubectl" in cmd_str:
+                mock.stdout = "NAME STATUS\nnode1 Ready\n"
+            elif "create-access-entry" in cmd_str:
+                # Idempotent — pretend it already exists, exercising the
+                # CalledProcessError path without affecting anything else.
+                raise subprocess.CalledProcessError(1, cmd, stderr="already exists")
+            return mock
+
+        return side_effect
+
+    def test_private_only_emits_actionable_warning(self, runner):
+        with patch("subprocess.run") as mock_run, patch("time.sleep"):
+            mock_run.side_effect = self._patch_describe_endpoint(public=False)
+            result = runner.invoke(stacks, ["access", "-r", "us-east-1"])
+        assert result.exit_code == 0, result.output
+        # The early warning fires once on detection.
+        assert "endpointPublicAccess=false" in result.output
+        # The remediation hint surfaces at least once with the exact
+        # cdk.json key the operator needs to flip.
+        assert "PUBLIC_AND_PRIVATE" in result.output
+        # And the redeploy command is named explicitly.
+        assert "gco stacks deploy gco-us-east-1" in result.output
+
+    def test_public_with_cidr_allowlist_notes_the_allowlist(self, runner):
+        with patch("subprocess.run") as mock_run, patch("time.sleep"):
+            mock_run.side_effect = self._patch_describe_endpoint(
+                public=True, public_cidrs=["203.0.113.0/24"]
+            )
+            result = runner.invoke(stacks, ["access", "-r", "us-east-1"])
+        assert result.exit_code == 0, result.output
+        # We should mention the CIDR allowlist explicitly so the
+        # operator can verify their egress IP is covered.
+        assert "203.0.113.0/24" in result.output
+        # And we shouldn't have also fired the private-only warning.
+        assert "endpointPublicAccess=false" not in result.output
+
+    def test_public_unrestricted_no_warning(self, runner):
+        with patch("subprocess.run") as mock_run, patch("time.sleep"):
+            mock_run.side_effect = self._patch_describe_endpoint(public=True)
+            result = runner.invoke(stacks, ["access", "-r", "us-east-1"])
+        assert result.exit_code == 0, result.output
+        # No private-only or CIDR-allowlist warning should appear.
+        assert "endpointPublicAccess=false" not in result.output
+        assert "verify your egress IP" not in result.output

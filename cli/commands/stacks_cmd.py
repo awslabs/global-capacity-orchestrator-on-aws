@@ -472,6 +472,66 @@ def setup_access(config: Any, cluster: Any, region: Any) -> None:
 
     formatter.print_info(f"Setting up access to cluster: {cluster} in region: {region}")
 
+    # Cluster endpoint access mode — warn early if the API server is
+    # private-only, since every kubectl call from outside the VPC will
+    # fail. We still try every step so the access entry + policy
+    # association land (those use the EKS control plane via boto3,
+    # which doesn't go through the cluster endpoint), but the verify
+    # step at the end will hit a connection timeout from the laptop.
+    private_endpoint_only = False
+    public_cidrs: list[str] = []
+    try:
+        endpoint_check = subprocess.run(
+            [
+                "aws",
+                "eks",
+                "describe-cluster",
+                "--name",
+                cluster,
+                "--region",
+                region,
+                "--query",
+                "cluster.resourcesVpcConfig.{public:endpointPublicAccess,"
+                "private:endpointPrivateAccess,publicCidrs:publicAccessCidrs}",
+                "--output",
+                "json",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        import json
+
+        endpoint_cfg = json.loads(endpoint_check.stdout or "{}")
+        is_public = bool(endpoint_cfg.get("public"))
+        public_cidrs = endpoint_cfg.get("publicCidrs") or []
+        if not is_public:
+            private_endpoint_only = True
+            formatter.print_warning(
+                f"Cluster {cluster!r} has endpointPublicAccess=false — kubectl from "
+                "outside the VPC will not be able to reach the API server. The access "
+                "entry and policy association below still apply, but the verify step "
+                "at the end will time out from this host."
+            )
+            formatter.print_warning(
+                "To enable kubectl from your laptop or CI runner, set "
+                '``eks_cluster.endpoint_access`` to ``"PUBLIC_AND_PRIVATE"`` in '
+                "``cdk.json`` and redeploy the regional stack: ``gco stacks deploy "
+                f"gco-{region} -y``."
+            )
+        elif public_cidrs:
+            # Public access is on but restricted to a CIDR allowlist — the
+            # caller's IP may or may not be in it.
+            formatter.print_info(
+                "Cluster API endpoint is public+private with a CIDR allowlist; "
+                f"verify your egress IP is covered by one of: {', '.join(public_cidrs)}"
+            )
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        # Don't block setup if describe-cluster fails — the access steps
+        # below may still succeed (e.g. for a brand new cluster the caller
+        # already has permission to update).
+        formatter.print_info(f"Could not determine endpoint access mode: {exc}")
+
     try:
         # Step 1: Update kubeconfig
         formatter.print_info("Updating kubeconfig...")
@@ -582,10 +642,39 @@ def setup_access(config: Any, cluster: Any, region: Any) -> None:
             )
             print(result.stdout)
             formatter.print_info(f"Access configured successfully. {node_count} node(s) ready.")
-        else:
+        elif private_endpoint_only:
+            # Don't double-warn — we already explained this above. Just
+            # restate the fix so the operator doesn't have to scroll up.
             formatter.print_warning(
-                "kubectl connected but no nodes found (cluster may be scaling to zero)"
+                "kubectl could not reach the API server, as expected for a "
+                "private-only cluster from outside the VPC. The IAM access entry "
+                "and admin policy association above did succeed, so kubectl will "
+                "work from inside the VPC (e.g. SSM Session Manager into a node) "
+                "or after redeploying with endpoint_access=PUBLIC_AND_PRIVATE."
             )
+        else:
+            stderr = (result.stderr or "").strip()
+            # When the laptop's egress IP isn't in the CIDR allowlist, AWS
+            # returns the API server endpoint but kubectl times out at the
+            # TLS handshake. Surface the same actionable hint as the
+            # private-only case.
+            looks_like_network_block = (
+                "i/o timeout" in stderr
+                or "no route to host" in stderr
+                or "connection refused" in stderr
+                or "dial tcp" in stderr
+            )
+            if looks_like_network_block:
+                formatter.print_warning(
+                    "kubectl could not reach the API server. If the cluster's "
+                    "endpoint_access is restricted to a CIDR allowlist, confirm "
+                    "your egress IP is covered, or set endpoint_access to "
+                    f'"PUBLIC_AND_PRIVATE" in cdk.json and run: gco stacks deploy gco-{region} -y'
+                )
+            else:
+                formatter.print_warning(
+                    "kubectl connected but no nodes found (cluster may be scaling to zero)"
+                )
 
     except subprocess.CalledProcessError as e:
         formatter.print_error(f"Command failed: {e.stderr or e.stdout or str(e)}")
