@@ -311,8 +311,6 @@ if is_enabled(FLAG_INFRASTRUCTURE_DEPLOY):
                 "stacks",
                 "deploy",
                 stack_name,
-                "--require-approval",
-                "never",
             ]
             if yes:
                 argv.append("-y")
@@ -363,8 +361,6 @@ if is_enabled(FLAG_INFRASTRUCTURE_DEPLOY):
                 "gco",
                 "stacks",
                 "deploy-all",
-                "--require-approval",
-                "never",
             ]
             if yes:
                 argv.append("-y")

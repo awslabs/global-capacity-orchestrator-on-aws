@@ -537,7 +537,12 @@ class TestInfrastructureDeployTools:
     """Constructed argv for deploy_stack / deploy_all / bootstrap_cdk."""
 
     @patch.dict(os.environ, {"GCO_ENABLE_INFRASTRUCTURE_DEPLOY": "true"})
-    def test_deploy_stack_argv_includes_require_approval_never_and_yes(self):
+    def test_deploy_stack_argv_includes_yes_but_not_require_approval(self):
+        # ``gco stacks deploy`` doesn't accept ``--require-approval`` —
+        # that flag is for ``cdk deploy`` and is forwarded internally by
+        # the CLI when ``-y`` is set. Including it here previously caused
+        # ``Error: No such option: --require-approval`` and an exit_code=2
+        # ToolError on every deploy_stack call.
         importlib.reload(run_mcp)
         with patch("tools.stacks._run_long_task", new_callable=AsyncMock) as mock_task:
             mock_task.return_value = '{"status": "ok", "completes": 0}'
@@ -550,8 +555,7 @@ class TestInfrastructureDeployTools:
             )
         argv = mock_task.call_args.args[0]
         assert argv[:4] == ["gco", "stacks", "deploy", "gco-us-east-1"]
-        assert "--require-approval" in argv
-        assert "never" in argv
+        assert "--require-approval" not in argv
         assert "-y" in argv
         # is_stack_op must default to True so cancellation surfaces the disclaimer.
         assert mock_task.call_args.kwargs["is_stack_op"] is True
@@ -582,7 +586,9 @@ class TestInfrastructureDeployTools:
         assert {argv[i + 1] for i in tag_indices} == {"Environment=prod", "Owner=ml"}
 
     @patch.dict(os.environ, {"GCO_ENABLE_INFRASTRUCTURE_DEPLOY": "true"})
-    def test_deploy_all_argv_includes_require_approval_never_and_yes(self):
+    def test_deploy_all_argv_includes_yes_but_not_require_approval(self):
+        # Same Click-flag mismatch as deploy_stack: ``gco stacks deploy-all``
+        # doesn't accept ``--require-approval``.
         importlib.reload(run_mcp)
         with patch("tools.stacks._run_long_task", new_callable=AsyncMock) as mock_task:
             mock_task.return_value = '{"status": "ok", "completes": 0}'
@@ -596,8 +602,7 @@ class TestInfrastructureDeployTools:
             )
         argv = mock_task.call_args.args[0]
         assert argv[:3] == ["gco", "stacks", "deploy-all"]
-        assert "--require-approval" in argv
-        assert "never" in argv
+        assert "--require-approval" not in argv
         assert "-y" in argv
         assert "--parallel" in argv
         assert "--max-workers" in argv
