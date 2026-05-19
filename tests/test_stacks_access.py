@@ -229,3 +229,226 @@ class TestStacksAccessEndpointWarning:
         # No private-only or CIDR-allowlist warning should appear.
         assert "endpointPublicAccess=false" not in result.output
         assert "verify your egress IP" not in result.output
+
+
+class TestStacksAccessEndpointWarningExtended:
+    """Branch coverage for the endpoint-access probe and the network-error
+    detector that backs the verify step.
+
+    These complement ``TestStacksAccessEndpointWarning`` above by
+    exercising the failure paths of the early ``describe-cluster``
+    probe (so the access-entry steps still run when AWS is unreachable),
+    the CIDR-allowlist info-line vs. the noisy private-only warning,
+    and the kubectl-failure pattern matcher that decides between the
+    structured remediation hint and the legacy 'no nodes found' fallback.
+    """
+
+    def test_describe_cluster_failure_does_not_block_setup(self, runner):
+        """A failing describe-cluster step is logged but doesn't abort
+        the access-entry creation flow.
+        """
+        import subprocess
+
+        with patch("subprocess.run") as mock_run, patch("time.sleep"):
+
+            def side_effect(*args, **kwargs):
+                cmd = args[0] if args else kwargs.get("args", [])
+                cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+                if "describe-cluster" in cmd_str:
+                    raise subprocess.CalledProcessError(255, cmd, stderr="AccessDenied")
+                mock = MagicMock(returncode=0, stderr="")
+                if "get-caller-identity" in cmd_str:
+                    mock.stdout = "arn:aws:iam::123456789012:user/dev\n"
+                elif "kubectl" in cmd_str:
+                    mock.stdout = "NAME STATUS\nnode1 Ready\n"
+                else:
+                    mock.stdout = ""
+                return mock
+
+            mock_run.side_effect = side_effect
+            result = runner.invoke(stacks, ["access", "-r", "us-east-1"])
+
+        assert result.exit_code == 0, result.output
+        # The probe failure surfaces but doesn't block the remaining steps.
+        assert "Could not determine endpoint access mode" in result.output
+        # Access-entry path still proceeded — kubectl get nodes ran and succeeded.
+        assert "Access configured successfully" in result.output
+
+    def test_describe_cluster_filenotfound_handled(self, runner):
+        """If the AWS CLI is missing, the probe step degrades gracefully."""
+        with patch("subprocess.run") as mock_run, patch("time.sleep"):
+
+            def side_effect(*args, **kwargs):
+                cmd = args[0] if args else kwargs.get("args", [])
+                cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+                if "describe-cluster" in cmd_str:
+                    raise FileNotFoundError("aws not on PATH for describe-cluster")
+                mock = MagicMock(returncode=0, stderr="")
+                if "get-caller-identity" in cmd_str:
+                    mock.stdout = "arn:aws:iam::123456789012:user/dev\n"
+                elif "kubectl" in cmd_str:
+                    mock.stdout = "NAME STATUS\nnode1 Ready\n"
+                else:
+                    mock.stdout = ""
+                return mock
+
+            mock_run.side_effect = side_effect
+            result = runner.invoke(stacks, ["access", "-r", "us-east-1"])
+
+        assert result.exit_code == 0, result.output
+        assert "Could not determine endpoint access mode" in result.output
+
+    def test_public_unrestricted_no_cidr_message(self, runner):
+        """Public endpoint with empty publicCidrs is fully unrestricted —
+        no allowlist info line, no warnings.
+        """
+        import json
+
+        with patch("subprocess.run") as mock_run, patch("time.sleep"):
+
+            def side_effect(*args, **kwargs):
+                cmd = args[0] if args else kwargs.get("args", [])
+                cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+                mock = MagicMock(returncode=0, stderr="")
+                if "describe-cluster" in cmd_str and "resourcesVpcConfig" in cmd_str:
+                    mock.stdout = json.dumps({"public": True, "private": True, "publicCidrs": []})
+                elif "get-caller-identity" in cmd_str:
+                    mock.stdout = "arn:aws:iam::123456789012:user/dev\n"
+                elif "kubectl" in cmd_str:
+                    mock.stdout = "NAME STATUS\nnode1 Ready\n"
+                else:
+                    mock.stdout = ""
+                return mock
+
+            mock_run.side_effect = side_effect
+            result = runner.invoke(stacks, ["access", "-r", "us-east-1"])
+
+        assert result.exit_code == 0, result.output
+        # The CIDR allowlist info line should not appear.
+        assert "verify your egress IP" not in result.output
+        # And no remediation hint either, because the laptop reached the cluster.
+        assert "PUBLIC_AND_PRIVATE" not in result.output
+        assert "Access configured successfully" in result.output
+
+    @pytest.mark.parametrize(
+        "stderr_phrase",
+        [
+            "Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout",
+            "Unable to connect to the server: no route to host",
+            "Unable to connect to the server: connection refused",
+            "dial tcp 10.0.0.1:443: connect: operation timed out",
+        ],
+    )
+    def test_kubectl_network_error_surfaces_remediation(self, runner, stderr_phrase):
+        """Each of the four stderr phrases the matcher recognises should
+        trip the structured remediation hint, not the legacy
+        ``no nodes found`` line.
+        """
+        import json
+
+        with patch("subprocess.run") as mock_run, patch("time.sleep"):
+
+            def side_effect(*args, **kwargs):
+                cmd = args[0] if args else kwargs.get("args", [])
+                cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+                mock = MagicMock(returncode=0, stderr="")
+                if "describe-cluster" in cmd_str and "resourcesVpcConfig" in cmd_str:
+                    mock.stdout = json.dumps(
+                        {
+                            "public": True,
+                            "private": True,
+                            "publicCidrs": ["198.51.100.0/24"],
+                        }
+                    )
+                elif "get-caller-identity" in cmd_str:
+                    mock.stdout = "arn:aws:iam::123456789012:user/dev\n"
+                elif "kubectl" in cmd_str:
+                    mock.returncode = 1
+                    mock.stderr = stderr_phrase
+                else:
+                    mock.stdout = ""
+                return mock
+
+            mock_run.side_effect = side_effect
+            result = runner.invoke(stacks, ["access", "-r", "us-east-1"])
+
+        assert result.exit_code == 0, result.output
+        # The CIDR allowlist line surfaced because public=true with cidrs.
+        assert "198.51.100.0/24" in result.output
+        # And the remediation pointer fires because kubectl couldn't reach the API.
+        assert "PUBLIC_AND_PRIVATE" in result.output
+        assert "gco stacks deploy gco-us-east-1" in result.output
+
+    def test_kubectl_non_network_failure_falls_back_to_legacy(self, runner):
+        """When kubectl exits non-zero with a non-network stderr (e.g.
+        permission denied), the fallback message is the legacy 'no
+        nodes found' line — the structured hint would be misleading.
+        """
+        import json
+
+        with patch("subprocess.run") as mock_run, patch("time.sleep"):
+
+            def side_effect(*args, **kwargs):
+                cmd = args[0] if args else kwargs.get("args", [])
+                cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+                mock = MagicMock(returncode=0, stderr="")
+                if "describe-cluster" in cmd_str and "resourcesVpcConfig" in cmd_str:
+                    mock.stdout = json.dumps({"public": True, "private": True, "publicCidrs": []})
+                elif "get-caller-identity" in cmd_str:
+                    mock.stdout = "arn:aws:iam::123456789012:user/dev\n"
+                elif "kubectl" in cmd_str:
+                    mock.returncode = 1
+                    mock.stderr = "Error from server (Forbidden): nodes is forbidden"
+                else:
+                    mock.stdout = ""
+                return mock
+
+            mock_run.side_effect = side_effect
+            result = runner.invoke(stacks, ["access", "-r", "us-east-1"])
+
+        assert result.exit_code == 0, result.output
+        # Neither the CIDR-allowlist line nor the remediation pointer
+        # should fire on a non-network kubectl failure.
+        assert "PUBLIC_AND_PRIVATE" not in result.output
+        # The legacy fallback line is what surfaces here.
+        assert "no nodes found" in result.output
+
+    def test_private_only_describes_query_shape_once(self, runner):
+        """The describe-cluster probe must hit the right JMESPath query
+        exactly once before the access-entry steps fire.
+        """
+        import json
+
+        captured: list[list[str]] = []
+
+        with patch("subprocess.run") as mock_run, patch("time.sleep"):
+
+            def side_effect(*args, **kwargs):
+                cmd = args[0] if args else kwargs.get("args", [])
+                if isinstance(cmd, list):
+                    captured.append(list(cmd))
+                cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+                mock = MagicMock(returncode=0, stderr="")
+                if "describe-cluster" in cmd_str and "resourcesVpcConfig" in cmd_str:
+                    mock.stdout = json.dumps({"public": False, "private": True, "publicCidrs": []})
+                elif "get-caller-identity" in cmd_str:
+                    mock.stdout = "arn:aws:iam::123456789012:user/dev\n"
+                elif "kubectl" in cmd_str:
+                    mock.returncode = 1
+                    mock.stderr = "dial tcp 10.0.0.1:443: i/o timeout"
+                else:
+                    mock.stdout = ""
+                return mock
+
+            mock_run.side_effect = side_effect
+            runner.invoke(stacks, ["access", "-r", "us-east-1"])
+
+        # Exactly one describe-cluster call, with the JMESPath we expect.
+        describe_calls = [cmd for cmd in captured if "describe-cluster" in cmd and "--query" in cmd]
+        assert len(describe_calls) == 1, describe_calls
+        # The query string is one JMESPath expression — confirm it round-trips
+        # through the explicit ``+`` that placates CodeQL.
+        query_str = describe_calls[0][describe_calls[0].index("--query") + 1]
+        assert "endpointPublicAccess" in query_str
+        assert "endpointPrivateAccess" in query_str
+        assert "publicAccessCidrs" in query_str

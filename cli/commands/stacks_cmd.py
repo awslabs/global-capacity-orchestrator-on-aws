@@ -491,8 +491,13 @@ def setup_access(config: Any, cluster: Any, region: Any) -> None:
                 "--region",
                 region,
                 "--query",
+                # Explicit ``+`` rather than implicit string concatenation
+                # so static analysers don't flag the multi-line literal as
+                # a possibly-missing comma between two list elements. The
+                # value is one JMESPath expression passed as a single
+                # ``--query`` argument.
                 "cluster.resourcesVpcConfig.{public:endpointPublicAccess,"
-                "private:endpointPrivateAccess,publicCidrs:publicAccessCidrs}",
+                + "private:endpointPrivateAccess,publicCidrs:publicAccessCidrs}",
                 "--output",
                 "json",
             ],
