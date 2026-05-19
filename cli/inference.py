@@ -65,6 +65,7 @@ class InferenceManager:
         extra_args: list[str] | None = None,
         accelerator: str = "nvidia",
         node_selector: dict[str, str] | None = None,
+        rewrite_image: bool = True,
     ) -> dict[str, Any]:
         """
         Deploy an inference endpoint to one or more regions.
@@ -85,6 +86,13 @@ class InferenceManager:
             env: Environment variables
             namespace: Kubernetes namespace
             labels: Labels for the endpoint
+            rewrite_image: When True (the default), rewrite ECR URIs in
+                ``image`` to target each region's local replica. Non-ECR
+                refs (Docker Hub, GHCR, etc.) are left unchanged. When
+                False, the URI is written verbatim to every region's
+                spec — the operator is responsible for cross-region
+                pulls. Per-region rewrites are stored under a
+                ``region_overrides`` map on the spec keyed by region.
 
         Returns:
             Created endpoint record
@@ -95,6 +103,18 @@ class InferenceManager:
             if not target_regions:
                 raise ValueError("No deployed regions found. Deploy infrastructure first.")
 
+        # Per-region image-URI rewrites for ECR refs. Each target region
+        # gets the local replica's URI on its own spec, so the
+        # inference_monitor's pod-spec materialiser pulls in-region
+        # rather than across the WAN. Non-ECR URIs come back unchanged
+        # from the helper, so this is a no-op for Docker Hub / GHCR refs.
+        region_image_map: dict[str, str] = {}
+        if rewrite_image:
+            from .images import _rewrite_image_uri_for_region
+
+            for region in target_regions:
+                region_image_map[region] = _rewrite_image_uri_for_region(image, region)
+
         spec = {
             "image": image,
             "port": port,
@@ -102,6 +122,12 @@ class InferenceManager:
             "gpu_count": gpu_count,
             "health_check_path": health_check_path,
         }
+        # Preserve the rewrite map on the spec so the inference_monitor
+        # service can pick the right URI per region when materialising
+        # pods. When ``rewrite_image=False`` no map is set and the flat
+        # ``image`` field is the only source.
+        if region_image_map and any(uri != image for uri in region_image_map.values()):
+            spec["region_image_uris"] = region_image_map
         if gpu_type:
             spec["gpu_type"] = gpu_type
         if model_path:

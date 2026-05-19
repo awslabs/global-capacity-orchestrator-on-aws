@@ -10,6 +10,12 @@ def register_all_resources() -> None:
     # These imports are intentionally unused — we pull them in for their
     # side effects (each module registers @mcp.resource() handlers at
     # import time). The noqa silences F401.
+    # The live-state modules expose a ``register()`` for their template
+    # handlers. The static manifest paths in ``k8s.py`` are decorated at
+    # import time; ``k8s.register()`` only wires the live ``gco://k8s/...``
+    # template.
+    from server import mcp as _mcp
+
     from resources import (  # noqa: F401
         ci,
         clients,
@@ -17,9 +23,32 @@ def register_all_resources() -> None:
         demos,
         docs,
         iam_policies,
+        images,
         infra,
         k8s,
         scripts,
         source,
         tests,
     )
+    from resources import (
+        cluster as _cluster,
+    )
+    from resources import (
+        costs as _costs,
+    )
+    from resources import (
+        inference as _inference,
+    )
+    from resources import (
+        jobs as _jobs,
+    )
+    from resources import (
+        tasks as _tasks,
+    )
+
+    _jobs.register(_mcp)
+    _inference.register(_mcp)
+    k8s.register(_mcp)
+    _cluster.register(_mcp)
+    _costs.register(_mcp)
+    _tasks.register(_mcp)

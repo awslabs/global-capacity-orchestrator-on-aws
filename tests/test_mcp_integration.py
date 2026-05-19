@@ -34,50 +34,53 @@ class TestMCPProtocolTools:
 
     @pytest.mark.asyncio
     async def test_list_tools_returns_all_registered_tools(self):
-        """Server should expose all registered tools via list_tools."""
-        from fastmcp import Client
+        """Server should expose all registered tools via the underlying registry.
 
-        async with Client(run_mcp.mcp) as client:
-            tools = await client.list_tools()
-            tool_names = {t.name for t in tools}
+        ``client.list_tools()`` goes through the BM25/Code-Mode catalog-replacement
+        transforms and returns the always-visible entry-point set plus the
+        synthetic ``search_tools`` / ``read_resource`` tools — that's the
+        client-facing surface and is covered by ``test_mcp_transforms.py``.
+        For the registration check we want the underlying registry, which is
+        what ``mcp._list_tools()`` returns.
+        """
+        tools = await run_mcp.mcp._list_tools()
+        tool_names = {t.name for t in tools}
 
-            expected = {
-                "list_jobs",
-                "submit_job_sqs",
-                "check_capacity",
-                "recommend_region",
-                "spot_prices",
-                "deploy_inference",
-                "cost_summary",
-                "list_stacks",
-                "list_models",
-                "list_storage_contents",
-            }
-            assert expected.issubset(tool_names), f"Missing tools: {expected - tool_names}"
-            assert len(tools) >= 35
+        expected = {
+            "list_jobs",
+            "submit_job_sqs",
+            "check_capacity",
+            "recommend_region",
+            "spot_prices",
+            "deploy_inference",
+            "cost_summary",
+            "list_stacks",
+            "list_models",
+            "list_storage_contents",
+        }
+        assert expected.issubset(tool_names), f"Missing tools: {expected - tool_names}"
+        assert len(tools) >= 35
 
     @pytest.mark.asyncio
     async def test_tool_schemas_have_descriptions(self):
         """Every tool should have a description for LLM consumption."""
-        from fastmcp import Client
-
-        async with Client(run_mcp.mcp) as client:
-            tools = await client.list_tools()
-            for tool in tools:
-                assert tool.description, f"Tool {tool.name} has no description"
+        tools = await run_mcp.mcp._list_tools()
+        for tool in tools:
+            assert tool.description, f"Tool {tool.name} has no description"
 
     @pytest.mark.asyncio
     async def test_recommend_region_tool_has_instance_type_param(self):
         """The recommend_region tool should accept instance_type and gpu_count."""
-        from fastmcp import Client
-
-        async with Client(run_mcp.mcp) as client:
-            tools = await client.list_tools()
-            rec_tool = next(t for t in tools if t.name == "recommend_region")
-            props = rec_tool.inputSchema.get("properties", {})
-            assert "instance_type" in props
-            assert "gpu_count" in props
-            assert "gpu" in props
+        tools = await run_mcp.mcp._list_tools()
+        rec_tool = next(t for t in tools if t.name == "recommend_region")
+        # Tool registry exposes the function via ``tool.parameters`` (FastMCP's
+        # canonical schema source) when the public ``inputSchema`` field is
+        # transformed by the BM25 catalog replacement.
+        schema = getattr(rec_tool, "parameters", None) or getattr(rec_tool, "inputSchema", {})
+        props = schema.get("properties", {})
+        assert "instance_type" in props
+        assert "gpu_count" in props
+        assert "gpu" in props
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -471,48 +474,40 @@ class TestMCPProtocolToolSchemas:
     @pytest.mark.asyncio
     async def test_all_tools_have_input_schemas(self):
         """Every tool should have a non-empty inputSchema."""
-        from fastmcp import Client
-
-        async with Client(run_mcp.mcp) as client:
-            tools = await client.list_tools()
-            for tool in tools:
-                assert tool.inputSchema is not None, f"Tool {tool.name} has no inputSchema"
+        tools = await run_mcp.mcp._list_tools()
+        for tool in tools:
+            schema = getattr(tool, "parameters", None) or getattr(tool, "inputSchema", None)
+            assert schema is not None, f"Tool {tool.name} has no input schema"
 
     @pytest.mark.asyncio
     async def test_deploy_inference_has_required_params(self):
         """deploy_inference should require name and image."""
-        from fastmcp import Client
-
-        async with Client(run_mcp.mcp) as client:
-            tools = await client.list_tools()
-            deploy = next(t for t in tools if t.name == "deploy_inference")
-            required = deploy.inputSchema.get("required", [])
-            assert "name" in required
-            assert "image" in required
+        tools = await run_mcp.mcp._list_tools()
+        deploy = next(t for t in tools if t.name == "deploy_inference")
+        schema = getattr(deploy, "parameters", None) or getattr(deploy, "inputSchema", {})
+        required = schema.get("required", [])
+        assert "name" in required
+        assert "image" in required
 
     @pytest.mark.asyncio
     async def test_submit_job_sqs_has_required_params(self):
         """submit_job_sqs should require manifest_path and region."""
-        from fastmcp import Client
-
-        async with Client(run_mcp.mcp) as client:
-            tools = await client.list_tools()
-            submit = next(t for t in tools if t.name == "submit_job_sqs")
-            required = submit.inputSchema.get("required", [])
-            assert "manifest_path" in required
-            assert "region" in required
+        tools = await run_mcp.mcp._list_tools()
+        submit = next(t for t in tools if t.name == "submit_job_sqs")
+        schema = getattr(submit, "parameters", None) or getattr(submit, "inputSchema", {})
+        required = schema.get("required", [])
+        assert "manifest_path" in required
+        assert "region" in required
 
     @pytest.mark.asyncio
     async def test_check_capacity_has_required_params(self):
         """check_capacity should require instance_type and region."""
-        from fastmcp import Client
-
-        async with Client(run_mcp.mcp) as client:
-            tools = await client.list_tools()
-            check = next(t for t in tools if t.name == "check_capacity")
-            required = check.inputSchema.get("required", [])
-            assert "instance_type" in required
-            assert "region" in required
+        tools = await run_mcp.mcp._list_tools()
+        check = next(t for t in tools if t.name == "check_capacity")
+        schema = getattr(check, "parameters", None) or getattr(check, "inputSchema", {})
+        required = schema.get("required", [])
+        assert "instance_type" in required
+        assert "region" in required
 
 
 # ---------------------------------------------------------------------------
@@ -532,7 +527,15 @@ class TestMCPStdioProtocol:
 
     @pytest.mark.asyncio
     async def test_stdio_server_starts_and_lists_tools(self):
-        """Server should start over stdio and respond to list_tools."""
+        """Server should start over stdio and respond to list_tools.
+
+        Under the default ``GCO_MCP_TOOL_SEARCH=bm25`` the public listing is
+        the BM25 always-visible set plus the synthetic ``search_tools`` /
+        ``read_resource`` tools. We assert the always-visible entries plus
+        the search synthetic so the test confirms the stdio transport is
+        wired correctly without hard-coding a tool count that the search
+        transform will keep moving.
+        """
         from fastmcp import Client
         from fastmcp.client.transports import StdioTransport
 
@@ -545,8 +548,8 @@ class TestMCPStdioProtocol:
             tools = await client.list_tools()
             tool_names = {t.name for t in tools}
             assert "list_jobs" in tool_names
-            assert "recommend_region" in tool_names
-            assert len(tools) >= 35
+            assert "search_tools" in tool_names
+            assert "read_resource" in tool_names
 
     @pytest.mark.asyncio
     async def test_stdio_server_lists_resources(self):

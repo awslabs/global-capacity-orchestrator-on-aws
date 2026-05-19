@@ -11,6 +11,7 @@ from .config_cmd import config_cmd
 from .costs_cmd import costs
 from .dag_cmd import dag
 from .files_cmd import files
+from .images_cmd import images
 from .inference_cmd import inference
 from .jobs_cmd import jobs
 from .models_cmd import models
@@ -27,6 +28,7 @@ __all__ = [
     "costs",
     "dag",
     "files",
+    "images",
     "inference",
     "jobs",
     "models",

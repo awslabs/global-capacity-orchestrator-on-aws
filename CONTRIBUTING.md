@@ -40,7 +40,7 @@ The container itself ships Python 3.14, Node.js 24, CDK, kubectl, AWS CLI, and e
 
 **Host development path additionally needs:**
 
-- Python 3.10+ (required for type union syntax `str | None`)
+- Python 3.14+ (required for the un-parenthesized except-tuple syntax in `mcp/resources/config.py`)
 - Node.js 24+ (for CDK)
 - kubectl
 - A clean virtualenv (or pipx) for the GCO Python deps — see the warning under [Local Development Environment (Advanced)](#local-development-environment-advanced).
@@ -152,7 +152,7 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-If `pip install` fails with `ResolutionImpossible` or "the conflict is caused by..." messages, your venv is not actually clean (or you're on a Python version older than 3.10). Recreate the venv from scratch or switch to the dev container — please don't loosen the pins in `pyproject.toml` or `requirements-lock.txt` to make local install work, since CI will reject the lockfile drift.
+If `pip install` fails with `ResolutionImpossible` or "the conflict is caused by..." messages, your venv is not actually clean (or you're on a Python version older than 3.14). Recreate the venv from scratch or switch to the dev container — please don't loosen the pins in `pyproject.toml` or `requirements-lock.txt` to make local install work, since CI will reject the lockfile drift.
 
 ## Development Workflow
 

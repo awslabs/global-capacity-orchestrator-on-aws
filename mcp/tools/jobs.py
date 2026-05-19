@@ -1,11 +1,32 @@
 """Job management MCP tools."""
 
+import asyncio
+import contextlib
+
 import cli_runner
 from audit import audit_logged
+from feature_flags import FLAG_DESTRUCTIVE_OPERATIONS, is_enabled
 from server import mcp
 
 
-@mcp.tool()
+async def _ctx_warning(message: str) -> None:
+    """Emit ``ctx.warning(...)`` from inside a tool body, no-op when no Context.
+
+    The destructive ``delete_job`` tool runs short — we don't need the
+    full long-task progress stack, just an audited warning back to the
+    operator (and the audit log via the middleware spy).
+    """
+    try:
+        from fastmcp.server.dependencies import get_context
+
+        ctx = get_context()
+    except Exception:
+        return
+    with contextlib.suppress(Exception):
+        await ctx.warning(message)
+
+
+@mcp.tool(tags={"safe", "jobs"})
 @audit_logged
 def list_jobs(
     region: str | None = None, namespace: str | None = None, status: str | None = None
@@ -29,7 +50,7 @@ def list_jobs(
     return cli_runner._run_cli(*args)
 
 
-@mcp.tool()
+@mcp.tool(tags={"low-risk", "jobs"})
 @audit_logged
 def submit_job_sqs(
     manifest_path: str, region: str, namespace: str | None = None, priority: int | None = None
@@ -50,7 +71,7 @@ def submit_job_sqs(
     return cli_runner._run_cli(*args)
 
 
-@mcp.tool()
+@mcp.tool(tags={"low-risk", "jobs"})
 @audit_logged
 def submit_job_api(manifest_path: str, namespace: str | None = None) -> str:
     """Submit a job via the authenticated API Gateway (SigV4).
@@ -65,7 +86,7 @@ def submit_job_api(manifest_path: str, namespace: str | None = None) -> str:
     return cli_runner._run_cli(*args)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "jobs"})
 @audit_logged
 def get_job(job_name: str, region: str, namespace: str = "gco-jobs") -> str:
     """Get details of a specific job.
@@ -78,7 +99,7 @@ def get_job(job_name: str, region: str, namespace: str = "gco-jobs") -> str:
     return cli_runner._run_cli("jobs", "get", job_name, "-r", region, "-n", namespace)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "jobs"})
 @audit_logged
 def get_job_logs(job_name: str, region: str, namespace: str = "gco-jobs", tail: int = 100) -> str:
     """Get logs from a job.
@@ -94,20 +115,30 @@ def get_job_logs(job_name: str, region: str, namespace: str = "gco-jobs", tail: 
     )
 
 
-@mcp.tool()
-@audit_logged
-def delete_job(job_name: str, region: str, namespace: str = "gco-jobs") -> str:
-    """Delete a job.
+if is_enabled(FLAG_DESTRUCTIVE_OPERATIONS):
 
-    Args:
-        job_name: Name of the job to delete.
-        region: AWS region.
-        namespace: Kubernetes namespace.
-    """
-    return cli_runner._run_cli("jobs", "delete", job_name, "-r", region, "-n", namespace, "-y")
+    @mcp.tool(tags={"destructive", "jobs"})
+    @audit_logged
+    async def delete_job(job_name: str, region: str, namespace: str = "gco-jobs") -> str:
+        """[gated by GCO_ENABLE_DESTRUCTIVE_OPERATIONS] destructive.
+
+        Delete a job. Cannot be undone — the Kubernetes Job and its pods
+        are removed and any pod logs not yet shipped to CloudWatch are lost.
+
+        Args:
+            job_name: Name of the job to delete.
+            region: AWS region.
+            namespace: Kubernetes namespace.
+        """
+        await _ctx_warning(
+            f"Deleting job {job_name!r} in {region}/{namespace} — this cannot be undone."
+        )
+        return await asyncio.to_thread(
+            cli_runner._run_cli, "jobs", "delete", job_name, "-r", region, "-n", namespace, "-y"
+        )
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "jobs"})
 @audit_logged
 def get_job_events(job_name: str, region: str, namespace: str = "gco-jobs") -> str:
     """Get Kubernetes events for a job (useful for debugging).
@@ -120,7 +151,7 @@ def get_job_events(job_name: str, region: str, namespace: str = "gco-jobs") -> s
     return cli_runner._run_cli("jobs", "events", job_name, "-r", region, "-n", namespace)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "jobs"})
 @audit_logged
 def cluster_health(region: str | None = None) -> str:
     """Get health status of GCO clusters.
@@ -136,7 +167,7 @@ def cluster_health(region: str | None = None) -> str:
     return cli_runner._run_cli(*args)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "jobs"})
 @audit_logged
 def queue_status(region: str | None = None) -> str:
     """View SQS queue status (pending, in-flight, DLQ counts).

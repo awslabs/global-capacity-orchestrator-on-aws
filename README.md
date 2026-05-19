@@ -80,7 +80,7 @@ The `docker.sock` mount lets `gco stacks deploy-all` bundle Lambda assets throug
 <details>
 <summary>Prefer to install on your host? (advanced)</summary>
 
-This path requires Python 3.10+ and works best in a fresh virtual environment. With a lot of pinned dependencies, mixing GCO into an existing environment will frequently produce resolver conflicts — use a clean venv or pipx.
+This path requires Python 3.14+ and works best in a fresh virtual environment. With a lot of pinned dependencies, mixing GCO into an existing environment will frequently produce resolver conflicts — use a clean venv or pipx.
 
 ```bash
 git clone git@github.com:awslabs/global-capacity-orchestrator-on-aws.git
@@ -91,7 +91,7 @@ cd global-capacity-orchestrator-on-aws && pipx install -e .
 
 See the [Quick Start](#quick-start) for the full install + first-job walkthrough, or [`docs/CLI.md`](docs/CLI.md) for every CLI command.
 
-> **💡 New to the codebase?** GCO ships with an [MCP server](mcp/) exposing 44 tools that index the whole project — docs, examples, source code, K8s manifests, scripts. Connect it to an AI-powered IDE (like [Kiro](https://kiro.dev)) and ask in natural language: *"How does region recommendation work?"*, *"Walk me through the inference deployment flow"*. See [mcp/README.md](mcp/README.md).
+> **💡 New to the codebase?** GCO ships with an [MCP server](mcp/) exposing 90 tools by default (up to 111 with feature flags) that index the whole project — docs, examples, source code, K8s manifests, scripts. Connect it to an AI-powered IDE (like [Kiro](https://kiro.dev)) and ask in natural language: *"How does region recommendation work?"*, *"Walk me through the inference deployment flow"*. See [mcp/README.md](mcp/README.md).
 
 <details>
 <summary><b>Table of contents</b></summary>
@@ -360,7 +360,7 @@ This is host-socket pass-through, not true Docker-in-Docker. Anyone with access 
 **Host install path (advanced):**
 
 - AWS CLI configured with appropriate credentials
-- Python 3.10+ and Node.js LTS (v24)
+- Python 3.14+ and Node.js LTS (v24)
 - AWS CDK CLI (`npm install -g aws-cdk`)
 - Docker or Finch (for building container images)
 - A **clean** Python virtual environment or pipx — GCO pins exact versions of many packages, so installing it into an existing environment will commonly fail with dependency-resolver errors. If you hit `ResolutionImpossible`, switch to the dev container instead of debugging your local env.
@@ -397,7 +397,7 @@ This is host-socket pass-through, not true Docker-in-Docker. Anyone with access 
 │   ├── regional-api-proxy/              # Regional API Gateway → internal ALB proxy
 │   └── secret-rotation/                 # Daily secret rotation
 │
-├── mcp/                                 # MCP server for LLM interaction (44 tools wrapping the CLI)
+├── mcp/                                 # MCP server for LLM interaction (90 tools default, up to 111 with feature flags)
 ├── scripts/                             # Utility scripts (version bump, cluster access setup)
 └── tests/                               # PyTest + BATS test suites (counts tracked via badges)
 ```

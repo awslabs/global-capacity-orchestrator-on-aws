@@ -1,13 +1,12 @@
 """Capacity checking and recommendation MCP tools."""
 
-import os
-
 import cli_runner
 from audit import audit_logged
+from feature_flags import FLAG_CAPACITY_PURCHASE, is_enabled
 from server import mcp
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "capacity"})
 @audit_logged
 def check_capacity(instance_type: str, region: str) -> str:
     """Check spot and on-demand capacity for a specific instance type.
@@ -19,7 +18,7 @@ def check_capacity(instance_type: str, region: str) -> str:
     return cli_runner._run_cli("capacity", "check", "-i", instance_type, "-r", region)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "capacity"})
 @audit_logged
 def capacity_status(region: str | None = None) -> str:
     """View capacity status across all deployed regions.
@@ -33,7 +32,7 @@ def capacity_status(region: str | None = None) -> str:
     return cli_runner._run_cli(*args)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "capacity"})
 @audit_logged
 def recommend_region(
     gpu: bool = False, instance_type: str | None = None, gpu_count: int = 0
@@ -56,7 +55,7 @@ def recommend_region(
     return cli_runner._run_cli(*args)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "capacity"})
 @audit_logged
 def spot_prices(instance_type: str, region: str) -> str:
     """Get current spot prices for an instance type.
@@ -68,7 +67,7 @@ def spot_prices(instance_type: str, region: str) -> str:
     return cli_runner._run_cli("capacity", "spot-prices", "-i", instance_type, "-r", region)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "capacity"})
 @audit_logged
 def ai_recommend(
     workload: str,
@@ -121,7 +120,7 @@ def ai_recommend(
     return cli_runner._run_cli(*args)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "capacity"})
 @audit_logged
 def list_reservations(
     instance_type: str | None = None,
@@ -143,7 +142,7 @@ def list_reservations(
     return cli_runner._run_cli(*args)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "capacity"})
 @audit_logged
 def reservation_check(
     instance_type: str,
@@ -177,9 +176,9 @@ def reservation_check(
 
 # Capacity Block purchasing — disabled by default.
 # Set GCO_ENABLE_CAPACITY_PURCHASE=true to enable.
-if os.environ.get("GCO_ENABLE_CAPACITY_PURCHASE", "").lower() == "true":
+if is_enabled(FLAG_CAPACITY_PURCHASE):
 
-    @mcp.tool()
+    @mcp.tool(tags={"cost-incurring", "capacity"})
     @audit_logged
     def reserve_capacity(
         offering_id: str,

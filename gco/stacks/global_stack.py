@@ -30,10 +30,12 @@ from aws_cdk import (
 )
 from aws_cdk import aws_backup as backup
 from aws_cdk import aws_dynamodb as dynamodb
+from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_events as events
 from aws_cdk import aws_globalaccelerator as ga
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_kms as kms
+from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_ssm as ssm
 from constructs import Construct
@@ -42,6 +44,7 @@ from gco.config.config_loader import ConfigLoader
 from gco.stacks.constants import (
     CLUSTER_SHARED_BUCKET_NAME_PREFIX,
     CLUSTER_SHARED_SSM_PARAMETER_PREFIX,
+    LAMBDA_PYTHON_RUNTIME,
 )
 
 # <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
@@ -50,6 +53,98 @@ from gco.stacks.constants import (
 #     (PNG: ``diagrams/code_diagrams/gco/stacks/global_stack.GCOGlobalStack___init__.png``)
 # Regenerate with ``python diagrams/code_diagrams/generate.py``.
 # <pyflowchart-code-diagram> END
+
+
+# Default values for the ``images`` cdk.json block. The defaults match the
+# documented retention posture: repos survive a stack destroy by default
+# (``retain``), non-empty repos block destroy unless the operator explicitly
+# flips ``empty_on_delete`` to true, lifecycle keeps the latest 20 tagged
+# images and expires untagged ones after 7 days, and replication is enabled
+# by default to every deployed region.
+_IMAGES_DEFAULT_REMOVAL_POLICY = "retain"
+_IMAGES_DEFAULT_EMPTY_ON_DELETE = False
+_IMAGES_DEFAULT_KEEP_TAGGED = 20
+_IMAGES_DEFAULT_EXPIRE_UNTAGGED_DAYS = 7
+_IMAGES_DEFAULT_REPLICATION_ENABLED = True
+_IMAGES_DEFAULT_REPLICATION_DESTINATIONS = "all_deployed_regions"
+
+_IMAGES_VALID_REMOVAL_POLICIES = ("retain", "destroy")
+
+
+def _parse_images_config(cdk_context: dict[str, Any] | None) -> dict[str, Any]:
+    """Parse the ``images`` block from cdk.json with defaults applied.
+
+    Returns a normalized dict shape that the rest of the global stack
+    can consume without re-parsing. Validates ``removal_policy`` against
+    the set ``{"retain", "destroy"}`` and ``replication.destinations``
+    against either the literal string ``"all_deployed_regions"`` or a
+    ``list[str]``.
+
+    Args:
+        cdk_context: The dict returned by ``self.node.try_get_context("images")``.
+            ``None`` (the key being absent) is equivalent to an empty dict.
+
+    Returns:
+        A dict with keys ``removal_policy``, ``empty_on_delete``,
+        ``lifecycle`` (with ``keep_tagged`` and ``expire_untagged_days``),
+        and ``replication`` (with ``enabled`` and ``destinations``).
+    """
+    raw = cdk_context or {}
+
+    removal_policy = raw.get("removal_policy", _IMAGES_DEFAULT_REMOVAL_POLICY)
+    if not isinstance(removal_policy, str) or removal_policy not in _IMAGES_VALID_REMOVAL_POLICIES:
+        raise ValueError(
+            f"images.removal_policy must be 'retain' or 'destroy', got {removal_policy!r}"
+        )
+
+    empty_on_delete = bool(raw.get("empty_on_delete", _IMAGES_DEFAULT_EMPTY_ON_DELETE))
+
+    lifecycle_raw = raw.get("lifecycle") or {}
+    if not isinstance(lifecycle_raw, dict):
+        raise ValueError(f"images.lifecycle must be a mapping, got {type(lifecycle_raw).__name__}")
+    keep_tagged = int(lifecycle_raw.get("keep_tagged", _IMAGES_DEFAULT_KEEP_TAGGED))
+    expire_untagged_days = int(
+        lifecycle_raw.get("expire_untagged_days", _IMAGES_DEFAULT_EXPIRE_UNTAGGED_DAYS)
+    )
+
+    replication_raw = raw.get("replication") or {}
+    if not isinstance(replication_raw, dict):
+        raise ValueError(
+            f"images.replication must be a mapping, got {type(replication_raw).__name__}"
+        )
+    replication_enabled = bool(replication_raw.get("enabled", _IMAGES_DEFAULT_REPLICATION_ENABLED))
+    destinations = replication_raw.get("destinations", _IMAGES_DEFAULT_REPLICATION_DESTINATIONS)
+    if isinstance(destinations, str):
+        if destinations != _IMAGES_DEFAULT_REPLICATION_DESTINATIONS:
+            raise ValueError(
+                "images.replication.destinations must be the string "
+                f"{_IMAGES_DEFAULT_REPLICATION_DESTINATIONS!r} or a list of region names, "
+                f"got {destinations!r}"
+            )
+    elif isinstance(destinations, list):
+        if not all(isinstance(item, str) for item in destinations):
+            raise ValueError(
+                "images.replication.destinations list must contain only region name strings"
+            )
+    else:
+        raise ValueError(
+            "images.replication.destinations must be the string "
+            f"{_IMAGES_DEFAULT_REPLICATION_DESTINATIONS!r} or a list of region names, "
+            f"got {type(destinations).__name__}"
+        )
+
+    return {
+        "removal_policy": removal_policy,
+        "empty_on_delete": empty_on_delete,
+        "lifecycle": {
+            "keep_tagged": keep_tagged,
+            "expire_untagged_days": expire_untagged_days,
+        },
+        "replication": {
+            "enabled": replication_enabled,
+            "destinations": destinations,
+        },
+    }
 
 
 class GCOGlobalStack(Stack):
@@ -96,6 +191,16 @@ class GCOGlobalStack(Stack):
 
         # Create AWS Backup plan for DynamoDB tables
         self._create_backup_plan()
+
+        # Container image registry — parses the cdk.json ``images`` block,
+        # provisions the optional ECR replication rule for ``gco/*`` repos,
+        # and creates the lookup-or-create custom resource Lambda that
+        # ``cli images init`` will invoke per-repo on demand. The Lambda
+        # construct is created here regardless of replication settings so
+        # the function ARN is available for downstream invocations.
+        self.images_config = _parse_images_config(self.node.try_get_context("images"))
+        self._create_image_replication_rule()
+        self._create_image_lookup_lambda()
 
         # Create Global Accelerator with TCP protocol for HTTP/HTTPS traffic
         self.accelerator = ga.Accelerator(
@@ -1002,4 +1107,129 @@ class GCOGlobalStack(Stack):
             value=self.cluster_shared_kms_key.key_arn,
             description="ARN of the always-on KMS key encrypting Cluster_Shared_Bucket.",
             export_name=f"{project_name}-cluster-shared-kms-key-arn",
+        )
+
+    def _resolve_replication_destinations(self, destinations: str | list[str]) -> list[str]:
+        """Resolve the configured replication destinations into a region list.
+
+        When ``destinations`` is the literal ``"all_deployed_regions"``, the
+        list comes from ``self.config.get_regions()`` (the same source the
+        rest of the stack uses for cross-region wiring). When it is an
+        explicit list, it is returned as-is. The source region (the global
+        stack's deploy region) is excluded — ECR replication is point-to-point
+        and a self-referential destination is rejected by the API.
+        """
+        if isinstance(destinations, str):
+            candidate_regions = list(self.config.get_regions())
+        else:
+            candidate_regions = list(destinations)
+        return [region for region in candidate_regions if region != self.region]
+
+    def _create_image_replication_rule(self) -> None:
+        """Provision the ECR replication rule for ``gco/*`` repositories.
+
+        When ``images.replication.enabled`` is True and at least one
+        non-source destination resolves, creates one
+        ``aws_ecr.CfnReplicationConfiguration`` rule with a single
+        ``PREFIX_MATCH`` filter on ``gco/`` and one destination per resolved
+        region. When replication is disabled or the destination list is
+        empty (e.g. single-region deploy), no replication resource is
+        provisioned and the method becomes a no-op.
+        """
+        if not self.images_config["replication"]["enabled"]:
+            return
+
+        destinations = self._resolve_replication_destinations(
+            self.images_config["replication"]["destinations"]
+        )
+        if not destinations:
+            return
+
+        ecr.CfnReplicationConfiguration(
+            self,
+            "GcoImageReplicationConfig",
+            replication_configuration=ecr.CfnReplicationConfiguration.ReplicationConfigurationProperty(
+                rules=[
+                    ecr.CfnReplicationConfiguration.ReplicationRuleProperty(
+                        destinations=[
+                            ecr.CfnReplicationConfiguration.ReplicationDestinationProperty(
+                                region=region,
+                                registry_id=self.account,
+                            )
+                            for region in destinations
+                        ],
+                        repository_filters=[
+                            ecr.CfnReplicationConfiguration.RepositoryFilterProperty(
+                                filter="gco/",
+                                filter_type="PREFIX_MATCH",
+                            )
+                        ],
+                    )
+                ]
+            ),
+        )
+
+    def _create_image_lookup_lambda(self) -> None:
+        """Create the lookup-or-create custom resource Lambda for image repos.
+
+        The Lambda implements the adopt-or-create pattern for ECR repos
+        under the project's ``gco/*`` prefix. It is invoked at the time
+        ``cli images init`` registers a new repo with the global stack via
+        a ``CustomResource``; the function itself is provisioned here so
+        the ARN is stable across deploys.
+
+        The Lambda's IAM role grants read/write access to ECR repository
+        APIs scoped to the project's prefix, plus the standard basic
+        execution policy for CloudWatch Logs.
+        """
+        project_name = self.config.get_project_name()
+
+        # IAM role for the Lambda — minimal ECR + CloudWatch Logs permissions.
+        # ECR repository APIs scope by repository name, not ARN, so the
+        # ``gco/*`` prefix scope is enforced via the ARN pattern in the
+        # policy resource list.
+        repo_arn = f"arn:aws:ecr:*:{self.account}:repository/gco/*"
+
+        self.image_lookup_lambda = lambda_.Function(
+            self,
+            "ImageLookupFunction",
+            runtime=getattr(lambda_.Runtime, LAMBDA_PYTHON_RUNTIME),
+            handler="handler.lambda_handler",
+            code=lambda_.Code.from_asset("lambda/image-lookup"),
+            timeout=Duration.minutes(5),
+            description=(
+                "Lookup-or-create custom resource handler for ECR "
+                "repositories under the project's gco/* prefix."
+            ),
+        )
+
+        assert self.image_lookup_lambda.role is not None
+        self.image_lookup_lambda.role.add_to_principal_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "ecr:DescribeRepositories",
+                    "ecr:CreateRepository",
+                    "ecr:DeleteRepository",
+                    "ecr:PutLifecyclePolicy",
+                    "ecr:GetLifecyclePolicy",
+                    "ecr:TagResource",
+                    "ecr:ListTagsForResource",
+                    "ecr:BatchDeleteImage",
+                    "ecr:DescribeImages",
+                    "ecr:ListImages",
+                ],
+                resources=[repo_arn],
+            )
+        )
+
+        CfnOutput(
+            self,
+            "ImageLookupFunctionArn",
+            value=self.image_lookup_lambda.function_arn,
+            description=(
+                "Lambda ARN for the lookup-or-create custom resource that "
+                "manages ECR repositories under the gco/* prefix."
+            ),
+            export_name=f"{project_name}-image-lookup-function-arn",
         )

@@ -13,10 +13,13 @@ without mocking the FastMCP server itself.
 
 import asyncio
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 # Ensure mcp/ is importable
 sys.path.insert(0, str(Path(__file__).parent.parent / "mcp"))
@@ -125,32 +128,73 @@ class TestServerMetadata:
 
 
 class TestToolRegistration:
-    """Verify tools are registered with correct signatures."""
+    """Verify tools are registered with correct signatures.
+
+    Uses ``mcp._list_tools()`` to bypass the BM25/Code-Mode catalog-replacement
+    transforms wired in ``mcp/server.py``. The public ``list_tools()`` is what
+    clients see — the BM25 transform replaces it with a synthetic
+    ``search_tools``/``call_tool`` pair plus the always-visible entry-points,
+    so testing registration against it would only ever see ~5 tools regardless
+    of what's registered. The underlying registry is what we actually want to
+    assert against here.
+    """
 
     def test_tool_count(self):
-        tools = asyncio.run(run_mcp.mcp.list_tools())
-        # 43 base tools; reserve_capacity only registers when
-        # GCO_ENABLE_CAPACITY_PURCHASE=true
-        base_count = 43
+        tools = asyncio.run(run_mcp.mcp._list_tools())
+        # 90 base tools after delete_job and delete_inference moved under
+        # GCO_ENABLE_DESTRUCTIVE_OPERATIONS. The breakdown:
+        #   * the original 81 (read-only + low-risk + discovery) minus 2
+        #     (delete_job + delete_inference) = 79
+        #   * 11 unconditional image-registry tools (read-only + administrative)
+        # = 90 total at default registration.
+        # reserve_capacity adds 1 when GCO_ENABLE_CAPACITY_PURCHASE=true.
+        # Image-publish-gated tools (images_build, images_push) add 2 when
+        # GCO_ENABLE_IMAGE_PUBLISH=true. Destructive-gated tools add 12 when
+        # GCO_ENABLE_DESTRUCTIVE_OPERATIONS=true: delete_job, delete_inference,
+        # delete_template, delete_webhook, delete_model, delete_nodepool,
+        # analytics_user_remove, cancel_queue_job (eight non-image), plus
+        # images_cleanup, images_prune, images_delete_tag, images_delete_repo
+        # (four image variants). Model-upload-gated models_upload adds 1
+        # when GCO_ENABLE_MODEL_UPLOAD=true.
+        # Infrastructure-deploy gated tools (deploy_stack, deploy_all,
+        # bootstrap_cdk) add 3 when GCO_ENABLE_INFRASTRUCTURE_DEPLOY=true.
+        # Infrastructure-destroy gated tools (destroy_stack, destroy_all)
+        # add 2 when GCO_ENABLE_INFRASTRUCTURE_DESTROY=true.
+        base_count = 90
         tool_names = [t.name for t in tools]
+        expected = base_count
         if "reserve_capacity" in tool_names:
-            assert len(tools) == base_count + 1
-        else:
-            assert len(tools) == base_count
+            expected += 1
+        if "images_build" in tool_names:
+            expected += 2  # images_build + images_push register together
+        if "delete_job" in tool_names:
+            # All eight destructive-gated tools register together with the
+            # four destructive image variants — twelve total under the flag.
+            expected += 12
+        if "models_upload" in tool_names:
+            expected += 1
+        if "deploy_stack" in tool_names:
+            expected += 3  # deploy_stack + deploy_all + bootstrap_cdk
+        if "destroy_stack" in tool_names:
+            expected += 2  # destroy_stack + destroy_all
+        assert len(tools) == expected
 
     def test_all_tool_names(self):
-        tools = asyncio.run(run_mcp.mcp.list_tools())
+        tools = asyncio.run(run_mcp.mcp._list_tools())
         names = {t.name for t in tools}
         expected = {
+            # ── Job management ──
+            # Read-only
             "list_jobs",
-            "submit_job_sqs",
-            "submit_job_api",
             "get_job",
             "get_job_logs",
             "get_job_events",
-            "delete_job",
             "cluster_health",
             "queue_status",
+            # Mutating
+            "submit_job_sqs",
+            "submit_job_api",
+            # ── Capacity (all read-only) ──
             "check_capacity",
             "capacity_status",
             "recommend_region",
@@ -158,42 +202,167 @@ class TestToolRegistration:
             "ai_recommend",
             "list_reservations",
             "reservation_check",
-            "deploy_inference",
+            # ── Inference endpoints ──
+            # Read-only
             "list_inference_endpoints",
             "inference_status",
+            "inference_health",
+            "list_endpoint_models",
+            "invoke_inference",
+            "chat_inference",
+            # Mutating
+            "deploy_inference",
             "scale_inference",
             "update_inference_image",
             "stop_inference",
             "start_inference",
-            "delete_inference",
             "canary_deploy",
             "promote_canary",
             "rollback_canary",
-            "invoke_inference",
-            "chat_inference",
-            "inference_health",
-            "list_endpoint_models",
+            # ── Cost tracking (all read-only) ──
             "cost_summary",
             "cost_by_region",
             "cost_trend",
             "cost_forecast",
+            # ── Infrastructure / stacks ──
+            # Read-only
             "list_stacks",
             "stack_status",
-            "setup_cluster_access",
             "fsx_status",
+            # Mutating
+            "setup_cluster_access",
+            # ── Storage (all read-only) ──
             "list_storage_contents",
             "list_file_systems",
+            # ── Model weights (all read-only) ──
             "list_models",
             "get_model_uri",
+            #
+            # Async tools (all read-only, "safe" risk tier)
+            #
+            # Stacks inspection
+            "stack_diff",
+            "stack_outputs",
+            "stack_synth",
+            "valkey_status",
+            "aurora_status",
+            # Stacks mutating (cdk.json toggles)
+            "enable_fsx",
+            "disable_fsx",
+            "enable_valkey",
+            "disable_valkey",
+            "enable_aurora",
+            "disable_aurora",
+            # Queue
+            "queue_list",
+            "queue_get",
+            "queue_stats",
+            # Mutating
+            "queue_submit",
+            # Templates
+            "templates_list",
+            "templates_get",
+            # Mutating
+            "templates_create",
+            "templates_run",
+            # Webhooks
+            "webhooks_list",
+            "webhooks_get",
+            # Mutating
+            "webhooks_create",
+            # DAG
+            "dag_validate",
+            # Mutating
+            "dag_run",
+            # NodePools
+            "nodepools_list",
+            "nodepools_describe",
+            # Mutating
+            "nodepools_create_odcr",
+            # Analytics
+            "analytics_doctor",
+            "analytics_login_url",
+            "analytics_users_list",
+            # Mutating
+            "enable_analytics",
+            "disable_analytics",
+            "analytics_user_add",
+            # Config
+            "config_get",
+            # Examples discovery
+            "find_examples",
+            # Docs discovery
+            "find_docs",
+            # Storage (read-only)
+            "files_get",
+            "files_access_points",
+            # ── Image registry ──
+            # Read-only ("safe" risk tier)
+            "images_list",
+            "images_tags",
+            "images_describe",
+            "images_uri",
+            "images_replication_get",
+            "images_replication_status",
+            "images_orphans",
+            # Administrative ("low-risk")
+            "images_init",
+            "images_lifecycle_get",
+            "images_lifecycle_set",
+            "images_replication_sync",
         }
         # reserve_capacity is conditionally registered via env var
         # and may also appear if a prior test reloaded the module
         if "reserve_capacity" in names:
             expected.add("reserve_capacity")
+        # Image-publish-gated tools register under GCO_ENABLE_IMAGE_PUBLISH.
+        if "images_build" in names:
+            expected.add("images_build")
+            expected.add("images_push")
+        # Destructive-gated image tools register under
+        # GCO_ENABLE_DESTRUCTIVE_OPERATIONS.
+        if "images_delete_tag" in names:
+            expected.update(
+                {
+                    "images_cleanup",
+                    "images_prune",
+                    "images_delete_tag",
+                    "images_delete_repo",
+                }
+            )
+        # Destructive-gated non-image tools also register under
+        # GCO_ENABLE_DESTRUCTIVE_OPERATIONS — delete_job and delete_inference
+        # moved here in the destructive-flag migration, joined by the new
+        # delete_template/delete_webhook/delete_model/delete_nodepool/
+        # analytics_user_remove/cancel_queue_job tools.
+        if "delete_job" in names:
+            expected.update(
+                {
+                    "delete_job",
+                    "delete_inference",
+                    "delete_template",
+                    "delete_webhook",
+                    "delete_model",
+                    "delete_nodepool",
+                    "analytics_user_remove",
+                    "cancel_queue_job",
+                }
+            )
+        # Model-upload gated tool registers under GCO_ENABLE_MODEL_UPLOAD.
+        if "models_upload" in names:
+            expected.add("models_upload")
+        # Infrastructure-deploy gated tools register under
+        # GCO_ENABLE_INFRASTRUCTURE_DEPLOY.
+        if "deploy_stack" in names:
+            expected.update({"deploy_stack", "deploy_all", "bootstrap_cdk"})
+        # Infrastructure-destroy gated tools register under
+        # GCO_ENABLE_INFRASTRUCTURE_DESTROY.
+        if "destroy_stack" in names:
+            expected.update({"destroy_stack", "destroy_all"})
         assert names == expected
 
     def test_each_tool_has_description(self):
-        tools = asyncio.run(run_mcp.mcp.list_tools())
+        tools = asyncio.run(run_mcp.mcp._list_tools())
         for tool in tools:
             assert tool.description, f"Tool {tool.name} has no description"
 
@@ -271,10 +440,17 @@ class TestJobTools:
             assert "logs" in cmd
             assert "500" in cmd
 
-    def test_delete_job(self):
+    @pytest.mark.asyncio
+    @patch.dict(os.environ, {"GCO_ENABLE_DESTRUCTIVE_OPERATIONS": "true"})
+    async def test_delete_job(self):
+        # ``delete_job`` is gated by GCO_ENABLE_DESTRUCTIVE_OPERATIONS — reload
+        # so the async wrapper is registered and rebound on ``run_mcp``.
+        import importlib
+
+        importlib.reload(run_mcp)
         with patch("cli_runner.subprocess.run") as mock:
             mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
-            run_mcp.delete_job("old-job", "us-east-1")
+            await run_mcp.delete_job("old-job", "us-east-1")
             cmd = mock.call_args[0][0]
             assert "delete" in cmd
             assert "-y" in cmd
@@ -522,10 +698,17 @@ class TestInferenceTools:
             cmd = mock.call_args[0][0]
             assert "start" in cmd
 
-    def test_delete_inference(self):
+    @pytest.mark.asyncio
+    @patch.dict(os.environ, {"GCO_ENABLE_DESTRUCTIVE_OPERATIONS": "true"})
+    async def test_delete_inference(self):
+        # ``delete_inference`` is gated by GCO_ENABLE_DESTRUCTIVE_OPERATIONS —
+        # reload so the async wrapper is registered and rebound on ``run_mcp``.
+        import importlib
+
+        importlib.reload(run_mcp)
         with patch("cli_runner.subprocess.run") as mock:
             mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
-            run_mcp.delete_inference("my-llm")
+            await run_mcp.delete_inference("my-llm")
             cmd = mock.call_args[0][0]
             assert "delete" in cmd
             assert "-y" in cmd
@@ -789,8 +972,9 @@ class TestResourceRegistration:
         # infra://index, infra://helm/charts.yaml,
         # demos://index, clients://index, scripts://index,
         # ci://index, tests://index,
-        # config://index, config://cdk.json, config://feature-toggles, config://env-vars
-        assert len(resources) == 20
+        # config://index, config://cdk.json, config://feature-toggles, config://env-vars,
+        # images://index, images://replication/status
+        assert len(resources) == 22
 
     def test_static_resource_uris(self):
         resources = asyncio.run(run_mcp.mcp.list_resources())
@@ -814,16 +998,23 @@ class TestResourceRegistration:
         assert "config://gco/cdk.json" in uris
         assert "config://gco/feature-toggles" in uris
         assert "config://gco/env-vars" in uris
+        assert "images://gco/index" in uris
+        assert "images://gco/replication/status" in uris
 
     def test_resource_template_count(self):
         templates = asyncio.run(run_mcp.mcp.list_resource_templates())
-        # docs/{doc_name}, examples/{example_name}, config/{filename}, file/{filepath},
+        # docs/{doc_name}, docs/by-topic/{topic}, docs/by-related/{doc_name},
+        # examples/{example_name}, examples/by-category/{category},
+        # examples/by-use-case/{use_case}, config/{filename}, file/{filepath},
         # k8s/manifests/{filename}, iam/policies/{filename}, infra/dockerfiles/{filename},
         # demos/{filename}, clients/{filename}, scripts/{filename},
         # ci/workflows, ci/actions, ci/scripts, ci/templates,
         # ci/codeql, ci/kind, ci/config,
-        # tests/{filepath}
-        assert len(templates) == 18
+        # tests/{filepath}, images/{name}/tags, images/{name}/{tag},
+        # gco://jobs/{job_name}, gco://inference/{endpoint_name},
+        # gco://k8s/{namespace}/{kind}/{name}, gco://cluster/{region}/topology,
+        # costs://gco/summary/{days_window}, tasks://gco/{task_id}
+        assert len(templates) == 30
 
     def test_resource_template_uris(self):
         templates = asyncio.run(run_mcp.mcp.list_resource_templates())
@@ -843,6 +1034,16 @@ class TestResourceRegistration:
         assert "ci://gco/codeql/{filename}" in uris
         assert "ci://gco/kind/{filename}" in uris
         assert "ci://gco/config/{filename}" in uris
+        # Image registry templates added by phase 10.
+        assert "images://gco/{name}/tags" in uris
+        assert "images://gco/{name}/{tag}" in uris
+        # Live-state resource templates.
+        assert "gco://jobs/{job_name}" in uris
+        assert "gco://inference/{endpoint_name}" in uris
+        assert "gco://k8s/{namespace}/{kind}/{name}" in uris
+        assert "gco://cluster/{region}/topology" in uris
+        assert "costs://gco/summary/{days_window}" in uris
+        assert "tasks://gco/{task_id}" in uris
 
 
 class TestDocResources:
@@ -1263,3 +1464,831 @@ class TestCIResources:
         result = asyncio.run(run_mcp.mcp.read_resource("docs://gco/index"))
         content = result.contents[0].content
         assert "ci://gco/index" in content
+
+
+# =============================================================================
+# Argv-translation tests for the read-only async tools.
+#
+# These tools all dispatch through ``asyncio.to_thread(cli_runner._run_cli,
+# *args)``, so mocking ``cli_runner.subprocess.run`` works the same as for
+# the existing sync-tool tests — the call still goes through ``_run_cli``
+# down to ``subprocess.run``. Each class covers a minimal-args path and a
+# full/all-flags path so we lock both branches of the optional-flag logic.
+# =============================================================================
+
+
+class TestStacksReadOnlyTools:
+    """Argv translation for the read-only stacks inspection tools."""
+
+    @pytest.mark.asyncio
+    async def test_stack_diff_no_args(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.stack_diff()
+            cmd = mock.call_args[0][0]
+            assert cmd[0] == "gco"
+            assert "stacks" in cmd
+            assert "diff" in cmd
+            # No stack name positional supplied.
+            assert "gco-us-east-1" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_stack_diff_with_stack_name(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.stack_diff(stack_name="gco-us-east-1")
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "diff" in cmd
+            assert "gco-us-east-1" in cmd
+
+    @pytest.mark.asyncio
+    async def test_stack_outputs_required_args(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.stack_outputs(stack_name="gco-us-east-1", region="us-east-1")
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "outputs" in cmd
+            assert "gco-us-east-1" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+
+    @pytest.mark.asyncio
+    async def test_stack_synth_default_is_quiet(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.stack_synth()
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "synth" in cmd
+            assert "--quiet" in cmd
+            # No stack name positional should be appended on the bare default call.
+            assert "gco-us-east-1" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_stack_synth_explicit_no_quiet_with_name(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.stack_synth(stack_name="gco-us-east-1", quiet=False)
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "synth" in cmd
+            assert "gco-us-east-1" in cmd
+            assert "--quiet" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_valkey_status(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.valkey_status()
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "valkey" in cmd
+            assert "status" in cmd
+
+    @pytest.mark.asyncio
+    async def test_aurora_status(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.aurora_status()
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "aurora" in cmd
+            assert "status" in cmd
+
+
+class TestStacksMutatingTools:
+    """Argv translation for the cdk.json enable/disable toggles. Every tool
+    must include ``-y`` since the underlying CLI commands prompt for
+    confirmation and the MCP wrapper has to be non-interactive."""
+
+    @pytest.mark.asyncio
+    async def test_enable_fsx(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.enable_fsx()
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "fsx" in cmd
+            assert "enable" in cmd
+            assert "-y" in cmd
+
+    @pytest.mark.asyncio
+    async def test_disable_fsx(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.disable_fsx()
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "fsx" in cmd
+            assert "disable" in cmd
+            assert "-y" in cmd
+
+    @pytest.mark.asyncio
+    async def test_enable_valkey(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.enable_valkey()
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "valkey" in cmd
+            assert "enable" in cmd
+            assert "-y" in cmd
+
+    @pytest.mark.asyncio
+    async def test_disable_valkey(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.disable_valkey()
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "valkey" in cmd
+            assert "disable" in cmd
+            assert "-y" in cmd
+
+    @pytest.mark.asyncio
+    async def test_enable_aurora(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.enable_aurora()
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "aurora" in cmd
+            assert "enable" in cmd
+            assert "-y" in cmd
+
+    @pytest.mark.asyncio
+    async def test_disable_aurora(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.disable_aurora()
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "aurora" in cmd
+            assert "disable" in cmd
+            assert "-y" in cmd
+
+
+class TestQueueTools:
+    """Argv translation for the read-only queue tools."""
+
+    @pytest.mark.asyncio
+    async def test_queue_list_no_args(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+            await run_mcp.queue_list()
+            cmd = mock.call_args[0][0]
+            assert cmd[0] == "gco"
+            assert "queue" in cmd
+            assert "list" in cmd
+            # The default limit=50 is always appended.
+            assert "--limit" in cmd
+            assert "50" in cmd
+            # No region/namespace/status flags when those args were not supplied.
+            assert "-r" not in cmd
+            assert "-n" not in cmd
+            assert "--status" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_queue_list_full_args(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+            await run_mcp.queue_list(region="us-east-1", status="running", namespace="ns", limit=10)
+            cmd = mock.call_args[0][0]
+            assert "queue" in cmd
+            assert "list" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+            assert cmd[cmd.index("--status") : cmd.index("--status") + 2] == ["--status", "running"]
+            assert cmd[cmd.index("-n") : cmd.index("-n") + 2] == ["-n", "ns"]
+            assert cmd[cmd.index("--limit") : cmd.index("--limit") + 2] == ["--limit", "10"]
+
+    @pytest.mark.asyncio
+    async def test_queue_get_minimal(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.queue_get(job_id="abc")
+            cmd = mock.call_args[0][0]
+            assert "queue" in cmd
+            assert "get" in cmd
+            assert "abc" in cmd
+            assert "-r" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_queue_get_with_region(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.queue_get(job_id="abc", region="us-east-1")
+            cmd = mock.call_args[0][0]
+            assert "queue" in cmd
+            assert "get" in cmd
+            assert "abc" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+
+    @pytest.mark.asyncio
+    async def test_queue_stats_no_args(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.queue_stats()
+            cmd = mock.call_args[0][0]
+            assert "queue" in cmd
+            assert "stats" in cmd
+            assert "-r" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_queue_stats_with_region(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.queue_stats(region="us-east-1")
+            cmd = mock.call_args[0][0]
+            assert "queue" in cmd
+            assert "stats" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+
+    @pytest.mark.asyncio
+    async def test_queue_submit_minimal(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.queue_submit(manifest_path="job.yaml", region="us-east-1")
+            cmd = mock.call_args[0][0]
+            assert "queue" in cmd
+            assert "submit" in cmd
+            assert "job.yaml" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+            # No optional flags should leak in.
+            assert "-n" not in cmd
+            assert "--priority" not in cmd
+            assert "--label" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_queue_submit_full_args(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.queue_submit(
+                manifest_path="job.yaml",
+                region="us-east-1",
+                namespace="ns",
+                priority=42,
+                labels={"team": "ml", "project": "training"},
+            )
+            cmd = mock.call_args[0][0]
+            assert "queue" in cmd
+            assert "submit" in cmd
+            assert "job.yaml" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+            assert cmd[cmd.index("-n") : cmd.index("-n") + 2] == ["-n", "ns"]
+            assert cmd[cmd.index("--priority") : cmd.index("--priority") + 2] == [
+                "--priority",
+                "42",
+            ]
+            # Two label flags, one per dict entry, in insertion order.
+            label_flag_count = sum(1 for arg in cmd if arg == "--label")
+            assert label_flag_count == 2
+            assert "team=ml" in cmd
+            assert "project=training" in cmd
+
+
+class TestTemplatesTools:
+    """Argv translation for the read-only templates tools."""
+
+    @pytest.mark.asyncio
+    async def test_templates_list_no_args(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+            await run_mcp.templates_list()
+            cmd = mock.call_args[0][0]
+            assert "templates" in cmd
+            assert "list" in cmd
+            assert "-r" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_templates_list_with_region(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+            await run_mcp.templates_list(region="us-east-1")
+            cmd = mock.call_args[0][0]
+            assert "templates" in cmd
+            assert "list" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+
+    @pytest.mark.asyncio
+    async def test_templates_get_minimal(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.templates_get(name="foo")
+            cmd = mock.call_args[0][0]
+            assert "templates" in cmd
+            assert "get" in cmd
+            assert "foo" in cmd
+            assert "-r" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_templates_get_with_region(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.templates_get(name="foo", region="us-east-1")
+            cmd = mock.call_args[0][0]
+            assert "templates" in cmd
+            assert "get" in cmd
+            assert "foo" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+
+    @pytest.mark.asyncio
+    async def test_templates_create_minimal(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.templates_create(name="t1", manifest_path="job.yaml")
+            cmd = mock.call_args[0][0]
+            assert "templates" in cmd
+            assert "create" in cmd
+            # Positional order: name then manifest path.
+            assert cmd[cmd.index("create") + 1] == "t1"
+            assert cmd[cmd.index("create") + 2] == "job.yaml"
+            assert "-r" not in cmd
+            assert "-d" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_templates_create_with_overrides(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.templates_create(
+                name="t1",
+                manifest_path="job.yaml",
+                region="us-east-1",
+                description="GPU training template",
+            )
+            cmd = mock.call_args[0][0]
+            assert "templates" in cmd
+            assert "create" in cmd
+            assert "t1" in cmd
+            assert "job.yaml" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+            assert cmd[cmd.index("-d") : cmd.index("-d") + 2] == ["-d", "GPU training template"]
+
+    @pytest.mark.asyncio
+    async def test_templates_run_minimal(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.templates_run(name="t1")
+            cmd = mock.call_args[0][0]
+            assert "templates" in cmd
+            assert "run" in cmd
+            assert "t1" in cmd
+            assert "-r" not in cmd
+            assert "-n" not in cmd
+            assert "--priority" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_templates_run_with_overrides(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.templates_run(
+                name="t1",
+                region="us-east-1",
+                override_namespace="ns2",
+                override_priority=10,
+            )
+            cmd = mock.call_args[0][0]
+            assert "templates" in cmd
+            assert "run" in cmd
+            assert "t1" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+            assert cmd[cmd.index("-n") : cmd.index("-n") + 2] == ["-n", "ns2"]
+            assert cmd[cmd.index("--priority") : cmd.index("--priority") + 2] == [
+                "--priority",
+                "10",
+            ]
+
+
+class TestWebhooksTools:
+    """Argv translation for the read-only webhooks tools."""
+
+    @pytest.mark.asyncio
+    async def test_webhooks_list_no_args(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+            await run_mcp.webhooks_list()
+            cmd = mock.call_args[0][0]
+            assert "webhooks" in cmd
+            assert "list" in cmd
+            assert "-r" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_webhooks_list_with_region(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+            await run_mcp.webhooks_list(region="us-east-1")
+            cmd = mock.call_args[0][0]
+            assert "webhooks" in cmd
+            assert "list" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+
+    @pytest.mark.asyncio
+    async def test_webhooks_get_minimal(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.webhooks_get(name="hook1")
+            cmd = mock.call_args[0][0]
+            assert "webhooks" in cmd
+            assert "get" in cmd
+            assert "hook1" in cmd
+            assert "-r" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_webhooks_get_with_region(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.webhooks_get(name="hook1", region="us-east-1")
+            cmd = mock.call_args[0][0]
+            assert "webhooks" in cmd
+            assert "get" in cmd
+            assert "hook1" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+
+    @pytest.mark.asyncio
+    async def test_webhooks_create_basic(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.webhooks_create(
+                name="hook1",
+                url="https://example.com/hook",
+                events=["job.completed"],
+            )
+            cmd = mock.call_args[0][0]
+            assert "webhooks" in cmd
+            assert "create" in cmd
+            assert "hook1" in cmd
+            assert cmd[cmd.index("--url") : cmd.index("--url") + 2] == [
+                "--url",
+                "https://example.com/hook",
+            ]
+            # One --event flag per entry.
+            assert cmd.count("--event") == 1
+            assert "job.completed" in cmd
+            assert "-r" not in cmd
+            assert "--secret-name" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_webhooks_create_multiple_events(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.webhooks_create(
+                name="hook1",
+                url="https://example.com/hook",
+                events=["job.started", "job.completed", "job.failed"],
+                region="us-east-1",
+                secret_name="my-secret",
+            )
+            cmd = mock.call_args[0][0]
+            assert "webhooks" in cmd
+            assert "create" in cmd
+            assert "hook1" in cmd
+            # Three --event flags.
+            assert cmd.count("--event") == 3
+            assert "job.started" in cmd
+            assert "job.completed" in cmd
+            assert "job.failed" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+            assert cmd[cmd.index("--secret-name") : cmd.index("--secret-name") + 2] == [
+                "--secret-name",
+                "my-secret",
+            ]
+
+
+class TestDagTools:
+    """Argv translation for the read-only DAG tools."""
+
+    @pytest.mark.asyncio
+    async def test_dag_validate(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.dag_validate(manifest_path="dag.yaml")
+            cmd = mock.call_args[0][0]
+            assert "dag" in cmd
+            assert "validate" in cmd
+            assert "dag.yaml" in cmd
+
+    @pytest.mark.asyncio
+    async def test_dag_validate_with_full_path(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.dag_validate(manifest_path="examples/dags/sample.yaml")
+            cmd = mock.call_args[0][0]
+            assert "dag" in cmd
+            assert "validate" in cmd
+            assert "examples/dags/sample.yaml" in cmd
+
+    @pytest.mark.asyncio
+    async def test_dag_run(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.dag_run(manifest_path="dag.yaml", region="us-east-1")
+            cmd = mock.call_args[0][0]
+            assert "dag" in cmd
+            assert "run" in cmd
+            assert "dag.yaml" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+            # Default dry_run=False — flag should not be present.
+            assert "--dry-run" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_dag_run_dry_run(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.dag_run(manifest_path="dag.yaml", region="us-east-1", dry_run=True)
+            cmd = mock.call_args[0][0]
+            assert "dag" in cmd
+            assert "run" in cmd
+            assert "dag.yaml" in cmd
+            assert "--dry-run" in cmd
+
+
+class TestNodepoolsTools:
+    """Argv translation for the read-only Karpenter nodepool tools."""
+
+    @pytest.mark.asyncio
+    async def test_nodepools_list_no_args(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+            await run_mcp.nodepools_list()
+            cmd = mock.call_args[0][0]
+            assert "nodepools" in cmd
+            assert "list" in cmd
+            assert "-r" not in cmd
+            assert "--cluster" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_nodepools_list_full_args(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+            await run_mcp.nodepools_list(region="us-east-1", cluster="my-cluster")
+            cmd = mock.call_args[0][0]
+            assert "nodepools" in cmd
+            assert "list" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+            assert cmd[cmd.index("--cluster") : cmd.index("--cluster") + 2] == [
+                "--cluster",
+                "my-cluster",
+            ]
+
+    @pytest.mark.asyncio
+    async def test_nodepools_describe_minimal(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.nodepools_describe(nodepool_name="np1", region="us-east-1")
+            cmd = mock.call_args[0][0]
+            assert "nodepools" in cmd
+            assert "describe" in cmd
+            assert "np1" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+            assert "--cluster" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_nodepools_describe_with_cluster(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.nodepools_describe(nodepool_name="np1", region="us-east-1", cluster="c1")
+            cmd = mock.call_args[0][0]
+            assert "nodepools" in cmd
+            assert "describe" in cmd
+            assert "np1" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+            assert cmd[cmd.index("--cluster") : cmd.index("--cluster") + 2] == ["--cluster", "c1"]
+
+    @pytest.mark.asyncio
+    async def test_nodepools_create_odcr_minimal(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.nodepools_create_odcr(
+                name="gpu-reserved",
+                region="us-east-1",
+                instance_type="p4d.24xlarge",
+                capacity_reservation_id="cr-0123456789abcdef0",
+            )
+            cmd = mock.call_args[0][0]
+            assert "nodepools" in cmd
+            assert "create-odcr" in cmd
+            assert "gpu-reserved" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+            assert cmd[cmd.index("--instance-type") : cmd.index("--instance-type") + 2] == [
+                "--instance-type",
+                "p4d.24xlarge",
+            ]
+            assert cmd[
+                cmd.index("--capacity-reservation-id") : cmd.index("--capacity-reservation-id") + 2
+            ] == ["--capacity-reservation-id", "cr-0123456789abcdef0"]
+            assert cmd[cmd.index("--count") : cmd.index("--count") + 2] == ["--count", "1"]
+            # Optional flags absent when not supplied.
+            assert "--cluster" not in cmd
+            assert "--taint" not in cmd
+            assert "--label" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_nodepools_create_odcr_with_cluster(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.nodepools_create_odcr(
+                name="gpu-reserved",
+                region="us-east-1",
+                instance_type="p4d.24xlarge",
+                capacity_reservation_id="cr-0123456789abcdef0",
+                cluster="my-cluster",
+                count=4,
+                taints=["nvidia.com/gpu=true:NoSchedule"],
+                labels={"team": "ml", "tier": "reserved"},
+            )
+            cmd = mock.call_args[0][0]
+            assert "nodepools" in cmd
+            assert "create-odcr" in cmd
+            assert "gpu-reserved" in cmd
+            assert cmd[cmd.index("--cluster") : cmd.index("--cluster") + 2] == [
+                "--cluster",
+                "my-cluster",
+            ]
+            assert cmd[cmd.index("--count") : cmd.index("--count") + 2] == ["--count", "4"]
+            assert cmd.count("--taint") == 1
+            assert "nvidia.com/gpu=true:NoSchedule" in cmd
+            assert cmd.count("--label") == 2
+            assert "team=ml" in cmd
+            assert "tier=reserved" in cmd
+
+
+class TestAnalyticsTools:
+    """Argv translation for the read-only analytics tools."""
+
+    @pytest.mark.asyncio
+    async def test_analytics_doctor(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.analytics_doctor()
+            cmd = mock.call_args[0][0]
+            assert "analytics" in cmd
+            assert "doctor" in cmd
+
+    @pytest.mark.asyncio
+    async def test_analytics_login_url(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.analytics_login_url(username="alice")
+            cmd = mock.call_args[0][0]
+            assert "analytics" in cmd
+            assert "login-url" in cmd
+            assert "alice" in cmd
+
+    @pytest.mark.asyncio
+    async def test_analytics_users_list(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+            await run_mcp.analytics_users_list()
+            cmd = mock.call_args[0][0]
+            assert "analytics" in cmd
+            assert "users" in cmd
+            assert "list" in cmd
+
+    @pytest.mark.asyncio
+    async def test_enable_analytics(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.enable_analytics()
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "analytics" in cmd
+            assert "enable" in cmd
+            assert "-y" in cmd
+
+    @pytest.mark.asyncio
+    async def test_disable_analytics(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.disable_analytics()
+            cmd = mock.call_args[0][0]
+            assert "stacks" in cmd
+            assert "analytics" in cmd
+            assert "disable" in cmd
+            assert "-y" in cmd
+
+    @pytest.mark.asyncio
+    async def test_analytics_user_add(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.analytics_user_add(username="alice", email="alice@example.com")
+            cmd = mock.call_args[0][0]
+            assert "analytics" in cmd
+            assert "users" in cmd
+            assert "add" in cmd
+            assert "alice" in cmd
+            assert cmd[cmd.index("--email") : cmd.index("--email") + 2] == [
+                "--email",
+                "alice@example.com",
+            ]
+            # This CLI surface is interactive-friendly already — no -y flag.
+            assert "-y" not in cmd
+
+
+class TestConfigTools:
+    """Argv translation for the read-only CLI config tools."""
+
+    @pytest.mark.asyncio
+    async def test_config_get_no_key(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            await run_mcp.config_get()
+            cmd = mock.call_args[0][0]
+            assert "config" in cmd
+            assert "get" in cmd
+            # When no key is supplied, the positional should be absent.
+            assert "some.key" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_config_get_with_key(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout='"value"', stderr="")
+            await run_mcp.config_get(key="some.key")
+            cmd = mock.call_args[0][0]
+            assert "config" in cmd
+            assert "get" in cmd
+            assert "some.key" in cmd
+
+
+class TestStorageReadOnlyTools:
+    """Argv translation for the read-only storage tools."""
+
+    @pytest.mark.asyncio
+    async def test_files_get(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="contents", stderr="")
+            await run_mcp.files_get(path="/some/file", region="us-east-1")
+            cmd = mock.call_args[0][0]
+            assert "files" in cmd
+            assert "get" in cmd
+            assert "/some/file" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+
+    @pytest.mark.asyncio
+    async def test_files_access_points_no_args(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+            await run_mcp.files_access_points()
+            cmd = mock.call_args[0][0]
+            assert "files" in cmd
+            assert "access-points" in cmd
+            assert "-r" not in cmd
+
+    @pytest.mark.asyncio
+    async def test_files_access_points_with_region(self):
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+            await run_mcp.files_access_points(region="us-east-1")
+            cmd = mock.call_args[0][0]
+            assert "files" in cmd
+            assert "access-points" in cmd
+            assert cmd[cmd.index("-r") : cmd.index("-r") + 2] == ["-r", "us-east-1"]
+
+
+# =============================================================================
+# Audit-decorator coverage on a representative async tool: success + error.
+# These guard that the audit_logged wrapper still emits structured entries
+# for the new async tools, both on the happy path and when the underlying
+# CLI boundary raises.
+# =============================================================================
+
+
+class TestQueueToolsAuditCoverage:
+    """End-to-end audit log coverage on an async read-only tool."""
+
+    @pytest.mark.asyncio
+    async def test_queue_list_success_audit_entry(self, caplog):
+        with (
+            caplog.at_level(logging.INFO, logger="gco.mcp.audit"),
+            patch("cli_runner.subprocess.run") as mock,
+        ):
+            mock.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+            await run_mcp.queue_list()
+
+        records = [r for r in caplog.records if r.name == "gco.mcp.audit"]
+        invocations = [
+            json.loads(r.message)
+            for r in records
+            if json.loads(r.message).get("event") == "mcp.tool.invocation"
+        ]
+        assert any(e["tool"] == "queue_list" and e["status"] == "success" for e in invocations)
+
+    @pytest.mark.asyncio
+    async def test_queue_list_error_audit_entry(self, caplog):
+        with (
+            caplog.at_level(logging.INFO, logger="gco.mcp.audit"),
+            patch("cli_runner._run_cli", side_effect=RuntimeError("boom")),
+            pytest.raises(RuntimeError),
+        ):
+            await run_mcp.queue_list()
+
+        records = [r for r in caplog.records if r.name == "gco.mcp.audit"]
+        invocations = [
+            json.loads(r.message)
+            for r in records
+            if json.loads(r.message).get("event") == "mcp.tool.invocation"
+        ]
+        error_entries = [
+            e for e in invocations if e["tool"] == "queue_list" and e["status"] == "error"
+        ]
+        assert error_entries
+        assert "boom" in error_entries[-1]["error"]

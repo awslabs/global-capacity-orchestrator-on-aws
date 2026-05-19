@@ -1360,7 +1360,9 @@ class TestHelmChartConsistency:
             if isinstance(d, dict):
                 tag = d.get("tag", "")
                 repo = d.get("repository", "")
-                if tag and repo and "/" in repo and not re.match(r"^v?\d+\.\d+(\.\d+)?", str(tag)):
+                # re.search rather than re.match: Python 3.15 soft-deprecates re.match;
+                # the explicit ^ anchor in the pattern means re.search behaves identically here.
+                if tag and repo and "/" in repo and not re.search(r"^v?\d+\.\d+(\.\d+)?", str(tag)):
                     bad_tags.append(f"{path}: {repo}:{tag}")
                 for k, v in d.items():
                     if isinstance(v, (dict, list)):

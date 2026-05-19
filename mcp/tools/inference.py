@@ -1,14 +1,34 @@
 """Inference endpoint management MCP tools."""
 
+import asyncio
+import contextlib
 import json
 from typing import Any
 
 import cli_runner
 from audit import audit_logged
+from feature_flags import FLAG_DESTRUCTIVE_OPERATIONS, is_enabled
 from server import mcp
 
 
-@mcp.tool()
+async def _ctx_warning(message: str) -> None:
+    """Emit ``ctx.warning(...)`` from inside a tool body, no-op when no Context.
+
+    The destructive ``delete_inference`` tool runs short — we don't need the
+    full long-task progress stack, just an audited warning back to the
+    operator (and the audit log via the middleware spy).
+    """
+    try:
+        from fastmcp.server.dependencies import get_context
+
+        ctx = get_context()
+    except Exception:
+        return
+    with contextlib.suppress(Exception):
+        await ctx.warning(message)
+
+
+@mcp.tool(tags={"low-risk", "inference"})
 @audit_logged
 def deploy_inference(
     name: str,
@@ -50,7 +70,7 @@ def deploy_inference(
     return cli_runner._run_cli(*args)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "inference"})
 @audit_logged
 def list_inference_endpoints(state: str | None = None, region: str | None = None) -> str:
     """List all inference endpoints.
@@ -67,7 +87,7 @@ def list_inference_endpoints(state: str | None = None, region: str | None = None
     return cli_runner._run_cli(*args)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "inference"})
 @audit_logged
 def inference_status(name: str) -> str:
     """Get detailed status of an inference endpoint including per-region breakdown.
@@ -78,7 +98,7 @@ def inference_status(name: str) -> str:
     return cli_runner._run_cli("inference", "status", name)
 
 
-@mcp.tool()
+@mcp.tool(tags={"low-risk", "inference"})
 @audit_logged
 def scale_inference(name: str, replicas: int) -> str:
     """Scale an inference endpoint.
@@ -90,7 +110,7 @@ def scale_inference(name: str, replicas: int) -> str:
     return cli_runner._run_cli("inference", "scale", name, "--replicas", str(replicas))
 
 
-@mcp.tool()
+@mcp.tool(tags={"low-risk", "inference"})
 @audit_logged
 def update_inference_image(name: str, image: str) -> str:
     """Rolling update of an inference endpoint's container image.
@@ -102,7 +122,7 @@ def update_inference_image(name: str, image: str) -> str:
     return cli_runner._run_cli("inference", "update-image", name, "-i", image)
 
 
-@mcp.tool()
+@mcp.tool(tags={"low-risk", "inference"})
 @audit_logged
 def stop_inference(name: str) -> str:
     """Stop an inference endpoint (scales to zero, keeps config).
@@ -113,7 +133,7 @@ def stop_inference(name: str) -> str:
     return cli_runner._run_cli("inference", "stop", name, "-y")
 
 
-@mcp.tool()
+@mcp.tool(tags={"low-risk", "inference"})
 @audit_logged
 def start_inference(name: str) -> str:
     """Start a stopped inference endpoint.
@@ -124,18 +144,24 @@ def start_inference(name: str) -> str:
     return cli_runner._run_cli("inference", "start", name)
 
 
-@mcp.tool()
-@audit_logged
-def delete_inference(name: str) -> str:
-    """Delete an inference endpoint.
+if is_enabled(FLAG_DESTRUCTIVE_OPERATIONS):
 
-    Args:
-        name: Endpoint name.
-    """
-    return cli_runner._run_cli("inference", "delete", name, "-y")
+    @mcp.tool(tags={"destructive", "inference"})
+    @audit_logged
+    async def delete_inference(name: str) -> str:
+        """[gated by GCO_ENABLE_DESTRUCTIVE_OPERATIONS] destructive.
+
+        Delete an inference endpoint. Cannot be undone — the endpoint, its
+        DynamoDB record, and the underlying Kubernetes resources are removed.
+
+        Args:
+            name: Endpoint name.
+        """
+        await _ctx_warning(f"Deleting inference endpoint {name!r} — this cannot be undone.")
+        return await asyncio.to_thread(cli_runner._run_cli, "inference", "delete", name, "-y")
 
 
-@mcp.tool()
+@mcp.tool(tags={"low-risk", "inference"})
 @audit_logged
 def canary_deploy(name: str, image: str, weight: int = 10) -> str:
     """Start a canary deployment (A/B test a new image version).
@@ -148,7 +174,7 @@ def canary_deploy(name: str, image: str, weight: int = 10) -> str:
     return cli_runner._run_cli("inference", "canary", name, "-i", image, "--weight", str(weight))
 
 
-@mcp.tool()
+@mcp.tool(tags={"low-risk", "inference"})
 @audit_logged
 def promote_canary(name: str) -> str:
     """Promote canary to primary (100% traffic to new version).
@@ -159,7 +185,7 @@ def promote_canary(name: str) -> str:
     return cli_runner._run_cli("inference", "promote", name, "-y")
 
 
-@mcp.tool()
+@mcp.tool(tags={"low-risk", "inference"})
 @audit_logged
 def rollback_canary(name: str) -> str:
     """Rollback canary (remove canary, 100% traffic to primary).
@@ -170,7 +196,7 @@ def rollback_canary(name: str) -> str:
     return cli_runner._run_cli("inference", "rollback", name, "-y")
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "inference"})
 @audit_logged
 def invoke_inference(
     name: str,
@@ -207,7 +233,7 @@ def invoke_inference(
     return cli_runner._run_cli(*args)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "inference"})
 @audit_logged
 def chat_inference(
     name: str,
@@ -245,7 +271,7 @@ def chat_inference(
     return cli_runner._run_cli(*args)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "inference"})
 @audit_logged
 def inference_health(name: str, region: str | None = None) -> str:
     """Check if an inference endpoint is healthy and ready to serve requests.
@@ -263,7 +289,7 @@ def inference_health(name: str, region: str | None = None) -> str:
     return cli_runner._run_cli(*args)
 
 
-@mcp.tool()
+@mcp.tool(tags={"safe", "inference"})
 @audit_logged
 def list_endpoint_models(name: str, region: str | None = None) -> str:
     """List models loaded on an inference endpoint.

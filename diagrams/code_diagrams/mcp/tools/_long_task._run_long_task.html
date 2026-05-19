@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>MCP long-task runner (drain, progress, cancel + SIGTERM/SIGKILL)</title>
+        <style type="text/css">
+          .end-element { fill : #FFCCFF; }
+        </style>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.3.0/raphael.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/flowchart/1.17.1/flowchart.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.1/js/bootstrap.bundle.min.js"></script>
+        <!-- <script src="../release/flowchart.min.js"></script> -->
+        <script>
+
+            window.onload = function () {
+                var btn = document.getElementById("run"),
+                    cd = document.getElementById("code"),
+                    chart;
+                    
+                (btn.onclick = function () {
+                    var code = cd.value;
+
+                    if (chart) {
+                      chart.clean();
+                    }
+
+                    chart = flowchart.parse(code);
+                    chart.drawSVG('canvas', {
+                      'x': 0,
+                      'y': 0,
+                      'line-width': 3,
+                      //'maxWidth': 15,//ensures the flowcharts fits within a certain width
+                      'line-length': 50,
+                      'text-margin': 10,
+                      'font-size': 14,
+                      'font': 'normal',
+                      'font-family': 'Helvetica',
+                      'font-weight': 'normal',
+                      'font-color': 'black',
+                      'line-color': 'black',
+                      'element-color': 'black',
+                      'fill': 'white',
+                      'yes-text': 'yes',
+                      'no-text': 'no',
+                      'arrow-end': 'block',
+                      'scale': 1,
+                      'symbols': {
+                        'start': {
+                          'font-size': 14,
+                          'font-color': 'yellow',
+                          'element-color': 'blue',
+                          'fill': 'green',
+                          'class': 'start-element'
+                        },
+                        'inputoutput': {
+                          'font-color': 'black',
+                          'element-color': 'black',
+                          'fill': 'bisque'
+                        },
+                        'operation': {
+                          'font-color': 'black',
+                          'element-color': 'black',
+                          'fill': 'linen'
+                        },
+                        'subroutine': {
+                          'font-color': 'black',
+                          'element-color': 'blue',
+                          'fill': 'lightgreen'
+                        },
+                        'condition': {
+                          'font-color': 'red',
+                          'element-color': 'black',
+                          'fill': 'yellow'
+                        },
+                        'end':{
+                          'font-size': 20,
+                          'class': 'end-element'
+                        }
+                      },
+                      'flowstate' : {
+                        //'past' : { 'fill' : '#CCCCCC', 'font-size' : 12},
+                        //'current' : {'fill' : 'yellow', 'font-color' : 'red', 'font-weight' : 'bold'},
+                        //'future' : { 'fill' : '#FFFF99'},
+                        'request' : { 'fill' : 'blue'},
+                        'invalid': {'fill' : '#444444'},
+                        'approved' : { 'fill' : '#58C4A3', 'font-size' : 12, 'yes-text' : 'APPROVED', 'no-text' : 'n/a' },
+                        'rejected' : { 'fill' : '#C45879', 'font-size' : 12, 'yes-text' : 'n/a', 'no-text' : 'REJECTED' }
+                      }
+                    });
+                    //create base64 encoding of SVG to generate download link for title(without html or htm).SVG
+                    var currentCanvasDIV = document.getElementById('canvas')
+                    var currentDrawSVG = currentCanvasDIV.innerHTML.replaceAll('ë','e');
+
+                    const OUTsvgBASE64 = btoa(currentDrawSVG)
+                    doctitle = document.title.replace('.html','');
+                    doctitle = doctitle.replace('.htm','');
+
+
+                    var currentCanvasDIV = document.getElementById('canvas')
+                    var currentDrawSVG = currentCanvasDIV.innerHTML.replaceAll('ë','e');
+                    svgSource = currentDrawSVG
+                    svgXML = currentDrawSVG;
+                    // Use SVG Height and Width from the SVG XML to set canvas size
+                    svgXMLsubstringHeight = svgXML.substring(svgXML.indexOf('height='), svgXML.indexOf('version='));
+                    svgXMLsubstringWidth = svgXML.substring(svgXML.indexOf('width='), svgXML.indexOf('xmlns='));
+                    HeightValue = svgXMLsubstringHeight.substring(svgXMLsubstringHeight.indexOf('"')+1,svgXMLsubstringHeight.lastIndexOf('"'));
+                    WidthValue = svgXMLsubstringWidth.substring(svgXMLsubstringWidth.indexOf('"')+1,svgXMLsubstringWidth.lastIndexOf('"'));
+                    HeightValueInt = Math.round(HeightValue)
+                    WidthValueInt = Math.round(WidthValue)
+                    // setup input for base64SvgToBase64Png
+                    let svgSrc = "data:image/svg+xml;base64,"+OUTsvgBASE64;
+                    var pngBase
+                    imageUtil.base64SvgToBase64Png(svgSrc, WidthValueInt, HeightValueInt).then(pngSrc => {
+                    pngBase = pngSrc
+                    // output download link for base64 PNG converted on download from base64
+                    var pngOutHtml = `<a href="${pngBase}" download="${doctitle}.png">PNG - Click here to download current rendered flowchart as ${doctitle}.png</a>`
+                    document.getElementById("pngbase64").innerHTML=pngOutHtml;
+                    });    
+                    // output download link for base64 SVG converted on download from base64
+                    var svgOutHtml = `<a href="data:image/svg+xml;base64,${OUTsvgBASE64}" download=${doctitle}.svg>SVG - Click here to download current rendered flowchart as ${doctitle}.svg</a> `
+                        document.getElementById("svgbase64").innerHTML=svgOutHtml;
+                    })();
+
+                            };
+                 
+
+// derived from https://stackoverflow.com/a/64800570
+// we need to use web browser canvas to generate a image. In this case png
+let imageUtil = {};
+/**
+ * converts a base64 encoded data url SVG image to a PNG image
+ * @param originalBase64 data url of svg image
+ * @param width target width in pixel of PNG image
+ * @param secondTry used internally to prevent endless recursion
+ * @return {Promise<unknown>} resolves to png data url of the image
+ */
+imageUtil.base64SvgToBase64Png = function (originalBase64, width, height, secondTry) {
+    return new Promise(resolve => {
+        let img = document.createElement('img');
+        img.onload = function () {
+            if (!secondTry && (img.naturalWidth === 0 || img.naturalHeight === 0)) {
+                let svgDoc = base64ToSvgDocument(originalBase64);
+                let fixedDoc = fixSvgDocumentFF(svgDoc);
+                return imageUtil.base64SvgToBase64Png(svgDocumentToBase64(fixedDoc), width, height, true).then(result => {
+                    resolve(result);
+                });
+            }
+            //document.body.appendChild(img);
+            let canvas2 = document.createElement("canvas");
+            //document.body.removeChild(img);
+            canvas2.width = width;
+            canvas2.height = height;
+            let ctx = canvas2.getContext("2d");
+            ctx.drawImage(img, 0, 0, canvas2.width, canvas2.height);
+            try {
+                let data = canvas2.toDataURL('image/png');
+                resolve(data);
+            } catch (e) {
+                resolve(null);
+            }
+        };
+        img.src = originalBase64;
+    });
+}
+
+//needed because Firefox doesn't correctly handle SVG with size = 0, see https://bugzilla.mozilla.org/show_bug.cgi?id=700533
+function fixSvgDocumentFF(svgDocument) {
+    try {
+        let widthInt = parseInt(svgDocument.documentElement.width.baseVal.value) || 500;
+        let heightInt = parseInt(svgDocument.documentElement.height.baseVal.value) || 500;
+        svgDocument.documentElement.width.baseVal.newValueSpecifiedUnits(SVGLength.SVG_LENGTHTYPE_PX, widthInt);
+        svgDocument.documentElement.height.baseVal.newValueSpecifiedUnits(SVGLength.SVG_LENGTHTYPE_PX, heightInt);
+        return svgDocument;
+    } catch (e) {
+        return svgDocument;
+    }
+}
+
+function svgDocumentToBase64(svgDocument) {
+    try {
+        let base64EncodedSVG = btoa(new XMLSerializer().serializeToString(svgDocument));
+        return 'data:image/svg+xml;base64,' + base64EncodedSVG;
+    } catch (e) {
+        return null;
+    }
+}
+
+function base64ToSvgDocument(base64) {
+    let svg = atob(base64.substring(base64.indexOf('base64,') + 7));
+    svg = svg.substring(svg.indexOf('<svg'));
+    let parser = new DOMParser();
+    return parser.parseFromString(svg, "image/svg+xml");
+} 
+        </script>
+
+        <script>
+            function HelpText() {
+              var x = document.getElementById("HelpTextBlock");
+              if (x.style.display === "none") {
+                x.style.display = "block";
+              } else {
+                x.style.display = "none";
+              }
+            }
+        </script>
+    </head>
+    <body>
+        <div><textarea id="code" style="width: 100%;" rows="11">op2362=>operation: 'Run a long-running subprocess, streaming progress through FastMCP.\n\n    Spawns ``argv`` via :func:`asyncio.create_subprocess_exec`, drains stdout\n    and stderr concurrently, forwards every line as a progress message\n    (truncated to 200 chars), increments the progress counter on every line\n    matching ``(CREATE|UPDATE|DELETE)_COMPLETE``, and surfaces stderr lines\n    through ``ctx.info`` so MCP clients see them.\n\n    On cancellation, sends ``SIGTERM``, waits up to ``_CANCEL_GRACE_SECONDS``\n    for graceful shutdown, sends ``SIGKILL`` on timeout, cancels the drain\n    tasks, and re-raises ``CancelledError``. When ``is_stack_op`` is True, the\n    re-raised exception\'s message includes a CloudFormation partial-state\n    disclaimer so operators know AWS state may be inconsistent.\n\n    Returns a JSON string:\n      * ``{"status": "ok", "completes": <count>}`` on a clean zero exit code.\n      * ``{"error": "exit_code=<rc>", "completes": <count>}`` on non-zero exit.\n      * ``{"error": "path_traversal_detected", "argv_index": <i>, "value": <v>}``\n        when any non-flag argv element contains a ``..`` path segment; in that\n        case no subprocess is spawned.\n    '
+op2364=>operation: hit = _argv_has_traversal(argv)
+cond2367=>condition: if hit is not None
+op2371=>operation: idx, val = hit
+io2376=>inputoutput: output: json.dumps({'error': 'path_traversal_detected', 'argv_index': idx, 'value': val})
+e2374=>end: end function return
+op2382=>operation: proc = await asyncio.create_subprocess_exec(*argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+op2384=>operation: completes = 0
+st2387=>start: start _drain
+io2389=>inputoutput: input: stream, label
+op2392=>operation: nonlocal completes
+op2394=>operation: assert stream is not None
+cond2397=>condition: async for raw in stream
+op2401=>operation: line = raw.decode('utf-8', errors='replace').rstrip()
+cond2404=>operation: continue if  not line
+op2414=>operation: await progress.set_message(line[:200])
+cond2417=>condition: if _CFN_COMPLETE_RE.search(line)
+op2421=>operation: completes += 1
+op2423=>operation: await progress.increment()
+cond2429=>operation: await ctx.info(f'stderr: {line[:200]}') if  label == 'stderr'
+e2441=>end: end _drain
+op2444=>operation: drains = [asyncio.create_task(_drain(proc.stdout, 'stdout')), asyncio.create_task(_drain(proc.stderr, 'stderr'))]
+op2447=>operation: rc = await proc.wait()
+await asyncio.gather(*drains, return_exceptions=True)
+cond2446=>condition: exception raised?
+cond2449=>condition: except asyncio.CancelledError
+cond2454=>condition: if proc.returncode is None
+sub2458=>subroutine: proc.send_signal(signal.SIGTERM)
+op2463=>operation: await asyncio.wait_for(proc.wait(), timeout=_CANCEL_GRACE_SECONDS)
+cond2460=>condition: exception raised?
+cond2465=>condition: except TimeoutError
+cond2470=>operation: proc.send_signal(signal.SIGKILL) if  proc.returncode is None
+op2480=>operation: await proc.wait()
+cond2489=>operation: d.cancel() while  d in drains
+cond2499=>operation: raise asyncio.CancelledError(_PARTIAL_STATE_DISCLAIMER) from None if  is_stack_op
+sub2509=>subroutine: raise
+cond2515=>condition: if rc != 0
+io2522=>inputoutput: output: json.dumps({'error': f'exit_code={rc}', 'completes': completes})
+e2520=>end: end function return
+io2531=>inputoutput: output: json.dumps({'status': 'ok', 'completes': completes})
+e2529=>end: end function return
+
+op2362->op2364
+op2364->cond2367
+cond2367(yes)->op2371
+op2371->io2376
+io2376->e2374
+cond2367(no)->op2382
+op2382->op2384
+op2384->st2387
+st2387->io2389
+io2389->op2392
+op2392->op2394
+op2394->cond2397
+cond2397(yes)->op2401
+op2401->cond2404
+cond2404->op2414
+op2414->cond2417
+cond2417(yes)->op2421
+op2421->op2423
+op2423->cond2429
+cond2429->cond2397
+cond2417(no)->cond2429
+cond2397(no)->e2441
+e2441->op2444
+op2444->op2447
+op2447->cond2446
+cond2446(yes)->cond2449
+cond2449(yes)->cond2454
+cond2454(yes)->sub2458
+sub2458->op2463
+op2463->cond2460
+cond2460(yes)->cond2465
+cond2465(yes)->cond2470
+cond2470->op2480
+op2480->cond2489
+cond2489->cond2499
+cond2499->sub2509
+cond2465(no)->cond2489
+cond2460(no)->cond2489
+cond2454(no)->cond2489
+cond2449(no)->cond2515
+cond2515(yes)->io2522
+io2522->e2520
+cond2515(no)->io2531
+io2531->e2529
+cond2446(no)->cond2515
+</textarea></div>
+        <div><button id="run" type="button">Run</button> <button onclick="HelpText()">Format Help</button></div>
+        <div id="HelpTextBlock" style="display:none"><br/>Conditions can also be redirected like cond(yes, bottom) or cond(yes, right)
+... and the other symbols too... like sub1(right)<br/>
+You can also tweak the <b>diagram.drawSVG('diagram', {});</b> script in this file for more changes<br/>
+This is based on <a href="https://github.com/adrai/flowchart.js">flowchart.js on github</a> and <a href="http://flowchart.js.org">http://flowchart.js.org</a> more documentation can be found over there.
+</div><br/><div id="svgbase64"></div>
+        <div id="pngbase64"></div>
+
+        <div id="canvas"></div>
+    </body>
+</html>

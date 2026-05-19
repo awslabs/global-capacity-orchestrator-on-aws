@@ -503,6 +503,15 @@ class InferenceMonitor:
     def _create_deployment(self, name: str, namespace: str, spec: dict[str, Any]) -> None:
         """Create a Kubernetes Deployment for an inference endpoint."""
         replicas = spec.get("replicas", 1)
+        # TODO: when materialising pod specs, pick the per-region URI
+        # from ``spec["region_image_uris"]`` (set by
+        # ``cli.inference.InferenceManager.deploy`` via
+        # ``cli.images._rewrite_image_uri_for_region``) so each region
+        # pulls from its local ECR replica. Out of scope for the
+        # deploy-side change; tracked separately. Until wired, the flat
+        # ``spec["image"]`` URI is used unchanged, which still works
+        # against the global registry but adds cross-region pull
+        # latency.
         image = spec["image"]
         port = spec.get("port", 8000)
         gpu_count = spec.get("gpu_count", 1)

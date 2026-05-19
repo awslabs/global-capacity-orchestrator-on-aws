@@ -81,7 +81,7 @@ The container has the `gco` CLI, AWS CLI, kubectl, CDK, and Node.js pre-installe
    pipx install -e .
    ```
 
-3. Confirm Python ≥ 3.10 (`python3 --version`) — the codebase uses 3.10+ syntax.
+3. Confirm Python ≥ 3.14 (`python3 --version`) — the codebase uses 3.14+ syntax.
 
 Don't loosen the pins in `pyproject.toml` or `requirements-lock.txt` to make local install work — CI's lockfile-staleness check will reject the change.
 

@@ -33,7 +33,7 @@ This stack is **standalone** — it does not depend on or affect the main GCO in
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.14+
 - AWS CDK CLI: `npm install -g aws-cdk`
 - AWS credentials configured for the target account
 - CDK bootstrapped in the target region: `cdk bootstrap aws://ACCOUNT_ID/REGION`

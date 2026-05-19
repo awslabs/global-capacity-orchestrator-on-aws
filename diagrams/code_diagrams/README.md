@@ -75,6 +75,10 @@ has multiple charted entry points.
   - gco stacks destroy-all — orchestrated multi-stack destroy &mdash; `cli/stacks.py::StackManager.destroy_orchestrated` &mdash; [HTML](./cli/stacks.StackManager_destroy_orchestrated.html) · [PNG](./cli/stacks.StackManager_destroy_orchestrated.png)
   - gco inference deploy — multi-region endpoint deploy &mdash; `cli/inference.py::InferenceManager.deploy` &mdash; [HTML](./cli/inference.InferenceManager_deploy.html) · [PNG](./cli/inference.InferenceManager_deploy.png)
   - gco inference canary — weighted canary rollout &mdash; `cli/inference.py::InferenceManager.canary_deploy` &mdash; [HTML](./cli/inference.InferenceManager_canary_deploy.html) · [PNG](./cli/inference.InferenceManager_canary_deploy.png)
+  - Container runtime detection (docker > finch > podman) &mdash; `cli/_container_runtime.py::detect_container_runtime` &mdash; [HTML](./cli/_container_runtime.detect_container_runtime.html) · [PNG](./cli/_container_runtime.detect_container_runtime.png)
+  - gco images build — context validation, login, build, push &mdash; `cli/images.py::ImageManager.build` &mdash; [HTML](./cli/images.ImageManager_build.html) · [PNG](./cli/images.ImageManager_build.png)
+  - gco images push — auth + push existing local image &mdash; `cli/images.py::ImageManager.push` &mdash; [HTML](./cli/images.ImageManager_push.html) · [PNG](./cli/images.ImageManager_push.png)
+  - gco images cleanup — bulk tag delete with filter branches &mdash; `cli/images.py::ImageManager.cleanup` &mdash; [HTML](./cli/images.ImageManager_cleanup.html) · [PNG](./cli/images.ImageManager_cleanup.png)
 
 ### `gco/`
 
@@ -114,6 +118,9 @@ has multiple charted entry points.
 - **`lambda/helm-installer/`**
   - Helm Installer Lambda (CFN custom resource) &mdash; `lambda/helm-installer/handler.py::lambda_handler` &mdash; [HTML](./lambda/helm-installer/handler.lambda_handler.html) · [PNG](./lambda/helm-installer/handler.lambda_handler.png)
 
+- **`lambda/image-lookup/`**
+  - Image-lookup-or-create custom resource Lambda &mdash; `lambda/image-lookup/handler.py::lambda_handler` &mdash; [HTML](./lambda/image-lookup/handler.lambda_handler.html) · [PNG](./lambda/image-lookup/handler.lambda_handler.png)
+
 - **`lambda/kubectl-applier-simple/`**
   - Kubectl Applier Lambda (CFN custom resource) &mdash; `lambda/kubectl-applier-simple/handler.py::lambda_handler` &mdash; [HTML](./lambda/kubectl-applier-simple/handler.lambda_handler.html) · [PNG](./lambda/kubectl-applier-simple/handler.lambda_handler.png)
 
@@ -122,3 +129,11 @@ has multiple charted entry points.
 
 - **`lambda/secret-rotation/`**
   - Secrets Manager Rotation Lambda &mdash; `lambda/secret-rotation/handler.py::lambda_handler` &mdash; [HTML](./lambda/secret-rotation/handler.lambda_handler.html) · [PNG](./lambda/secret-rotation/handler.lambda_handler.png)
+
+### `mcp/`
+
+- **`mcp/`**
+  - MCP audit_logged decorator (sync + async dispatch, Context capture) &mdash; `mcp/audit.py::audit_logged` &mdash; [HTML](./mcp/audit.audit_logged.html) · [PNG](./mcp/audit.audit_logged.png)
+
+- **`mcp/tools/`**
+  - MCP long-task runner (drain, progress, cancel + SIGTERM/SIGKILL) &mdash; `mcp/tools/_long_task.py::_run_long_task` &mdash; [HTML](./mcp/tools/_long_task._run_long_task.html) · [PNG](./mcp/tools/_long_task._run_long_task.png)

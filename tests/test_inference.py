@@ -1103,3 +1103,56 @@ class TestInferenceManager:
         )
         call_kwargs = mock_store_instance.create_endpoint.call_args.kwargs
         assert "node_selector" not in call_kwargs["spec"]
+
+    # -- per-region image URI rewrite --
+
+    def test_inference_deploy_rewrites_ecr_uri_to_local_region(self, manager, mock_store_instance):
+        """ECR URIs are rewritten per-target-region into a region_image_uris map."""
+        mock_store_instance.create_endpoint.return_value = {"endpoint_name": "ep1"}
+        src = "123456789012.dkr.ecr.us-east-1.amazonaws.com/gco/foo:v1"
+        manager.deploy(
+            endpoint_name="ep1",
+            image=src,
+            target_regions=["us-west-2", "eu-west-1"],
+        )
+        call_kwargs = mock_store_instance.create_endpoint.call_args.kwargs
+        spec = call_kwargs["spec"]
+        # The flat ``image`` field is preserved as-is (the source URI).
+        assert spec["image"] == src
+        # And the per-region map gets each region's local replica URI.
+        region_map = spec["region_image_uris"]
+        assert region_map["us-west-2"] == "123456789012.dkr.ecr.us-west-2.amazonaws.com/gco/foo:v1"
+        assert region_map["eu-west-1"] == "123456789012.dkr.ecr.eu-west-1.amazonaws.com/gco/foo:v1"
+
+    def test_inference_deploy_no_rewrite_flag_keeps_original_uri(
+        self, manager, mock_store_instance
+    ):
+        """``rewrite_image=False`` writes the URI verbatim to every region."""
+        mock_store_instance.create_endpoint.return_value = {"endpoint_name": "ep1"}
+        src = "123456789012.dkr.ecr.us-east-1.amazonaws.com/gco/foo:v1"
+        manager.deploy(
+            endpoint_name="ep1",
+            image=src,
+            target_regions=["us-west-2"],
+            rewrite_image=False,
+        )
+        call_kwargs = mock_store_instance.create_endpoint.call_args.kwargs
+        spec = call_kwargs["spec"]
+        assert spec["image"] == src
+        # No per-region map when rewrite is disabled.
+        assert "region_image_uris" not in spec
+
+    def test_inference_deploy_no_rewrite_for_non_ecr_uri(self, manager, mock_store_instance):
+        """Non-ECR refs (Docker Hub, GHCR, etc.) never produce a region map."""
+        mock_store_instance.create_endpoint.return_value = {"endpoint_name": "ep1"}
+        manager.deploy(
+            endpoint_name="ep1",
+            image="vllm/vllm-openai:v0.8.0",
+            target_regions=["us-west-2", "eu-west-1"],
+        )
+        call_kwargs = mock_store_instance.create_endpoint.call_args.kwargs
+        spec = call_kwargs["spec"]
+        assert spec["image"] == "vllm/vllm-openai:v0.8.0"
+        # The rewrite helper is identity for non-ECR refs, so the map
+        # would be all-equal-to-image and the deploy() helper drops it.
+        assert "region_image_uris" not in spec
