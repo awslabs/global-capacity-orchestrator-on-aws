@@ -31,6 +31,16 @@ def _search(query: str | None, topic: str | None) -> list[tuple[str, int]]:
             if score == 0:
                 continue
         if q:
+            # Keyword matches are the strongest free-text signal — every
+            # entry's ``keywords`` list is curated to surface terms a
+            # user is likely to search for (e.g. "vllm", "odcr",
+            # "global accelerator") even when those phrases don't appear
+            # verbatim in the summary.
+            keywords = meta.get("keywords", [])
+            if isinstance(keywords, list):
+                for kw in keywords:
+                    if q in str(kw).lower():
+                        score += 4
             summary = str(meta.get("summary", "")).lower()
             if q in summary:
                 score += 1
@@ -51,6 +61,7 @@ def _format(name: str) -> dict[str, object]:
         "name": name,
         "summary": meta.get("summary", ""),
         "topics": meta.get("topics", []),
+        "keywords": meta.get("keywords", []),
         "related": meta.get("related", []),
     }
 
@@ -65,15 +76,16 @@ async def find_docs(
     """`find_docs` — search the docs/ catalog by topic and free-text query.
 
     Args:
-        query: Free-text query matched against the doc's summary and name
-            (case-insensitive substring match).
+        query: Free-text query matched against the doc's keywords, summary,
+            and name (case-insensitive substring match).
         topic: Filter by topic substring (case-insensitive). Acts as a hard
             filter — entries without a topic match are dropped.
         limit: Maximum results (default 10). ``limit <= 0`` returns ``[]``.
 
-    Scoring: topic substring matches contribute 3 pts each; summary/name
-    substring matches contribute 1 pt each. Returns the top ``limit``
-    matches sorted by score descending then name ascending.
+    Scoring: topic substring matches contribute 3 pts each; keyword
+    substring matches contribute 4 pts each; summary/name substring
+    matches contribute 1 pt each. Returns the top ``limit`` matches
+    sorted by score descending then name ascending.
     """
     if limit <= 0:
         return []

@@ -84,7 +84,7 @@ def test_topic_match_property(data: st.DataObject) -> None:
     assert isinstance(topics, list)
     topic = data.draw(st.sampled_from(topics))
 
-    results = asyncio.run(find_docs(topic=str(topic)))
+    results = asyncio.run(find_docs(topic=str(topic), limit=len(DOC_METADATA)))
     result_names = [r["name"] for r in results]
     assert name in result_names, f"querying topic {topic!r} did not return {name!r}"
 
