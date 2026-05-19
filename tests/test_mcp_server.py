@@ -141,12 +141,13 @@ class TestToolRegistration:
 
     def test_tool_count(self):
         tools = asyncio.run(run_mcp.mcp._list_tools())
-        # 90 base tools after delete_job and delete_inference moved under
+        # 92 base tools after delete_job and delete_inference moved under
         # GCO_ENABLE_DESTRUCTIVE_OPERATIONS. The breakdown:
         #   * the original 81 (read-only + low-risk + discovery) minus 2
         #     (delete_job + delete_inference) = 79
         #   * 11 unconditional image-registry tools (read-only + administrative)
-        # = 90 total at default registration.
+        #   * 2 unconditional task observability tools (task_status, task_tail)
+        # = 92 total at default registration.
         # reserve_capacity adds 1 when GCO_ENABLE_CAPACITY_PURCHASE=true.
         # Image-publish-gated tools (images_build, images_push) add 2 when
         # GCO_ENABLE_IMAGE_PUBLISH=true. Destructive-gated tools add 12 when
@@ -160,7 +161,7 @@ class TestToolRegistration:
         # bootstrap_cdk) add 3 when GCO_ENABLE_INFRASTRUCTURE_DEPLOY=true.
         # Infrastructure-destroy gated tools (destroy_stack, destroy_all)
         # add 2 when GCO_ENABLE_INFRASTRUCTURE_DESTROY=true.
-        base_count = 90
+        base_count = 92
         tool_names = [t.name for t in tools]
         expected = base_count
         if "reserve_capacity" in tool_names:
@@ -310,6 +311,9 @@ class TestToolRegistration:
             "images_lifecycle_get",
             "images_lifecycle_set",
             "images_replication_sync",
+            # ── Long-running task observability (read-only) ──
+            "task_status",
+            "task_tail",
         }
         # reserve_capacity is conditionally registered via env var
         # and may also appear if a prior test reloaded the module

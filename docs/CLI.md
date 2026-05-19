@@ -2797,6 +2797,7 @@ gco tasks list [OPTIONS]
 ```
 
 **Options:**
+
 - `-n, --limit INTEGER` — Maximum tasks to show (default: 20)
 - `--json` — Emit raw JSON instead of a table
 
@@ -2829,6 +2830,7 @@ gco tasks tail TASK_ID [OPTIONS]
 ```
 
 **Options:**
+
 - `-n, --lines INTEGER` — Lines to show from the end of the log (default: 100)
 - `-f, --follow` — Stream new lines as they're written
 - `--interval FLOAT` — Polling interval in seconds when `--follow` is set (default: 1.0)
@@ -2850,6 +2852,7 @@ gco tasks prune [OPTIONS]
 ```
 
 **Options:**
+
 - `--keep INTEGER` — Number of most-recent tasks to keep (default: 50)
 
 ```bash
