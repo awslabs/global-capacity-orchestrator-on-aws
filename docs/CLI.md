@@ -12,12 +12,16 @@ Complete command-line interface documentation for GCO (Global Capacity Orchestra
   - [templates](#templates-commands)
   - [webhooks](#webhooks-commands)
   - [stacks](#stacks-commands)
+  - [dag](#dag-commands)
+  - [costs](#costs-commands)
   - [capacity](#capacity-commands)
   - [inference](#inference-commands)
   - [models](#models-commands)
+  - [images](#images-commands)
   - [files](#files-commands)
   - [nodepools](#nodepools-commands)
   - [analytics](#analytics-commands)
+  - [config-cmd](#config-cmd-commands)
 - [Configuration](#configuration)
 - [Environment Variables](#environment-variables)
 - [Examples](#examples)
@@ -268,6 +272,32 @@ gco jobs logs JOB_NAME [OPTIONS]
 gco jobs logs my-job --region us-east-1
 gco jobs logs my-job -r us-east-1 --tail 500
 gco jobs logs multi-container-job -r us-east-1 --container sidecar
+```
+
+#### `gco jobs pod-logs`
+
+Get logs from a specific pod of a job. Use this when a Job creates
+multiple pods (parallelism > 1) and you need logs from a particular
+replica. Use `gco jobs pods` first to list available pods.
+
+```bash
+gco jobs pod-logs JOB_NAME POD_NAME [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--region` | `-r` | Job region (required) |
+| `--namespace` | `-n` | Job namespace |
+| `--tail` | `-t` | Number of lines to show |
+| `--container` | `-c` | Container name (for multi-container pods) |
+
+**Example:**
+
+```bash
+gco jobs pod-logs training-job training-job-abc123 -r us-east-1
+gco jobs pod-logs multi-job multi-job-pod1 -r us-east-1 --container sidecar
 ```
 
 #### `gco jobs delete`
@@ -984,6 +1014,73 @@ gco stacks aurora enable --min-acu 2 --max-acu 32 --deletion-protection -y
 gco stacks aurora disable -y
 ```
 
+#### `gco stacks synth`
+
+Synthesize CloudFormation templates without deploying.
+
+```bash
+gco stacks synth [STACK_NAME] [OPTIONS]
+```
+
+**Arguments:**
+
+- `STACK_NAME` - Optional stack name; omit to synthesize all stacks
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--quiet` | `-q` | Suppress synthesis output |
+
+**Example:**
+
+```bash
+gco stacks synth                           # synthesize all
+gco stacks synth gco-us-east-1
+gco stacks synth -q                        # quiet mode
+```
+
+#### `gco stacks diff`
+
+Show differences between deployed and local stacks.
+
+```bash
+gco stacks diff [STACK_NAME]
+```
+
+**Arguments:**
+
+- `STACK_NAME` - Optional stack name; omit to diff all stacks
+
+**Example:**
+
+```bash
+gco stacks diff
+gco stacks diff gco-us-east-1
+```
+
+#### `gco stacks outputs`
+
+Get CloudFormation outputs from a deployed stack (e.g. API URLs, ARNs,
+secret references that the stack exposes).
+
+```bash
+gco stacks outputs STACK_NAME [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--region` | `-r` | AWS region (required) |
+
+**Example:**
+
+```bash
+gco stacks outputs gco-us-east-1 -r us-east-1
+gco stacks outputs gco-global -r us-east-2
+```
+
 ---
 
 ### DAG Commands
@@ -1391,6 +1488,74 @@ gco capacity reservation-check -i p4d.24xlarge -c 2 --block-duration 48
 
 # ODCRs only, no block offerings
 gco capacity reservation-check -i g5.48xlarge -r us-east-1 --no-blocks
+```
+
+#### `gco capacity reserve`
+
+Purchase a Capacity Block offering by ID. Use `gco capacity reservation-check`
+first to find available offerings, then pass the `cb-...` ID to this
+command. Always validate with `--dry-run` before committing — Capacity
+Block purchases incur charges.
+
+```bash
+gco capacity reserve [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--offering-id` | `-o` | Capacity Block offering ID (`cb-…`) (required) |
+| `--region` | `-r` | AWS region where the offering exists (required) |
+| `--dry-run` | | Validate the offering without purchasing |
+
+**Example:**
+
+```bash
+# Find offerings, validate, then purchase
+gco capacity reservation-check -i p4d.24xlarge -r us-east-1
+gco capacity reserve -o cb-0123456789abcdef0 -r us-east-1 --dry-run
+gco capacity reserve -o cb-0123456789abcdef0 -r us-east-1
+```
+
+#### `gco capacity instance-info`
+
+Print AWS-published metadata for an instance type — vCPUs, memory,
+GPU count, network performance, and supported architectures. Read-only
+and does not call the EC2 RunInstances API.
+
+```bash
+gco capacity instance-info INSTANCE_TYPE
+```
+
+**Example:**
+
+```bash
+gco capacity instance-info g5.xlarge
+gco capacity instance-info p5.48xlarge
+```
+
+#### `gco capacity spot-prices`
+
+Get spot price history for an instance type in a region.
+
+```bash
+gco capacity spot-prices [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--instance-type` | `-i` | EC2 instance type (required) |
+| `--region` | `-r` | AWS region (required) |
+| `--days` | `-d` | Days of history to retrieve |
+
+**Example:**
+
+```bash
+gco capacity spot-prices -i g5.xlarge -r us-east-1
+gco capacity spot-prices -i p4d.24xlarge -r us-west-2 -d 30
 ```
 
 ---
@@ -1832,6 +1997,316 @@ gco models uri llama3-8b
 
 ---
 
+### Images Commands
+
+Manage container images in the project ECR registry. The CLI talks to
+the global registry (the regional ECR replicas are populated by ECR
+replication automatically). Project repositories live under the
+`gco/` prefix; non-`gco/*` repositories cannot be touched through the
+CLI.
+
+See [Customization Guide](CUSTOMIZATION.md) for the full registry
+architecture and lifecycle policy options.
+
+#### `gco images init`
+
+Create a project repository with the default lifecycle policy applied
+(keep 20 tagged images, expire untagged after 7 days).
+
+```bash
+gco images init NAME [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--retain / --no-retain` | Apply `gco:retain=true` so the repo survives stack destroy |
+
+**Example:**
+
+```bash
+gco images init my-app
+gco images init prod-svc --retain
+```
+
+#### `gco images list`
+
+List every repository under the project's `gco/` prefix.
+
+```bash
+gco images list
+```
+
+#### `gco images tags`
+
+List every tag in a repository (one row per tag, plus an "untagged"
+row aggregating untagged images).
+
+```bash
+gco images tags NAME
+```
+
+**Example:**
+
+```bash
+gco images tags my-app
+```
+
+#### `gco images describe`
+
+Print the full ECR details for a single image tag — digest, push time,
+size, scan findings.
+
+```bash
+gco images describe NAME TAG
+```
+
+**Example:**
+
+```bash
+gco images describe my-app v1.2.3
+```
+
+#### `gco images uri`
+
+Print the registry URI for an image without making any AWS calls.
+Useful in shell scripts that need the resolved URI to plug into a
+manifest.
+
+```bash
+gco images uri NAME [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--tag` | `-t` | Image tag (default: `latest`) |
+
+**Example:**
+
+```bash
+gco images uri my-app -t v1.2.3
+# Output: 760425982254.dkr.ecr.us-east-2.amazonaws.com/gco/my-app:v1.2.3
+```
+
+#### `gco images build`
+
+Build a container image and push it to the project's ECR repo. Uses
+the local container runtime (Docker / Finch / Podman), authenticates
+to ECR via `aws ecr get-login-password`, then pushes the resulting
+image.
+
+```bash
+gco images build CONTEXT [OPTIONS]
+```
+
+**Arguments:**
+
+- `CONTEXT` - Build context directory (must contain a `Dockerfile`)
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--name` | `-n` | Image name (required) |
+| `--tag` | `-t` | Image tag (default: git SHA or `latest`) |
+| `--dockerfile` | `-f` | Path to Dockerfile within the context |
+| `--build-arg` | | Build arg `KEY=VALUE`, repeatable |
+| `--platform` | | Target platform (e.g. `linux/amd64`) |
+| `--retain / --no-retain` | | Apply `gco:retain=true` |
+
+**Example:**
+
+```bash
+gco images build ./my-app --name my-app --tag v1
+gco images build ./svc --name svc --build-arg VERSION=1.2.3 --platform linux/amd64
+```
+
+#### `gco images push`
+
+Push an already-built local image to the project's ECR repo. Use this
+when the image was built outside `gco images build` (CI runner,
+multi-stage local pipeline, etc.).
+
+```bash
+gco images push NAME [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--tag` | `-t` | Image tag (required) |
+| `--local-image` | | Existing local image reference (required) |
+| `--retain / --no-retain` | | Apply `gco:retain=true` |
+
+**Example:**
+
+```bash
+gco images push my-app -t v1 --local-image my-app:dev
+```
+
+#### `gco images delete-tag`
+
+Delete a single tag from a repository. Irreversible — the manifest is
+removed, and the underlying image becomes untagged (and eventually
+expired by the lifecycle policy).
+
+```bash
+gco images delete-tag NAME TAG --yes
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--yes` | `-y` | Required confirmation |
+
+**Example:**
+
+```bash
+gco images delete-tag my-app v0.1 -y
+```
+
+#### `gco images delete-repo`
+
+Delete a whole repository. Irreversible. Refuses to delete a non-empty
+repository unless `--force` is passed.
+
+```bash
+gco images delete-repo NAME --yes [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--yes / -y` | Required confirmation |
+| `--force / --no-force` | Delete even if non-empty |
+
+**Example:**
+
+```bash
+gco images delete-repo old-svc -y
+gco images delete-repo orphaned-repo -y --force
+```
+
+#### `gco images cleanup`
+
+Remove untagged images across one or all project repos. Useful after
+a heavy push cycle has produced many orphaned manifest digests.
+
+```bash
+gco images cleanup --yes [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--name` | `-n` | Single repository to clean up |
+| `--all` | | Clean up every project repo |
+| `--yes` | `-y` | Required confirmation |
+
+**Example:**
+
+```bash
+gco images cleanup --all -y
+gco images cleanup -n my-app -y
+```
+
+#### `gco images prune`
+
+Remove untagged images older than 30 days. Dry-run by default —
+nothing is deleted unless you pass `--no-dry-run`.
+
+```bash
+gco images prune --yes [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--dry-run / --no-dry-run` | | Default: dry-run; pass `--no-dry-run` to delete |
+| `--yes` | `-y` | Required confirmation |
+
+**Example:**
+
+```bash
+gco images prune -y                    # dry-run only
+gco images prune --no-dry-run -y       # actually delete
+```
+
+#### `gco images orphans`
+
+List tags older than `threshold_days` that are not referenced by any
+deployed inference endpoint or recent job. Cross-references against
+both data sources before declaring a tag an orphan.
+
+```bash
+gco images orphans [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--threshold-days` | Only report tags older than this many days (default: 30) |
+
+**Example:**
+
+```bash
+gco images orphans
+gco images orphans --threshold-days 60
+```
+
+#### `gco images lifecycle`
+
+Lifecycle policy management.
+
+```bash
+gco images lifecycle COMMAND [OPTIONS]
+```
+
+**Subcommands:**
+
+- `get NAME` - Print the lifecycle policy on a repository
+- `set NAME --file <json>` - Replace the lifecycle policy from a JSON file
+
+**Example:**
+
+```bash
+gco images lifecycle get my-app
+gco images lifecycle set my-app --file lifecycle.json
+```
+
+#### `gco images replication`
+
+Replication management for the project's ECR registry.
+
+```bash
+gco images replication COMMAND
+```
+
+**Subcommands:**
+
+- `get` - Print the current ECR replication configuration
+- `status` - Print per-image replication status across project repos
+- `sync` - Apply the project's standard replication rule (`gco/*` to all deployed regions)
+
+**Example:**
+
+```bash
+gco images replication get
+gco images replication status
+gco images replication sync
+```
+
+---
+
 ### Files Commands
 
 Manage file systems and download job outputs.
@@ -1880,6 +2355,50 @@ gco files download REMOTE_PATH LOCAL_PATH [OPTIONS]
 ```bash
 gco files download my-job/outputs ./results -r us-east-1
 gco files download training-run ./checkpoints -r us-west-2 -t fsx
+```
+
+#### `gco files get`
+
+Get details for the file system in a region (file system ID, lifecycle
+state, throughput mode, encryption flags, mount targets).
+
+```bash
+gco files get REGION [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--type` | `-t` | File system type: `efs` or `fsx` (default: `efs`) |
+
+**Example:**
+
+```bash
+gco files get us-east-1
+gco files get us-west-2 -t fsx
+```
+
+#### `gco files access-points`
+
+List EFS access points for a file system. Useful for inspecting which
+namespaces have been provisioned and for confirming the POSIX UID/GID
+each access point enforces.
+
+```bash
+gco files access-points FILE_SYSTEM_ID [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--region` | `-r` | AWS region (required) |
+
+**Example:**
+
+```bash
+gco files access-points fs-0123456789abcdef0 -r us-east-1
 ```
 
 ---
@@ -2207,6 +2726,45 @@ gco analytics doctor
 
 ```bash
 gco analytics doctor
+```
+
+---
+
+### Config-Cmd Commands
+
+Manage the local CLI configuration file at `~/.gco/config.yaml`. The
+config file lets you set per-machine defaults (default region, output
+format, verbose flag) so you don't have to repeat them on every
+invocation.
+
+#### `gco config-cmd init`
+
+Initialize the config file with a starter template.
+
+```bash
+gco config-cmd init [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--force` | `-f` | Overwrite an existing config file |
+
+**Example:**
+
+```bash
+gco config-cmd init
+gco config-cmd init -f          # overwrite existing
+```
+
+#### `gco config-cmd show`
+
+Print the current resolved configuration (file values plus any
+environment-variable overrides).
+
+```bash
+gco config-cmd show
 ```
 
 ---
