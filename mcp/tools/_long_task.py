@@ -1,14 +1,28 @@
-"""Shared async subprocess runner for long-running MCP tools that
-stream progress updates through FastMCP's Progress dependency."""
+"""Shared async subprocess runner for long-running MCP tools.
+
+Streams progress through FastMCP's Progress dependency, emits a periodic
+heartbeat when the underlying process goes quiet, captures the tail of
+stderr for failure surfacing, and raises ``ToolError`` on non-zero exit
+with a structured error message so MCP clients can render failures
+properly instead of treating them as opaque success-shaped JSON blobs.
+
+Used by every long-running stack-lifecycle tool (deploy_stack, deploy_all,
+bootstrap_cdk, destroy_stack, destroy_all) and by images_build / images_push.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import signal
+import time
+from collections import deque
 from collections.abc import Sequence
 from typing import Any
+
+from fastmcp.exceptions import ToolError
 
 # <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
 # Flowchart(s) generated from this file:
@@ -18,8 +32,26 @@ from typing import Any
 # <pyflowchart-code-diagram> END
 
 
-_CFN_COMPLETE_RE = re.compile(r"(CREATE|UPDATE|DELETE)_COMPLETE")
+_CFN_FAILED_RE = re.compile(r"(CREATE|UPDATE|DELETE)_FAILED")
+# Matches the CDK stack-progress prefix it prints in the form
+# ``  ✅  gco-global``, ``  ❌  gco-us-east-1``, or ``gco-us-east-1: deploying...``.
+_CDK_STACK_LINE_RE = re.compile(r"\b(gco-[a-z0-9-]+)\b")
+# Recognises CDK's per-stack done/fail signal: ``✅  gco-global`` (deploy)
+# or ``✅  gco-global: destroyed`` (destroy). One match per stack →
+# one progress increment so the client's percentage tracks stack
+# completion, not individual CFN resource events (which jump from 0
+# to dozens mid-stack and reset on the next stack).
+_CDK_STACK_DONE_RE = re.compile(r"[✅✨]\s+(gco-[a-z0-9-]+)\b")
 _CANCEL_GRACE_SECONDS = 10
+# How often to emit a heartbeat status when the subprocess is silent. CDK
+# can be quiet for minutes during EKS cluster creation or VPC tear-down
+# while CloudFormation churns away. Without a heartbeat, MCP clients
+# render the tool as wedged.
+_HEARTBEAT_INTERVAL_SECONDS = 30
+# How many tail lines of stderr to retain for the failure payload. CDK
+# failure summaries typically fit in 30-50 lines; we cap at 80 to avoid
+# blowing up the ToolError message size.
+_STDERR_TAIL_LINES = 80
 _PARTIAL_STATE_DISCLAIMER = (
     "Partial CloudFormation state may remain — inspect via stack_status or the AWS console."
 )
@@ -47,32 +79,73 @@ async def _run_long_task(
     ctx: Any,
     progress: Any,
     is_stack_op: bool = True,
+    total_units: int | None = None,
 ) -> str:
-    """Run a long-running subprocess, streaming progress through FastMCP.
+    """Run a long-running subprocess with rich status reporting.
 
     Spawns ``argv`` via :func:`asyncio.create_subprocess_exec`, drains stdout
-    and stderr concurrently, forwards every line as a progress message
-    (truncated to 200 chars), increments the progress counter on every line
-    matching ``(CREATE|UPDATE|DELETE)_COMPLETE``, and surfaces stderr lines
-    through ``ctx.info`` so MCP clients see them.
+    and stderr concurrently, and streams progress through three channels:
+
+    * ``progress.set_message(...)`` for every meaningful line (≤ 200 chars)
+    * ``progress.increment()`` once per stack completion (CDK's ``✅ gco-…``
+      / ``✨ gco-…`` lines), so the progress counter tracks AWS-side stack
+      milestones rather than per-resource CFN events
+    * ``ctx.info(...)`` for stderr lines so MCP clients with a Context
+      surface render them through the standard MCP logging channel
+
+    When ``total_units`` is supplied, it's forwarded to
+    ``progress.set_total(total_units)`` once at startup so the client
+    can render a proper percentage. Callers that know how many stacks
+    they're processing (e.g. ``deploy_all`` knowing the cdk.json
+    deployment_regions count) should pass it; callers that don't can
+    omit it and the client falls back to indeterminate progress.
+
+    A periodic heartbeat fires every ``_HEARTBEAT_INTERVAL_SECONDS`` when
+    no output has been seen, so the client never sees a stalled progress
+    state during quiet CDK phases (EKS cluster creation, VPC teardown).
+    The heartbeat carries the elapsed wall-clock and the most recent
+    stack name observed in the output, in the form
+    ``"still running … 4m12s elapsed (last: gco-us-east-1)"``.
 
     On cancellation, sends ``SIGTERM``, waits up to ``_CANCEL_GRACE_SECONDS``
     for graceful shutdown, sends ``SIGKILL`` on timeout, cancels the drain
-    tasks, and re-raises ``CancelledError``. When ``is_stack_op`` is True, the
-    re-raised exception's message includes a CloudFormation partial-state
-    disclaimer so operators know AWS state may be inconsistent.
+    tasks, and re-raises ``CancelledError``. When ``is_stack_op`` is True,
+    the re-raised exception's message includes a CloudFormation
+    partial-state disclaimer so operators know AWS state may be inconsistent.
 
-    Returns a JSON string:
-      * ``{"status": "ok", "completes": <count>}`` on a clean zero exit code.
-      * ``{"error": "exit_code=<rc>", "completes": <count>}`` on non-zero exit.
-      * ``{"error": "path_traversal_detected", "argv_index": <i>, "value": <v>}``
-        when any non-flag argv element contains a ``..`` path segment; in that
-        case no subprocess is spawned.
+    Returns a JSON string on success:
+
+    * ``{"status": "ok", "stacks_completed": <n>, "duration_seconds": <s>,
+       "last_stack": <str|null>}``
+
+    Raises :class:`fastmcp.exceptions.ToolError` on subprocess failure with
+    a structured message that includes:
+
+    * The exit code
+    * The number of stacks completed before failure
+    * The last stack the run was working on (parsed from output)
+    * Whether any ``*_FAILED`` line was seen
+    * The tail of stderr (up to ``_STDERR_TAIL_LINES`` lines)
+    * The partial-state disclaimer (when ``is_stack_op=True``)
+
+    The structured payload lives in the ToolError ``args[0]`` as a JSON
+    string so MCP clients can deserialize and render it; FastMCP forwards
+    the message to the client's ``CallToolResult.content`` automatically.
+
+    Path-traversal rejection is unchanged — returns the same JSON stub
+    without spawning a subprocess.
     """
     hit = _argv_has_traversal(argv)
     if hit is not None:
         idx, val = hit
         return json.dumps({"error": "path_traversal_detected", "argv_index": idx, "value": val})
+
+    started = time.monotonic()
+    if total_units is not None and total_units > 0:
+        # set_total may not be implemented by every Progress impl on
+        # every fastmcp version — best-effort.
+        with contextlib.suppress(AttributeError, NotImplementedError):
+            await progress.set_total(int(total_units))
 
     proc = await asyncio.create_subprocess_exec(
         *argv,
@@ -80,26 +153,65 @@ async def _run_long_task(
         stderr=asyncio.subprocess.PIPE,
     )
 
-    completes = 0
+    stacks_completed = 0
+    failed_lines: list[str] = []
+    stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
+    last_activity = time.monotonic()
+    last_stack: str | None = None
+    completed_stacks_set: set[str] = set()
 
     async def _drain(stream: asyncio.StreamReader | None, label: str) -> None:
-        nonlocal completes
+        nonlocal stacks_completed, last_activity, last_stack
         assert stream is not None  # PIPE is set above for both streams
         async for raw in stream:
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line:
                 continue
+            last_activity = time.monotonic()
             await progress.set_message(line[:200])
-            if _CFN_COMPLETE_RE.search(line):
-                completes += 1
-                await progress.increment()
+            stack_done = _CDK_STACK_DONE_RE.search(line)
+            if stack_done is not None:
+                # Increment once per unique stack — CDK can echo the
+                # done line on stdout and stderr, double-counting
+                # would mis-report progress.
+                name = stack_done.group(1)
+                if name not in completed_stacks_set:
+                    completed_stacks_set.add(name)
+                    stacks_completed += 1
+                    await progress.increment()
+            if _CFN_FAILED_RE.search(line):
+                failed_lines.append(line[:200])
+            stack_match = _CDK_STACK_LINE_RE.search(line)
+            if stack_match:
+                last_stack = stack_match.group(1)
             if label == "stderr":
+                stderr_tail.append(line)
                 await ctx.info(f"stderr: {line[:200]}")
+
+    async def _heartbeat() -> None:
+        """Emit a periodic 'still running' status when the subprocess is quiet.
+
+        The heartbeat does NOT call ``progress.increment()`` — that's
+        reserved for AWS-side milestones. It only updates the message
+        so the client sees activity, and emits a parallel ``ctx.info``
+        so clients without a Progress observer still get the signal.
+        """
+        while True:
+            await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
+            silent_for = time.monotonic() - last_activity
+            if silent_for < _HEARTBEAT_INTERVAL_SECONDS:
+                continue
+            elapsed = int(time.monotonic() - started)
+            stack_part = f" (last: {last_stack})" if last_stack else ""
+            msg = f"still running … {_format_duration(elapsed)} elapsed{stack_part}"
+            await progress.set_message(msg)
+            await ctx.info(msg)
 
     drains = [
         asyncio.create_task(_drain(proc.stdout, "stdout")),
         asyncio.create_task(_drain(proc.stderr, "stderr")),
     ]
+    heartbeat = asyncio.create_task(_heartbeat())
 
     try:
         rc = await proc.wait()
@@ -115,10 +227,52 @@ async def _run_long_task(
                 await proc.wait()
         for d in drains:
             d.cancel()
+        heartbeat.cancel()
         if is_stack_op:
             raise asyncio.CancelledError(_PARTIAL_STATE_DISCLAIMER) from None
         raise
+    finally:
+        heartbeat.cancel()
+
+    duration = int(time.monotonic() - started)
 
     if rc != 0:
-        return json.dumps({"error": f"exit_code={rc}", "completes": completes})
-    return json.dumps({"status": "ok", "completes": completes})
+        # Compose a structured failure payload so the client sees the
+        # full error context (which stack failed, the stderr tail, the
+        # partial-state disclaimer) rather than an opaque exit-code stub.
+        payload: dict[str, Any] = {
+            "error": f"exit_code={rc}",
+            "exit_code": rc,
+            "stacks_completed": stacks_completed,
+            "duration_seconds": duration,
+            "last_stack": last_stack,
+            "failed_events": failed_lines[:10],
+            "stderr_tail": list(stderr_tail),
+        }
+        if is_stack_op:
+            payload["disclaimer"] = _PARTIAL_STATE_DISCLAIMER
+        # ToolError surfaces the payload to the client as a tool-level
+        # failure (CallToolResult.is_error=True). Inline callers see it
+        # via the FastMCP transport; agent clients render it as a
+        # tool-error message rather than success-shaped data.
+        raise ToolError(json.dumps(payload))
+
+    return json.dumps(
+        {
+            "status": "ok",
+            "stacks_completed": stacks_completed,
+            "duration_seconds": duration,
+            "last_stack": last_stack,
+        }
+    )
+
+
+def _format_duration(seconds: int) -> str:
+    """Render an integer second count as ``HhMmSs`` / ``MmSs`` / ``Ss``."""
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, sec = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m{sec:02d}s"
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}h{mins:02d}m{sec:02d}s"

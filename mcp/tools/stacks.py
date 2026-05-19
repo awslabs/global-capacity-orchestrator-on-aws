@@ -44,6 +44,39 @@ except ImportError:  # pragma: no cover - degraded fastmcp install
     _TASK_CONFIG_OPTIONAL = None
 
 
+def _expected_stack_count_for_all() -> int | None:
+    """Return the number of stacks ``deploy-all`` / ``destroy-all`` will touch.
+
+    Reads ``cdk.json``'s ``context.deployment_regions`` and counts the
+    fixed-position stacks (gco-global, gco-api-gateway, gco-monitoring)
+    plus one per regional region. Returns ``None`` when the config is
+    unreadable or empty so the caller falls back to indeterminate
+    progress instead of an inaccurate total.
+
+    The count drives ``progress.set_total(...)`` so MCP clients render
+    a real percentage during a multi-stack deploy or destroy.
+    """
+    try:
+        from cli.config import _load_cdk_json
+    except Exception:  # noqa: BLE001 — best-effort
+        return None
+    try:
+        cdk_regions = _load_cdk_json()
+    except Exception:  # noqa: BLE001 — best-effort
+        return None
+    if not isinstance(cdk_regions, dict):
+        return None
+    regional = cdk_regions.get("regional") or []
+    if not isinstance(regional, list):
+        return None
+    # Three fixed stacks (global / api-gateway / monitoring) plus one
+    # per regional region. Analytics is opt-in and omitted from the
+    # baseline count — when enabled it adds one more stack but
+    # under-reporting is preferable to over-reporting (the progress
+    # bar rolls over rather than stopping at 95 %).
+    return 3 + len(regional)
+
+
 @mcp.tool(tags={"safe", "stacks"})
 @audit_logged
 def list_stacks() -> str:
@@ -287,7 +320,13 @@ if is_enabled(FLAG_INFRASTRUCTURE_DEPLOY):
                 argv += ["--outputs-file", outputs_file]
             for tag in tags or []:
                 argv += ["--tag", tag]
-            return await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=True)
+            return await _run_long_task(
+                argv,
+                ctx=ctx,
+                progress=progress,
+                is_stack_op=True,
+                total_units=1,
+            )
 
         @mcp.tool(**_deploy_decorator_kwargs)  # type: ignore[untyped-decorator]
         @audit_logged
@@ -337,7 +376,13 @@ if is_enabled(FLAG_INFRASTRUCTURE_DEPLOY):
                 argv.append("--parallel")
             if max_workers is not None:
                 argv += ["--max-workers", str(max_workers)]
-            return await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=True)
+            return await _run_long_task(
+                argv,
+                ctx=ctx,
+                progress=progress,
+                is_stack_op=True,
+                total_units=_expected_stack_count_for_all(),
+            )
 
         @mcp.tool(**_deploy_decorator_kwargs)  # type: ignore[untyped-decorator]
         @audit_logged
@@ -368,7 +413,13 @@ if is_enabled(FLAG_INFRASTRUCTURE_DEPLOY):
             argv = ["gco", "stacks", "bootstrap", "--region", region]
             if account:
                 argv += ["--account", account]
-            return await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=True)
+            return await _run_long_task(
+                argv,
+                ctx=ctx,
+                progress=progress,
+                is_stack_op=True,
+                total_units=1,
+            )
 
 
 # =============================================================================
@@ -410,7 +461,13 @@ if is_enabled(FLAG_INFRASTRUCTURE_DESTROY):
             argv = ["gco", "stacks", "destroy", stack_name]
             if yes:
                 argv.append("-y")
-            return await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=True)
+            return await _run_long_task(
+                argv,
+                ctx=ctx,
+                progress=progress,
+                is_stack_op=True,
+                total_units=1,
+            )
 
         @mcp.tool(**_destroy_decorator_kwargs)  # type: ignore[untyped-decorator]
         @audit_logged
@@ -447,4 +504,10 @@ if is_enabled(FLAG_INFRASTRUCTURE_DESTROY):
                 argv.append("--parallel")
             if max_workers is not None:
                 argv += ["--max-workers", str(max_workers)]
-            return await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=True)
+            return await _run_long_task(
+                argv,
+                ctx=ctx,
+                progress=progress,
+                is_stack_op=True,
+                total_units=_expected_stack_count_for_all(),
+            )

@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestStackManagerGetOutputs:
     """Tests for StackManager.get_outputs method."""
@@ -330,7 +332,10 @@ class TestStackManagerDestroyOptions:
 
         config = MagicMock()
 
-        with patch.object(StackManager, "_run_cdk") as mock_run:
+        with (
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=True),
+        ):
             mock_run.return_value = MagicMock(returncode=1)
 
             manager = StackManager(config)
@@ -742,3 +747,313 @@ class TestDeployCallsEnsureBootstrapped:
 
         mgr.deploy(all_stacks=True, require_approval=False)
         mgr.ensure_bootstrapped.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Timeout + CloudFormation reconciliation
+# ---------------------------------------------------------------------------
+#
+# `cdk destroy` and `cdk deploy` can hang in their post-action polling loops
+# even after CloudFormation has already finished the underlying delete or
+# create. The orchestrator now caps each cdk subprocess at a wall-clock
+# budget (default 45 min for destroy, 60 min for deploy, env-tunable) and
+# reconciles against `DescribeStacks` so a hung cdk doesn't block the
+# orchestrator forever.
+
+
+class TestDestroyTimeoutAndReconciliation:
+    def test_destroy_passes_timeout_to_run_cdk_with_default_budget(self):
+        """``destroy()`` must pass the default 45-minute timeout to
+        ``_run_cdk`` so a wedged cdk subprocess can't run forever."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+
+        with (
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=False),
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            manager = StackManager(config)
+            assert manager.destroy("gco-monitoring", force=True) is True
+
+        assert "timeout" in mock_run.call_args.kwargs
+        # Default is 2700s (45 min).
+        assert mock_run.call_args.kwargs["timeout"] == 2700.0
+
+    def test_destroy_timeout_env_override(self, monkeypatch):
+        """``GCO_CDK_DESTROY_TIMEOUT_SECONDS`` overrides the default."""
+        import subprocess
+
+        from cli.stacks import StackManager
+
+        monkeypatch.setenv("GCO_CDK_DESTROY_TIMEOUT_SECONDS", "120")
+        config = MagicMock()
+
+        with (
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=False),
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            manager = StackManager(config)
+            manager.destroy("gco-monitoring", force=True)
+
+        assert mock_run.call_args.kwargs["timeout"] == 120.0
+        # Sanity: subprocess module imported at module scope (used by
+        # the TimeoutExpired catch).
+        assert subprocess.TimeoutExpired is not None
+
+    def test_destroy_treats_missing_stack_as_success_after_cdk_failure(self):
+        """If cdk returns non-zero but the stack is already gone in CFN,
+        the destroy succeeded and we treat the cdk exit as a false alarm."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+
+        with (
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=False),
+        ):
+            mock_run.return_value = MagicMock(returncode=1)
+            manager = StackManager(config)
+            assert manager.destroy("gco-us-east-1", force=True) is True
+
+    def test_destroy_treats_missing_stack_as_success_after_timeout(self):
+        """Same reconciliation when cdk hangs and we kill it: if the
+        stack is gone in CFN, the destroy succeeded."""
+        import subprocess
+
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+
+        with (
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=False),
+        ):
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd=["cdk"], timeout=2700)
+            manager = StackManager(config)
+            assert manager.destroy("gco-us-east-1", force=True) is True
+
+    def test_destroy_falls_back_to_cfn_delete_when_cdk_succeeded_but_stack_remains(self):
+        """If cdk exits 0 but the stack is still present (rare CDK bug),
+        fall back to a direct CloudFormation delete."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+
+        with (
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=True),
+            patch.object(
+                StackManager, "_cloudformation_delete_stack", return_value=True
+            ) as mock_cfn,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            manager = StackManager(config)
+            assert manager.destroy("gco-us-east-1", force=True) is True
+        mock_cfn.assert_called_once_with("gco-us-east-1")
+
+    def test_destroy_returns_false_when_cdk_fails_and_stack_remains(self):
+        """The actual failure case: cdk exits non-zero AND stack is still
+        in CloudFormation — propagate as failure."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+
+        with (
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_stack_exists_in_cloudformation", return_value=True),
+        ):
+            mock_run.return_value = MagicMock(returncode=1)
+            manager = StackManager(config)
+            assert manager.destroy("gco-us-east-1", force=True) is False
+
+
+class TestDeployTimeoutAndReconciliation:
+    def test_deploy_passes_timeout_to_run_cdk_with_default_budget(self):
+        """``deploy()`` must pass the default 60-minute timeout."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+
+        with (
+            patch("cli.stacks._detect_container_runtime", return_value="docker"),
+            patch.object(StackManager, "_check_and_fix_stuck_stack"),
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_get_stack_status", return_value="UPDATE_COMPLETE"),
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            manager = StackManager(config)
+            assert manager.deploy("gco-global", require_approval=False) is True
+
+        assert "timeout" in mock_run.call_args.kwargs
+        # Default is 3600s (60 min).
+        assert mock_run.call_args.kwargs["timeout"] == 3600.0
+
+    def test_deploy_timeout_env_override(self, monkeypatch):
+        from cli.stacks import StackManager
+
+        monkeypatch.setenv("GCO_CDK_DEPLOY_TIMEOUT_SECONDS", "300")
+        config = MagicMock()
+
+        with (
+            patch("cli.stacks._detect_container_runtime", return_value="docker"),
+            patch.object(StackManager, "_check_and_fix_stuck_stack"),
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_get_stack_status", return_value="UPDATE_COMPLETE"),
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            manager = StackManager(config)
+            manager.deploy("gco-global", require_approval=False)
+
+        assert mock_run.call_args.kwargs["timeout"] == 300.0
+
+    def test_deploy_treats_complete_stack_status_as_success_after_cdk_failure(self):
+        """If cdk exits non-zero but CFN says CREATE_COMPLETE, the deploy
+        actually succeeded — cdk's polling loop just gave up early."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+
+        with (
+            patch("cli.stacks._detect_container_runtime", return_value="docker"),
+            patch.object(StackManager, "_check_and_fix_stuck_stack"),
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_get_stack_status", return_value="CREATE_COMPLETE"),
+            patch.object(StackManager, "_diagnose_deploy_failure"),
+        ):
+            mock_run.return_value = MagicMock(returncode=1)
+            manager = StackManager(config)
+            assert manager.deploy("gco-global", require_approval=False) is True
+
+    def test_deploy_treats_update_complete_as_success_after_timeout(self):
+        """Same reconciliation after a cdk timeout."""
+        import subprocess
+
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+
+        with (
+            patch("cli.stacks._detect_container_runtime", return_value="docker"),
+            patch.object(StackManager, "_check_and_fix_stuck_stack"),
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_get_stack_status", return_value="UPDATE_COMPLETE"),
+            patch.object(StackManager, "_diagnose_deploy_failure"),
+        ):
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd=["cdk"], timeout=3600)
+            manager = StackManager(config)
+            assert manager.deploy("gco-global", require_approval=False) is True
+
+    def test_deploy_returns_false_when_cdk_fails_and_status_is_not_complete(self):
+        """When cdk fails AND CFN reports a non-complete status (or the
+        lookup itself fails), the deploy is a real failure."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+
+        with (
+            patch("cli.stacks._detect_container_runtime", return_value="docker"),
+            patch.object(StackManager, "_check_and_fix_stuck_stack"),
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            # ROLLBACK_COMPLETE is not a success state.
+            patch.object(StackManager, "_get_stack_status", return_value="ROLLBACK_COMPLETE"),
+            patch.object(StackManager, "_diagnose_deploy_failure"),
+        ):
+            mock_run.return_value = MagicMock(returncode=1)
+            manager = StackManager(config)
+            assert manager.deploy("gco-global", require_approval=False) is False
+
+    def test_deploy_returns_false_when_status_lookup_returns_none(self):
+        """When _get_stack_status returns None (stack doesn't exist or
+        the lookup itself failed), cdk's verdict stands."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+
+        with (
+            patch("cli.stacks._detect_container_runtime", return_value="docker"),
+            patch.object(StackManager, "_check_and_fix_stuck_stack"),
+            patch.object(StackManager, "_run_cdk") as mock_run,
+            patch.object(StackManager, "_get_stack_status", return_value=None),
+            patch.object(StackManager, "_diagnose_deploy_failure"),
+        ):
+            mock_run.return_value = MagicMock(returncode=1)
+            manager = StackManager(config)
+            assert manager.deploy("gco-global", require_approval=False) is False
+
+
+class TestRunCdkTimeout:
+    def test_run_cdk_no_timeout_default(self):
+        """Without an explicit timeout, _run_cdk doesn't pass one
+        through (preserves existing behaviour for synth / list)."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        manager = StackManager(config)
+
+        with patch("cli.stacks.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            manager._run_cdk(["list"], capture_output=True)
+
+        assert mock_run.call_args.kwargs.get("timeout") is None
+
+    def test_run_cdk_propagates_timeout_kwarg(self):
+        """When ``timeout`` is set, it reaches subprocess.run."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        manager = StackManager(config)
+
+        with patch("cli.stacks.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            manager._run_cdk(["list"], capture_output=True, timeout=42.0)
+
+        assert mock_run.call_args.kwargs["timeout"] == 42.0
+
+    def test_run_cdk_re_raises_timeout_expired(self):
+        """When subprocess.run raises TimeoutExpired, _run_cdk re-raises
+        so callers can verify post-state via CloudFormation."""
+        import subprocess
+
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        manager = StackManager(config)
+
+        with patch("cli.stacks.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd=["cdk"], timeout=10)
+            with pytest.raises(subprocess.TimeoutExpired):
+                manager._run_cdk(["destroy"], timeout=10.0)
+
+
+class TestGetStackStatus:
+    def test_get_stack_status_returns_status(self):
+        """Successful describe_stacks → returns the status string."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        config.api_gateway_region = "us-east-2"
+
+        fake_cfn = MagicMock()
+        fake_cfn.describe_stacks.return_value = {"Stacks": [{"StackStatus": "UPDATE_COMPLETE"}]}
+
+        with patch("boto3.client", return_value=fake_cfn):
+            manager = StackManager(config)
+            assert manager._get_stack_status("gco-global") == "UPDATE_COMPLETE"
+
+    def test_get_stack_status_returns_none_on_error(self):
+        """describe_stacks raises (stack doesn't exist, perms, network) →
+        return None so callers fall back to cdk's verdict."""
+        from cli.stacks import StackManager
+
+        config = MagicMock()
+        config.api_gateway_region = "us-east-2"
+
+        fake_cfn = MagicMock()
+        fake_cfn.describe_stacks.side_effect = RuntimeError("not found")
+
+        with patch("boto3.client", return_value=fake_cfn):
+            manager = StackManager(config)
+            assert manager._get_stack_status("gco-nonexistent") is None

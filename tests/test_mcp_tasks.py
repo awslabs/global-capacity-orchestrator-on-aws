@@ -50,12 +50,16 @@ class _FakeProgress(dict):
         super().__init__()
         self.messages: list[str] = []
         self.increments: int = 0
+        self.totals: list[int] = []
 
     async def set_message(self, msg: str) -> None:
         self.messages.append(msg)
 
     async def increment(self) -> None:
         self.increments += 1
+
+    async def set_total(self, total: int) -> None:
+        self.totals.append(total)
 
 
 class _FakeCtx(dict):
@@ -77,11 +81,13 @@ class _FakeCtx(dict):
 
 # Lifecycle test
 async def test_run_long_task_lifecycle() -> None:
-    """A short-lived subprocess produces progress messages and a success JSON.
+    """A short-lived subprocess that emits a CDK per-stack done marker
+    yields a success payload with a stack-completion count and per-stack
+    progress increments.
 
-    The child prints a few lines (one of them matching the CFN
-    ``CREATE_COMPLETE`` regex) so we can assert both the line-by-line
-    progress drain and the increment-on-COMPLETE counting.
+    The child prints a few lines including ``✅  gco-test-stack`` (CDK's
+    per-stack done marker) so we can assert both the line-by-line progress
+    drain and the per-stack increment.
     """
     progress = _FakeProgress()
     ctx = _FakeCtx()
@@ -91,7 +97,7 @@ async def test_run_long_task_lifecycle() -> None:
         (
             "import sys, time\n"
             "print('starting'); sys.stdout.flush()\n"
-            "print('CREATE_COMPLETE Foo'); sys.stdout.flush()\n"
+            "print('\\u2705  gco-test-stack'); sys.stdout.flush()\n"
             "time.sleep(0.05)\n"
             "print('done'); sys.stdout.flush()\n"
         ),
@@ -99,11 +105,17 @@ async def test_run_long_task_lifecycle() -> None:
 
     result = await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=False)
 
-    assert json.loads(result) == {"status": "ok", "completes": 1}
+    parsed = json.loads(result)
+    assert parsed["status"] == "ok"
+    assert parsed["stacks_completed"] == 1
+    assert "duration_seconds" in parsed
+    assert isinstance(parsed["duration_seconds"], int)
+    assert parsed["duration_seconds"] >= 0
+    # The stack-done line carried gco-test-stack, so last_stack tracks it.
+    assert parsed["last_stack"] == "gco-test-stack"
     assert any("starting" in m for m in progress.messages), progress.messages
-    assert any("CREATE_COMPLETE Foo" in m for m in progress.messages), progress.messages
     assert any("done" in m for m in progress.messages), progress.messages
-    # Exactly one CREATE_COMPLETE line → exactly one increment.
+    # Exactly one stack-done line → exactly one increment.
     assert progress.increments == 1
 
 
@@ -189,6 +201,232 @@ async def test_run_long_task_rejects_path_traversal() -> None:
         "argv_index": 1,
         "value": "../etc/passwd",
     }
+
+
+# Failure surfacing — non-zero exit raises ToolError with structured payload
+async def test_run_long_task_failure_raises_tool_error() -> None:
+    """When the subprocess exits non-zero, the runner raises ``ToolError``
+    with a structured JSON payload so the MCP client renders it as a
+    tool-level error rather than success-shaped data."""
+    from fastmcp.exceptions import ToolError
+
+    progress = _FakeProgress()
+    ctx = _FakeCtx()
+    argv = [
+        sys.executable,
+        "-c",
+        (
+            "import sys\n"
+            "print('\\u2705  gco-global', flush=True)\n"
+            "print('CREATE_FAILED gco-us-east-1: hit a wall', flush=True)\n"
+            "sys.stderr.write('Resource handler failed: AccessDeniedException\\n')\n"
+            "sys.stderr.flush()\n"
+            "sys.exit(2)\n"
+        ),
+    ]
+
+    with pytest.raises(ToolError) as excinfo:
+        await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=True)
+
+    payload = json.loads(str(excinfo.value))
+    assert payload["error"] == "exit_code=2"
+    assert payload["exit_code"] == 2
+    assert payload["stacks_completed"] == 1, "the one stack done line before the failure"
+    assert payload["last_stack"] == "gco-us-east-1"
+    assert any("CREATE_FAILED gco-us-east-1" in line for line in payload["failed_events"])
+    assert any("AccessDeniedException" in line for line in payload["stderr_tail"])
+    assert "Partial CloudFormation state" in payload["disclaimer"]
+    assert isinstance(payload["duration_seconds"], int)
+
+
+async def test_run_long_task_failure_omits_disclaimer_when_not_stack_op() -> None:
+    """Non-stack failures (e.g. images_build) don't include the
+    CloudFormation partial-state disclaimer."""
+    from fastmcp.exceptions import ToolError
+
+    progress = _FakeProgress()
+    ctx = _FakeCtx()
+    argv = [sys.executable, "-c", "import sys; sys.exit(1)"]
+
+    with pytest.raises(ToolError) as excinfo:
+        await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=False)
+
+    payload = json.loads(str(excinfo.value))
+    assert payload["exit_code"] == 1
+    assert "disclaimer" not in payload
+
+
+async def test_run_long_task_success_carries_last_stack_name() -> None:
+    """When the output mentions a ``gco-*`` stack name and emits CDK's
+    per-stack done markers, ``last_stack`` reflects the most recent one
+    and ``stacks_completed`` matches the number of stack-done markers."""
+    progress = _FakeProgress()
+    ctx = _FakeCtx()
+    argv = [
+        sys.executable,
+        "-c",
+        (
+            "import sys\n"
+            "print('gco-global: deploying', flush=True)\n"
+            "print('\\u2705  gco-global', flush=True)\n"
+            "print('gco-us-east-1: deploying', flush=True)\n"
+            "print('\\u2705  gco-us-east-1', flush=True)\n"
+        ),
+    ]
+
+    result = await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=False)
+
+    parsed = json.loads(result)
+    assert parsed["status"] == "ok"
+    assert parsed["stacks_completed"] == 2
+    assert parsed["last_stack"] == "gco-us-east-1"
+
+
+async def test_run_long_task_emits_heartbeat_when_subprocess_quiet(monkeypatch) -> None:
+    """When the subprocess goes silent past the heartbeat interval, the
+    runner emits a 'still running' progress message and ctx.info so the
+    MCP client doesn't render a stalled state."""
+    import tools._long_task as long_task_mod
+
+    # Compress the heartbeat interval so the test stays fast (default is
+    # 30 s; a 0.2 s interval still exercises the same code path).
+    monkeypatch.setattr(long_task_mod, "_HEARTBEAT_INTERVAL_SECONDS", 0.2)
+
+    progress = _FakeProgress()
+    ctx = _FakeCtx()
+    argv = [
+        sys.executable,
+        "-c",
+        # First line, then quiet for ~0.6 s, then exit. With a 0.2 s
+        # heartbeat, two heartbeat ticks should fire before exit.
+        (
+            "import sys, time\n"
+            "print('starting some long quiet phase', flush=True)\n"
+            "time.sleep(0.6)\n"
+        ),
+    ]
+
+    result = await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=False)
+
+    parsed = json.loads(result)
+    assert parsed["status"] == "ok"
+    # At least one 'still running' heartbeat must have been emitted on
+    # both progress and ctx.info channels.
+    assert any("still running" in m for m in progress.messages), progress.messages
+    assert any("still running" in m for m in ctx.infos), ctx.infos
+
+
+async def test_run_long_task_heartbeat_does_not_double_count_progress(monkeypatch) -> None:
+    """The heartbeat updates the progress *message* but does NOT call
+    ``progress.increment()``. Increment is reserved for AWS-side
+    milestones (CDK per-stack done markers), so heartbeat ticks during a
+    quiet phase don't pollute the completion counter."""
+    import tools._long_task as long_task_mod
+
+    monkeypatch.setattr(long_task_mod, "_HEARTBEAT_INTERVAL_SECONDS", 0.2)
+
+    progress = _FakeProgress()
+    ctx = _FakeCtx()
+    argv = [
+        sys.executable,
+        "-c",
+        # One stack done marker then quiet for ~0.6 s. Should yield
+        # exactly 1 increment, even though several heartbeats fire.
+        ("import sys, time\nprint('\\u2705  gco-global', flush=True)\ntime.sleep(0.6)\n"),
+    ]
+
+    result = await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=False)
+
+    parsed = json.loads(result)
+    assert parsed["stacks_completed"] == 1
+    assert progress.increments == 1, (
+        f"expected 1 increment from the single stack done line, got {progress.increments}"
+    )
+
+
+async def test_run_long_task_failure_payload_caps_stderr_tail() -> None:
+    """The structured failure payload caps stderr at the configured tail
+    length so a runaway error log doesn't blow up the ToolError message."""
+    import tools._long_task as long_task_mod
+    from fastmcp.exceptions import ToolError
+
+    progress = _FakeProgress()
+    ctx = _FakeCtx()
+    # 200 stderr lines — well over the configured cap.
+    argv = [
+        sys.executable,
+        "-c",
+        (
+            "import sys\n"
+            "for i in range(200):\n"
+            "    sys.stderr.write(f'error line {i}\\n')\n"
+            "sys.stderr.flush()\n"
+            "sys.exit(1)\n"
+        ),
+    ]
+
+    with pytest.raises(ToolError) as excinfo:
+        await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=False)
+
+    payload = json.loads(str(excinfo.value))
+    assert len(payload["stderr_tail"]) == long_task_mod._STDERR_TAIL_LINES
+    # The most recent lines win — first line in the payload should be
+    # the first one within the tail window, not error line 0.
+    assert payload["stderr_tail"][-1] == "error line 199"
+
+
+async def test_run_long_task_forwards_total_units_to_set_total() -> None:
+    """When ``total_units`` is supplied, it's forwarded to
+    ``progress.set_total(...)`` once at startup so the client renders a
+    real percentage instead of indeterminate progress."""
+    progress = _FakeProgress()
+    ctx = _FakeCtx()
+    argv = [sys.executable, "-c", "print('done')"]
+
+    await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=False, total_units=4)
+
+    assert progress.totals == [4], f"expected exactly one set_total(4) call, got {progress.totals}"
+
+
+async def test_run_long_task_skips_set_total_when_unset() -> None:
+    """No ``total_units`` argument means no ``set_total`` call — the
+    client falls back to indeterminate progress, same as before this
+    feature landed."""
+    progress = _FakeProgress()
+    ctx = _FakeCtx()
+    argv = [sys.executable, "-c", "print('done')"]
+
+    await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=False)
+
+    assert progress.totals == [], (
+        f"expected no set_total calls when total_units is None, got {progress.totals}"
+    )
+
+
+async def test_run_long_task_dedupes_repeated_stack_done_lines() -> None:
+    """When the same stack-done marker appears twice (e.g. CDK echoes
+    on stdout and stderr), only the first occurrence increments the
+    progress counter."""
+    progress = _FakeProgress()
+    ctx = _FakeCtx()
+    argv = [
+        sys.executable,
+        "-c",
+        (
+            "import sys\n"
+            # Same stack name twice — should yield exactly 1 increment.
+            "print('\\u2705  gco-global', flush=True)\n"
+            "print('\\u2705  gco-global', flush=True)\n"
+            # Different stack — yields a second increment.
+            "print('\\u2705  gco-us-east-1', flush=True)\n"
+        ),
+    ]
+
+    result = await _run_long_task(argv, ctx=ctx, progress=progress, is_stack_op=False)
+
+    parsed = json.loads(result)
+    assert parsed["stacks_completed"] == 2
+    assert progress.increments == 2
 
 
 # =============================================================================

@@ -490,8 +490,24 @@ class StackManager:
         command: list[str],
         capture_output: bool = False,
         env: dict[str, str] | None = None,
+        timeout: float | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        """Run a CDK command."""
+        """Run a CDK command.
+
+        Args:
+            command: CDK subcommand argv (e.g. ``["destroy", "gco-us-east-1", "--force"]``).
+            capture_output: Capture stdout / stderr instead of streaming.
+            env: Extra env vars merged onto the parent process environment.
+            timeout: Wall-clock timeout in seconds. ``None`` (default) waits
+                forever — preserving the old behaviour for ``synth`` / ``list``.
+                When set, on timeout we send SIGTERM, give the CDK process up
+                to 30 seconds to exit cleanly, then SIGKILL, and finally
+                re-raise ``subprocess.TimeoutExpired`` so callers can decide
+                how to handle a hung subprocess. ``deploy()`` and ``destroy()``
+                pass a per-stack budget so a wedged ``cdk destroy`` (e.g. its
+                post-delete polling loop hanging after CloudFormation has
+                already finished) can't block the orchestrator forever.
+        """
         full_env = os.environ.copy()
 
         # Inject PYTHONPATH so CDK's python3 subprocess can find aws_cdk
@@ -503,20 +519,33 @@ class StackManager:
 
         cdk_cmd = self._cdk_path.split() + command
 
-        if capture_output:
+        try:
+            if capture_output:
+                return subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit - cdk_cmd is a list of static CDK subcommands, no user-controlled shell injection
+                    cdk_cmd,
+                    cwd=self.project_root,
+                    capture_output=True,
+                    text=True,
+                    env=full_env,
+                    timeout=timeout,
+                )
             return subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit - cdk_cmd is a list of static CDK subcommands, no user-controlled shell injection
                 cdk_cmd,
                 cwd=self.project_root,
-                capture_output=True,
-                text=True,
                 env=full_env,
+                text=True,
+                timeout=timeout,
             )
-        return subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit - cdk_cmd is a list of static CDK subcommands, no user-controlled shell injection
-            cdk_cmd,
-            cwd=self.project_root,
-            env=full_env,
-            text=True,
-        )
+        except subprocess.TimeoutExpired:
+            # subprocess.run already sent SIGKILL and reaped the child by
+            # the time TimeoutExpired propagates. Surface the timeout so
+            # callers (deploy / destroy) can verify post-state via CFN.
+            logger.warning(
+                "cdk command timed out after %ss: %s",
+                timeout,
+                " ".join(cdk_cmd),
+            )
+            raise
 
     def list_stacks(self) -> list[str]:
         """List all available CDK stacks."""
@@ -646,8 +675,34 @@ class StackManager:
         # Set CDK_DOCKER env var if not already set
         env = {"CDK_DOCKER": runtime} if not os.environ.get("CDK_DOCKER") else None
 
-        result = self._run_cdk(cmd, env=env)
-        success = result.returncode == 0
+        # Per-stack wall-clock cap so a wedged ``cdk deploy`` (e.g. an
+        # IAM eventual-consistency wait that never completes) can't block
+        # the orchestrator forever. Default 60 minutes — long enough for
+        # a fresh EKS cluster cold start. Override via
+        # GCO_CDK_DEPLOY_TIMEOUT_SECONDS.
+        timeout_s = float(os.environ.get("GCO_CDK_DEPLOY_TIMEOUT_SECONDS", "3600"))
+
+        try:
+            result = self._run_cdk(cmd, env=env, timeout=timeout_s)
+            success = result.returncode == 0
+        except subprocess.TimeoutExpired:
+            print(
+                f"  cdk deploy timed out after {timeout_s}s for "
+                f"{stack_name or 'all stacks'}; verifying CloudFormation state..."
+            )
+            success = False
+
+        # Reconcile against CloudFormation. If the stack is in a terminal
+        # CREATE/UPDATE_COMPLETE state, the deploy actually succeeded
+        # despite cdk's exit code or timeout.
+        if stack_name and not all_stacks and not success:
+            cfn_status = self._get_stack_status(stack_name)
+            if cfn_status in ("CREATE_COMPLETE", "UPDATE_COMPLETE"):
+                print(
+                    f"  cdk reported a non-zero exit but {stack_name} is in "
+                    f"{cfn_status} in CloudFormation — treating as success."
+                )
+                success = True
 
         if not success and stack_name:
             self._diagnose_deploy_failure(stack_name)
@@ -744,22 +799,54 @@ class StackManager:
         if output_dir:
             cmd.extend(["--output", output_dir])
 
-        result = self._run_cdk(cmd)
+        # Per-stack wall-clock cap so a wedged ``cdk destroy`` (its
+        # post-delete polling loop hanging after CloudFormation has
+        # already finished) can't block the orchestrator forever. Default
+        # 45 minutes — enough for an EKS regional teardown which can take
+        # 25-30 minutes when SG / ENI cleanup serialises. Override via
+        # GCO_CDK_DESTROY_TIMEOUT_SECONDS.
+        timeout_s = float(os.environ.get("GCO_CDK_DESTROY_TIMEOUT_SECONDS", "2700"))
+
+        try:
+            result = self._run_cdk(cmd, timeout=timeout_s)
+            cdk_succeeded = result.returncode == 0
+        except subprocess.TimeoutExpired:
+            # CDK hung. Verify the AWS-side state below — if the stack
+            # is gone in CloudFormation, the destroy actually succeeded
+            # and the timeout was just CDK's polling loop wedged.
+            print(
+                f"  cdk destroy timed out after {timeout_s}s; verifying "
+                f"CloudFormation state for {stack_name}..."
+            )
+            cdk_succeeded = False
 
         # Restore the toggle if we changed it
         if toggle_restored:
             self._restore_analytics_disabled()
 
-        # If CDK still didn't delete it, fall back to CloudFormation directly
-        if (
-            result.returncode == 0
-            and stack_name
-            and not all_stacks
-            and self._stack_exists_in_cloudformation(stack_name)
-        ):
-            return self._cloudformation_delete_stack(stack_name)
+        # Reconcile against CloudFormation. Three outcomes:
+        # 1. cdk succeeded AND stack is gone → success
+        # 2. stack is gone (regardless of cdk return code or timeout) → success
+        # 3. stack still exists → fall back to direct CFN delete or surface failure
+        if stack_name and not all_stacks:
+            still_present = self._stack_exists_in_cloudformation(stack_name)
+            if not still_present:
+                # Whatever cdk did or didn't do, AWS confirms the stack
+                # is gone. Treat as success.
+                if not cdk_succeeded:
+                    print(
+                        f"  cdk reported a non-zero exit but {stack_name} is "
+                        f"already deleted in CloudFormation — treating as success."
+                    )
+                return True
+            # Stack still there. If cdk succeeded but CFN still has it,
+            # fall back to a direct CFN delete (existing behaviour).
+            if cdk_succeeded:
+                return self._cloudformation_delete_stack(stack_name)
+            # cdk failed AND stack is still present → real failure.
+            return False
 
-        return result.returncode == 0
+        return cdk_succeeded
 
     # ------------------------------------------------------------------
     # Image registry pre-destroy guards
@@ -916,6 +1003,27 @@ class StackManager:
             return "DELETE" not in status
         except Exception:
             return False
+
+    def _get_stack_status(self, stack_name: str) -> str | None:
+        """Return the live CloudFormation status of ``stack_name`` or None.
+
+        Used by ``deploy()`` to reconcile against AWS-side state when ``cdk
+        deploy`` returns a non-zero exit code or times out — if the stack
+        actually finished CREATE_COMPLETE or UPDATE_COMPLETE on the AWS
+        side, the deploy succeeded regardless of what cdk reported.
+        Returns None when the stack does not exist or the lookup itself
+        fails (network blip, perms, etc.) so callers can treat the
+        unknown case as 'cdk's verdict stands'.
+        """
+        import boto3
+
+        region = self._get_destroy_region(stack_name)
+        cfn = boto3.client("cloudformation", region_name=region)
+        try:
+            resp = cfn.describe_stacks(StackName=stack_name)
+            return str(resp["Stacks"][0]["StackStatus"])
+        except Exception:
+            return None
 
     def _cloudformation_delete_stack(self, stack_name: str) -> bool:
         """Delete a stack directly via CloudFormation API."""
@@ -1514,6 +1622,15 @@ class StackManager:
             Tuple of (overall_success, successful_stacks, failed_stacks)
         """
         stacks = self.list_stacks()
+
+        # Image-registry pre-destroy guard — fires before ANY teardown so
+        # operators don't end up with monitoring + regional + api-gateway
+        # already destroyed when the global-stack ECR delete fails on a
+        # non-empty repo. Skipped entirely under the default
+        # ``removal_policy: "retain"`` posture. See
+        # ``_image_registry_destroy_preflight`` for the exact rules.
+        if not self._image_registry_destroy_preflight(force=force):
+            return False, [], list(stacks)
 
         # Phase 0: Clean up backup vault recovery points so the global stack
         # can be deleted cleanly by CloudFormation.
