@@ -880,6 +880,7 @@ class TestDeployTimeoutAndReconciliation:
         with (
             patch("cli.stacks._detect_container_runtime", return_value="docker"),
             patch.object(StackManager, "_check_and_fix_stuck_stack"),
+            patch.object(StackManager, "ensure_bootstrapped", return_value=True),
             patch.object(StackManager, "_run_cdk") as mock_run,
             patch.object(StackManager, "_get_stack_status", return_value="UPDATE_COMPLETE"),
         ):
@@ -900,6 +901,7 @@ class TestDeployTimeoutAndReconciliation:
         with (
             patch("cli.stacks._detect_container_runtime", return_value="docker"),
             patch.object(StackManager, "_check_and_fix_stuck_stack"),
+            patch.object(StackManager, "ensure_bootstrapped", return_value=True),
             patch.object(StackManager, "_run_cdk") as mock_run,
             patch.object(StackManager, "_get_stack_status", return_value="UPDATE_COMPLETE"),
         ):
@@ -919,6 +921,7 @@ class TestDeployTimeoutAndReconciliation:
         with (
             patch("cli.stacks._detect_container_runtime", return_value="docker"),
             patch.object(StackManager, "_check_and_fix_stuck_stack"),
+            patch.object(StackManager, "ensure_bootstrapped", return_value=True),
             patch.object(StackManager, "_run_cdk") as mock_run,
             patch.object(StackManager, "_get_stack_status", return_value="CREATE_COMPLETE"),
             patch.object(StackManager, "_diagnose_deploy_failure"),
@@ -938,6 +941,7 @@ class TestDeployTimeoutAndReconciliation:
         with (
             patch("cli.stacks._detect_container_runtime", return_value="docker"),
             patch.object(StackManager, "_check_and_fix_stuck_stack"),
+            patch.object(StackManager, "ensure_bootstrapped", return_value=True),
             patch.object(StackManager, "_run_cdk") as mock_run,
             patch.object(StackManager, "_get_stack_status", return_value="UPDATE_COMPLETE"),
             patch.object(StackManager, "_diagnose_deploy_failure"),
@@ -956,6 +960,7 @@ class TestDeployTimeoutAndReconciliation:
         with (
             patch("cli.stacks._detect_container_runtime", return_value="docker"),
             patch.object(StackManager, "_check_and_fix_stuck_stack"),
+            patch.object(StackManager, "ensure_bootstrapped", return_value=True),
             patch.object(StackManager, "_run_cdk") as mock_run,
             # ROLLBACK_COMPLETE is not a success state.
             patch.object(StackManager, "_get_stack_status", return_value="ROLLBACK_COMPLETE"),
@@ -975,6 +980,7 @@ class TestDeployTimeoutAndReconciliation:
         with (
             patch("cli.stacks._detect_container_runtime", return_value="docker"),
             patch.object(StackManager, "_check_and_fix_stuck_stack"),
+            patch.object(StackManager, "ensure_bootstrapped", return_value=True),
             patch.object(StackManager, "_run_cdk") as mock_run,
             patch.object(StackManager, "_get_stack_status", return_value=None),
             patch.object(StackManager, "_diagnose_deploy_failure"),
