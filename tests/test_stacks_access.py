@@ -158,9 +158,7 @@ class TestStacksAccessEndpointWarning:
     points the operator at the ``cdk.json`` knob and the redeploy command.
     """
 
-    def _patch_describe_endpoint(
-        self, *, public: bool, public_cidrs: list[str] | None = None
-    ):
+    def _patch_describe_endpoint(self, *, public: bool, public_cidrs: list[str] | None = None):
         """Build a ``subprocess.run`` side effect that returns the right
         cluster-endpoint payload for the describe-cluster call and the
         usual success exit codes for everything else, with kubectl
@@ -186,10 +184,7 @@ class TestStacksAccessEndpointWarning:
             elif "kubectl" in cmd_str and not public:
                 # Mimic the laptop-from-outside-the-VPC failure mode.
                 mock.returncode = 1
-                mock.stderr = (
-                    "Unable to connect to the server: dial tcp 10.0.0.1:443: "
-                    "i/o timeout"
-                )
+                mock.stderr = "Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout"
             elif "kubectl" in cmd_str:
                 mock.stdout = "NAME STATUS\nnode1 Ready\n"
             elif "create-access-entry" in cmd_str:
