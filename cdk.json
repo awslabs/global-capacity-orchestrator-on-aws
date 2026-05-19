@@ -288,7 +288,12 @@
     "@aws-cdk/aws-stepfunctions-tasks:enableLogging": true,
     "@aws-cdk/aws-ec2:restrictDefaultSecurityGroup": true,
     "images": {
-      "removal_policy": "retain"
+      "removal_policy": "retain",
+      "empty_on_delete": false,
+      "lifecycle": {
+        "keep_tagged": 20,
+        "expire_untagged_days": 7
+      }
     }
   }
 }
