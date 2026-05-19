@@ -729,3 +729,54 @@ class TestCliRunner:
             output = cli_runner._run_cli("status")
         payload = json.loads(output)
         assert "gco CLI not found" in payload["error"]
+
+
+class TestImagesCtxWarning:
+    """Coverage for ``mcp.tools.images._ctx_warning``.
+
+    The helper is the only Context-aware piece of the destructive
+    image-tool path that's reachable without registering the gated
+    tools, and it's how operators (and the audit log) see a warning
+    before a destructive ECR operation runs.
+    """
+
+    def test_no_op_when_get_context_raises(self) -> None:
+        """Outside an MCP tool call, ``get_context()`` raises. The
+        helper should suppress the failure and return without trying
+        to dispatch a warning anywhere."""
+        from tools.images import _ctx_warning
+
+        # No Context active — call should complete cleanly.
+        asyncio.run(_ctx_warning("dropping tag v1 from gco/svc"))
+
+    def test_emits_warning_when_context_present(self) -> None:
+        """When a Context is active, the helper must forward the
+        message via ``ctx.warning``. We patch ``get_context`` to
+        return a stub whose ``warning`` records the dispatch."""
+        from tools import images as images_mod
+
+        captured: list[str] = []
+
+        class _StubCtx:
+            async def warning(self, message: str) -> None:
+                captured.append(message)
+
+        with patch("fastmcp.server.dependencies.get_context", return_value=_StubCtx()):
+            asyncio.run(images_mod._ctx_warning("about to destroy gco/svc"))
+
+        assert captured == ["about to destroy gco/svc"]
+
+    def test_swallows_warning_dispatch_failure(self) -> None:
+        """If the active Context's ``warning`` itself raises (e.g.
+        the transport is mid-shutdown), the helper must not propagate.
+        Otherwise a transient failure during cleanup could mask the
+        actual ECR operation result."""
+        from tools import images as images_mod
+
+        class _AngryCtx:
+            async def warning(self, message: str) -> None:
+                raise RuntimeError("transport closed")
+
+        with patch("fastmcp.server.dependencies.get_context", return_value=_AngryCtx()):
+            # Must not raise.
+            asyncio.run(images_mod._ctx_warning("oh no"))

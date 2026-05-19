@@ -35,6 +35,14 @@ class TestResourceQuotaTemplateVars:
             "{{MP_MAX_GPU_PER_MANIFEST}}": "8",
             "{{MP_MAX_REQUEST_BODY_BYTES}}": "1048576",
             "{{MP_ALLOWED_NAMESPACES}}": "default,gco-jobs",
+            # Image registry allowlist — augmented with the project's own
+            # ECR registry hostnames in regional_stack.py via
+            # ``_augment_trusted_registries_with_project_ecr``. The test
+            # only needs the rendered substitution to be a non-empty
+            # string; the augmentation itself is covered by
+            # tests/test_trusted_registries_augmentation.py.
+            "{{MP_TRUSTED_REGISTRIES}}": "docker.io,public.ecr.aws,123456789012.dkr.ecr.us-east-2.amazonaws.com",
+            "{{MP_TRUSTED_DOCKERHUB_ORGS}}": "nvidia,pytorch",
         }
         for key, value in replacements.items():
             content = content.replace(key, value)

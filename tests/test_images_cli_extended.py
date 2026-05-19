@@ -955,3 +955,36 @@ class TestFactory:
             mgr = get_image_manager(config=mock_config, region="us-east-2")
         assert isinstance(mgr, ImageManager)
         assert mgr.region == "us-east-2"
+
+
+class TestRewriteImageUriEdgeCases:
+    """Branch coverage for ``cli._image_uri.rewrite_image_uri_for_region``.
+
+    Two unhit branches in the previous suite:
+      1. URI containing ``://`` (looks like a URL with a scheme) — should
+         pass through unchanged.
+      2. ECR URI with no path/tag (just ``<account>.dkr.ecr.<region>.amazonaws.com``,
+         no trailing slash) — the rewrite still has to swap the region
+         segment but there's no ``parts[1]`` to append.
+    """
+
+    def test_uri_with_scheme_passes_through(self) -> None:
+        from cli._image_uri import rewrite_image_uri_for_region
+
+        # Anything containing ``://`` is treated as a non-bare ref and left
+        # alone, even when it would otherwise look like an ECR host.
+        for uri in (
+            "https://123456789012.dkr.ecr.us-east-2.amazonaws.com/gco/svc:v1",
+            "docker://123456789012.dkr.ecr.us-east-1.amazonaws.com/foo",
+        ):
+            assert rewrite_image_uri_for_region(uri, "eu-west-1") == uri
+
+    def test_bare_ecr_host_with_no_path(self) -> None:
+        from cli._image_uri import rewrite_image_uri_for_region
+
+        # Just the host — no ``/path`` or ``:tag``. The rewrite still
+        # swaps the region segment so the caller gets back a host with
+        # the destination region applied.
+        src = "123456789012.dkr.ecr.us-east-2.amazonaws.com"
+        out = rewrite_image_uri_for_region(src, "eu-west-1")
+        assert out == "123456789012.dkr.ecr.eu-west-1.amazonaws.com"

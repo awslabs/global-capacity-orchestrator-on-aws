@@ -573,3 +573,67 @@ class TestDagCmdValidateCoverage:
         result = runner.invoke(cli, ["dag", "validate", str(dag_file)])
         assert result.exit_code == 1
         assert "Failed to load DAG" in result.output
+
+
+class TestDagRunProgressCallback:
+    """Drive every branch of ``dag_cmd.dag_run.on_progress``.
+
+    The callback fires per-step from inside ``DagRunner.run`` with one
+    of six status values — ``started``, ``running``, ``succeeded``,
+    ``failed``, ``skipped``, or anything containing ``completed``.
+    Each branch routes to a different formatter call. The existing
+    happy-path test stubs ``runner.run`` with a return value but never
+    invokes the callback, leaving lines 74-86 of ``cli/commands/dag_cmd.py``
+    untested.
+    """
+
+    @patch("cli.dag.get_dag_runner")
+    def test_every_status_branch(self, mock_runner_fn, tmp_path):
+        from cli.dag import DagDefinition, DagStep
+        from cli.main import cli
+
+        m = tmp_path / "job.yaml"
+        m.write_text("kind: Job\napiVersion: batch/v1")
+        dag_yaml = {
+            "name": "demo",
+            "steps": [
+                {"name": "s1", "manifest": str(m)},
+                {"name": "s2", "manifest": str(m), "depends_on": ["s1"]},
+            ],
+        }
+        dag_file = tmp_path / "dag.yaml"
+        dag_file.write_text(yaml.dump(dag_yaml))
+
+        # Stub runner that drives the progress_callback through every
+        # branch before returning a successful DagDefinition.
+        def fake_run(_dag_def, *, region, timeout_per_step, progress_callback):
+            progress_callback("s1", "started", "Starting s1")
+            progress_callback("s1", "running", "kubectl apply...")
+            progress_callback("s1", "succeeded", "ok")
+            progress_callback("s2", "skipped", "dep failed")
+            progress_callback("s2", "failed", "boom")
+            progress_callback("", "completed in 1s", "DAG done")
+            return DagDefinition(
+                name="demo",
+                steps=[
+                    DagStep(name="s1", manifest=str(m), status="succeeded"),
+                    DagStep(name="s2", manifest=str(m), status="failed"),
+                ],
+            )
+
+        mock_runner = MagicMock()
+        mock_runner.run.side_effect = fake_run
+        mock_runner_fn.return_value = mock_runner
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["dag", "run", str(dag_file)])
+
+        # Failures in the returned DagDefinition propagate as exit 1.
+        assert result.exit_code == 1
+        # And every status branch surfaced its expected formatter call.
+        assert "Starting s1" in result.output
+        assert "kubectl apply" in result.output
+        assert "Completed" in result.output  # succeeded branch
+        assert "dep failed" in result.output  # skipped branch
+        assert "boom" in result.output  # failed branch
+        assert "DAG done" in result.output  # "completed" branch
