@@ -255,7 +255,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["gco", "cli"]
+source = ["gco", "cli", "mcp"]
 branch = true
 omit = [
     "*/tests/*",
@@ -275,7 +275,7 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "if typing.TYPE_CHECKING:",
 ]
-fail_under = 85
+fail_under = 90
 show_missing = true
 
 [tool.coverage.html]

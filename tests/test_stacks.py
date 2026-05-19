@@ -2393,6 +2393,7 @@ class TestStackManagerDeployAnalyticsAutoApiGateway:
         config.api_gateway_region = "us-east-2"
 
         with (
+            patch("cli.stacks._detect_container_runtime", return_value="docker"),
             patch.object(StackManager, "_run_cdk") as mock_run,
             patch.object(StackManager, "_check_and_fix_stuck_stack"),
             patch.object(StackManager, "ensure_bootstrapped", return_value=True),
@@ -2418,6 +2419,7 @@ class TestStackManagerDeployAnalyticsAutoApiGateway:
         config.api_gateway_region = "us-east-2"
 
         with (
+            patch("cli.stacks._detect_container_runtime", return_value="docker"),
             patch.object(StackManager, "_run_cdk") as mock_run,
             patch.object(StackManager, "_check_and_fix_stuck_stack"),
             patch.object(StackManager, "ensure_bootstrapped", return_value=True),

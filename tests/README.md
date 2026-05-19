@@ -24,7 +24,7 @@ This directory contains the test suite for GCO (Global Capacity Orchestrator on 
 python -m pytest
 
 # Run with coverage report
-python -m pytest --cov=gco --cov=cli --cov-report=term-missing
+python -m pytest --cov=gco --cov=cli --cov=mcp --cov-report=term-missing
 
 # Run specific test file
 python -m pytest tests/test_manifest_api.py -v
@@ -118,6 +118,7 @@ Tests are organized by the component they test:
 | `test_monitoring_stack.py` | Monitoring stack (CloudWatch) tests |
 | `test_stacks.py` | CLI stack management commands |
 | `test_stacks_extended.py` | Extended stack scenarios |
+| `test_stacks_extended_coverage.py` | Long tail of `cli/stacks.py` destroy-flow helpers — `_read_images_config` (cdk.json parser, missing-file + parse-error fallbacks, `removal_policy` validation), `_build_image_registry_inventory` (repo / tag / size / reference aggregation through a mocked `ImageManager`), `_image_registry_destroy_preflight` (every refusal/confirmation branch including TTY prompt, EOF, and `force=True`), `_stack_exists_in_cloudformation` and `_cloudformation_delete_stack` (boto3-shaped helpers with describe / delete / waiter mocks), `_get_destroy_region` fallbacks, the `_ensure_analytics_enabled_for_destroy` / `_restore_analytics_disabled` toggle wrappers, `_api_gateway_imports_from_analytics` (CloudFormation `list_exports` + `list_imports` walk), `_cleanup_backup_vault` (every recovery-point delete path), `_cleanup_eks_security_groups` (orphaned-ENI detach + SG delete), and the `_start_eks_sg_watchdog` background thread that drives the cleanup helper between destroy retries. Every AWS call is mocked. |
 
 ### Diagram Generator Tests
 
@@ -311,6 +312,7 @@ The MCP server has a layered test surface — unit tests for individual modules,
 | `test_mcp_image_resources.py` | Image-registry resource paths — `images://gco/index`, `images://gco/{name}/tags`, `images://gco/{name}/{tag}`, `images://gco/replication/status`. Each test mocks the underlying `ImageManager` so the resource handlers never reach ECR. |
 | `test_mcp_live_resources.py` | Live-state resource paths — `gco://jobs/{job_name}` (kubectl-driven YAML), `gco://inference/{endpoint_name}` (DynamoDB), `gco://k8s/{namespace}/{kind}/{name}` (live YAML), `gco://cluster/{region}/topology` (NodePools + pending pods aggregator), `costs://gco/summary/{days_window}`, `tasks://gco/{task_id}` (FastMCP task state). Validation rejection tests for invalid identifiers and a Resources-As-Tools round-trip via `read_resource`. |
 | `test_mcp_python_version.py` | Confirms the Python 3.14+ floor — imports `mcp/resources/config.py` (which uses the un-parenthesized except-tuple syntax that only parses on 3.14+) and asserts `feature_toggles_resource()` returns a non-empty string. Also greps the seven version-bump doc files for legacy `Python 3.10/3.11/3.12/3.13` references and fails if any remain. |
+| `test_mcp_extended_coverage.py` | Branch coverage for the long tail of MCP modules that other suites don't reach — `mcp/iam.py` (no-op when `GCO_MCP_ROLE_ARN` unset, role assumption with installed default session, failure propagation, non-isoformat expiration fallback), `mcp/resources/tasks.py` (task-id validation, `get_task` accessor + `_coerce_to_dict` fall-throughs for dict / `model_dump` / `__dict__` records, graceful error stub when no accessor is available), `mcp/resources/cluster.py` and `mcp/resources/k8s.py` (region / namespace / kind / name validation rejection, kubectl success / failure / timeout / missing-binary / invalid-JSON branches), `mcp/resources/iam_policies.py` and `mcp/resources/ci.py` (index emission against the live `.github` tree, every per-resource read path including not-found stubs and the config-file allowlist), `mcp/tools/docs.py` (query-only, topic-only, no-match, and `limit <= 0` branches of `find_docs`), every read-only and administrative tool body in `mcp/tools/images.py` plus the lazy `_get_manager` factory, the `AuditCaptureMiddleware` ContextVar reset on both normal exit and exception, and every error path in `mcp/cli_runner._run_cli` (non-zero exit, empty stdout, path-traversal rejection, `subprocess.TimeoutExpired`, missing CLI). |
 
 ### Image Registry Tests (CLI + global stack)
 
@@ -320,6 +322,8 @@ Image-registry tests cover the CLI side (`cli/images.py::ImageManager`), the glo
 |------|-------------|
 | `test_container_runtime.py` | `cli/_container_runtime.py::detect_container_runtime` priority order (`docker` > `finch` > `podman`), `CDK_DOCKER` override, `None` fallback. Mocks `shutil.which` and `subprocess.run` so no real runtime is required. |
 | `test_images_cli.py` | `ImageManager` validation, public methods, and CLI-surface argv translation — name/tag regex round-trip, ECR-URI rewrite identity for non-ECR refs, path-traversal rejection on the build context, idempotent `init`, default lifecycle policy shape (keep 20 tagged + expire untagged after 7d), build-runtime detection, immutable-tag rejection on a second build of the same tag. Hypothesis property tests for the regex round-trips and the URI-rewrite identity. |
+| `test_images_cli_extended.py` | Extended `ImageManager` coverage targeting the read-only / administrative / destructive method bodies — `list_repos` filtering to the project prefix and best-effort image-count fallbacks, `list_tags` rendering one row per tag plus an untagged-image row, `describe` empty + happy-path shapes, `replication_get` / `replication_status` aggregation, lifecycle get/set decoders, `replication_sync` writing `gco/*` to every other region (and the empty-rules path when no destinations remain), `delete_tag` / `delete_repo` summary shapes, `cleanup` aggregation and 100-id chunk batching, `prune` dry-run vs. actual delete, `orphans` cross-referencing inference image refs, the inference-import cycle break (deferred import returning empty when `InferenceManager` blows up), and the `_ecr_login` / `_check_tag_immutable_collision` pre-flight branches. Also covers `_isoformat`, `_parse_iso`, and the `get_image_manager` factory. |
+| `test_images_cmd.py` | `gco images` Click subgroup driven through `CliRunner` — every subcommand surface (`init`, `list`, `tags`, `describe`, `uri`, `build`, `push`, `delete-tag`, `delete-repo`, `cleanup`, `prune`, `orphans`, `lifecycle get/set`, `replication get/status/sync`) with success and error branches, the `--yes` confirmation gate on every destructive command, `--build-arg` parsing (rejects entries missing `=`), and the `--no-dry-run` toggle on `prune`. Mocks the `ImageManager` factory so no AWS or runtime calls happen. |
 | `test_image_lookup_handler.py` | The lookup-or-create custom resource Lambda (`lambda/image-lookup/handler.py`) — adopt-existing-repo path, create-on-missing path, and the `gco:retain=true` tag suppressing the Delete event even when `removal_policy: "destroy"` is set. |
 | `test_global_stack_images_config.py` | `GCOGlobalStack`'s `_parse_images_config` accepts the documented `cdk.json` schema with default values, the ECR replication rule materialises every deployment region as a destination, and the `gco/*` repo prefix is enforced. Validation tests reject malformed `removal_policy` values. |
 | `test_stacks_image_registry_destroy.py` | Pre-destroy inventory summary in `cli/stacks.py` (when `images.removal_policy: "destroy"` AND `images.empty_on_delete: true`, print repo / tag / GiB / referencing endpoint / recent-job reference counts; prompt on a TTY). Also the helpful-error path when `empty_on_delete: false` AND repos are non-empty — points the user at `gco images cleanup --all` or flipping the flag. |
@@ -516,18 +520,18 @@ valid_job_manifest = {
 
 ## Coverage Requirements
 
-The project requires a minimum of 90% test coverage. Current coverage is ~92%.
+The project enforces a minimum of 90% test coverage across `gco/`, `cli/`, and `mcp/`. Current coverage is ~92%.
 
 To check coverage:
 
 ```bash
-python -m pytest --cov=gco --cov=cli --cov-report=term-missing
+python -m pytest --cov=gco --cov=cli --cov=mcp --cov-report=term-missing
 ```
 
 To generate an HTML coverage report:
 
 ```bash
-python -m pytest --cov=gco --cov=cli --cov-report=html
+python -m pytest --cov=gco --cov=cli --cov=mcp --cov-report=html
 open htmlcov/index.html
 ```
 
