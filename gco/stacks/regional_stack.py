@@ -2845,8 +2845,33 @@ class GCORegionalStack(Stack):
         bucket policy independent of ``enforce_ssl=True`` so the deny is
         verifiable in the synthesized template under a known SID.
         """
+        # Teardown behavior is configurable (cdk.json::regional_shared_bucket.
+        # removal_policy) because this bucket holds artifacts jobs just
+        # produced: 'destroy' (the default, preserving historical teardown
+        # semantics for existing deployments and validation cycles) deletes
+        # bucket, logs, and key with the region; 'retain' lets all three
+        # outlive a regional destroy so checkpoints survive. Invalid values
+        # fail synthesis rather than silently choosing a side. Keep this in
+        # sync with the tolerant CLI-side read in cli/storage.py
+        # (_regional_shared_removal_policy) that `gco storage s3-inventory`
+        # reports through.
+        retention_context = self.node.try_get_context("regional_shared_bucket") or {}
+        configured_policy = str(retention_context.get("removal_policy", "destroy")).strip().lower()
+        if configured_policy not in ("destroy", "retain"):
+            raise ValueError(
+                "regional_shared_bucket.removal_policy must be 'destroy' or 'retain', "
+                f"got {retention_context.get('removal_policy')!r}"
+            )
+        retain_regional_shared = configured_policy == "retain"
+        regional_shared_removal_policy = (
+            RemovalPolicy.RETAIN if retain_regional_shared else RemovalPolicy.DESTROY
+        )
+
         # KMS key for the regional bucket. Matches the cluster-shared key
-        # posture: annual rotation, 7-day pending window, destroy-on-teardown.
+        # posture: annual rotation, 7-day pending window, destroy-on-teardown
+        # by default. Under 'retain' the key survives with the bucket —
+        # a retained bucket whose key was scheduled for deletion would be
+        # undecryptable, so the two always share a fate.
         self.regional_shared_kms_key = kms.Key(
             self,
             "RegionalSharedKmsKey",
@@ -2856,7 +2881,7 @@ class GCORegionalStack(Stack):
             ),
             enable_key_rotation=True,
             pending_window=Duration.days(7),
-            removal_policy=RemovalPolicy.DESTROY,
+            removal_policy=regional_shared_removal_policy,
         )
 
         # Key-policy grants for the service principals that encrypt/decrypt on
@@ -2906,8 +2931,8 @@ class GCORegionalStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             enforce_ssl=True,
             versioned=True,
-            removal_policy=RemovalPolicy.DESTROY,
-            auto_delete_objects=True,
+            removal_policy=regional_shared_removal_policy,
+            auto_delete_objects=not retain_regional_shared,
             lifecycle_rules=[
                 s3.LifecycleRule(
                     id="ExpireAccessLogs",
@@ -2938,8 +2963,8 @@ class GCORegionalStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             enforce_ssl=True,
             versioned=True,
-            removal_policy=RemovalPolicy.DESTROY,
-            auto_delete_objects=True,
+            removal_policy=regional_shared_removal_policy,
+            auto_delete_objects=not retain_regional_shared,
             server_access_logs_bucket=self.regional_shared_access_logs_bucket,
             server_access_logs_prefix="regional-shared/",
         )

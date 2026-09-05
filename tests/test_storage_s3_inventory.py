@@ -374,3 +374,63 @@ class TestInventoryCommand:
 
         assert result.exit_code == 1
         assert "boom" in result.output
+
+
+class TestConfigurableRemovalPolicy:
+    """``regional_shared_bucket.removal_policy`` flows into the report.
+
+    The regional-shared family's teardown behavior became deploy-time
+    configurable; the inventory's ``removal_policy`` field reports the
+    effective policy the next deploy will apply. The read is tolerant —
+    a report command must degrade to the shipped default rather than
+    crash on a missing or hand-mangled cdk.json.
+    """
+
+    @staticmethod
+    def _removal_policies(inventory: dict[str, Any]) -> dict[str, str]:
+        return {item["id"]: item["removal_policy"] for item in inventory["buckets"]}
+
+    @staticmethod
+    def _cdk_json(tmp_path: Any, removal_policy: Any) -> Any:
+        import json
+
+        path = tmp_path / "cdk.json"
+        path.write_text(
+            json.dumps({"context": {"regional_shared_bucket": {"removal_policy": removal_policy}}}),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_shipped_default_reports_destroy(self) -> None:
+        policies = self._removal_policies(_inventory())
+        assert policies["regional-shared:us-east-1"] == "destroy"
+        assert policies["regional-shared-access-logs:us-east-1"] == "destroy"
+
+    def test_retain_configuration_is_reported(self, tmp_path: Any) -> None:
+        with patch("cli.stacks._find_cdk_json", return_value=self._cdk_json(tmp_path, "retain")):
+            policies = self._removal_policies(_inventory())
+        assert policies["regional-shared:us-east-1"] == "retain"
+        assert policies["regional-shared-access-logs:us-east-1"] == "retain"
+        # Only the regional-shared family is configurable; everything else
+        # keeps its design-time policy.
+        assert policies["cluster-shared"] == "destroy"
+        assert policies["model-weights"] == "destroy"
+
+    def test_invalid_configured_value_falls_back_to_destroy(self, tmp_path: Any) -> None:
+        with patch(
+            "cli.stacks._find_cdk_json", return_value=self._cdk_json(tmp_path, "keep-forever")
+        ):
+            policies = self._removal_policies(_inventory())
+        assert policies["regional-shared:us-east-1"] == "destroy"
+
+    def test_missing_cdk_json_falls_back_to_destroy(self) -> None:
+        with patch("cli.stacks._find_cdk_json", return_value=None):
+            policies = self._removal_policies(_inventory())
+        assert policies["regional-shared:us-east-1"] == "destroy"
+
+    def test_unreadable_cdk_json_falls_back_to_destroy(self, tmp_path: Any) -> None:
+        broken = tmp_path / "cdk.json"
+        broken.write_text("{not json", encoding="utf-8")
+        with patch("cli.stacks._find_cdk_json", return_value=broken):
+            policies = self._removal_policies(_inventory())
+        assert policies["regional-shared:us-east-1"] == "destroy"

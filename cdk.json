@@ -279,6 +279,11 @@
       "cloudwatch_namespace": "GCO/Workloads"
     },
 
+    "_comment_regional_shared_bucket": "Teardown behavior for each region's always-on general-purpose bucket (and its access-logs bucket and KMS key). 'destroy' (default): a regional stack destroy deletes the bucket and every object in it — including artifacts jobs just produced. 'retain': bucket, access logs, and KMS key all survive the destroy (they become unmanaged and keep billing until deleted manually). Interim copy-out before a destroy under 'destroy': gco storage sync regional-shared:<region> ./checkpoints --prefix <prefix>. See docs/REGIONAL_SHARED_BUCKET.md (Removal policy).",
+    "regional_shared_bucket": {
+      "removal_policy": "destroy"
+    },
+
     "_comment_addons": "Optional add-on services (toggle enabled, then deploy-all to provision)",
 
     "_comment_valkey": "ElastiCache Serverless Valkey (Redis-compatible) cache. enabled: master toggle. max_data_storage_gb / max_ecpu_per_second: serverless usage caps (cost ceiling). snapshot_retention_limit: days of automatic backups retained. See docs/CUSTOMIZATION.md (Configure Valkey Cache) and https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/WhatIs.html.",

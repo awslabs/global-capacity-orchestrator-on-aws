@@ -330,29 +330,62 @@ that prefix — it is illustrative only, not reserved.
 
 ## Removal policy
 
+Teardown behavior is configurable through
+`cdk.json::regional_shared_bucket.removal_policy`, covering
 `Regional_Shared_Bucket`, its access-logs bucket, and
-`Regional_Shared_KMS_Key` all use:
+`Regional_Shared_KMS_Key` together (a retained bucket whose key was
+scheduled for deletion would be undecryptable, so the three always share a
+fate):
+
+```json
+{
+  "regional_shared_bucket": {
+    "removal_policy": "destroy"
+  }
+}
+```
+
+**`destroy` (the default).** `gco stacks destroy gco-<region>` empties and
+deletes the bucket:
 
 - `RemovalPolicy.DESTROY`
 - `auto_delete_objects=True` (on the two S3 buckets)
 - `pending_window=Duration.days(7)` (on the KMS key)
 
-**This means `gco stacks destroy gco-<region>` empties and deletes the
-bucket.** The KMS key enters a 7-day pending-delete window (the AWS
-minimum) and can be recovered with `aws kms cancel-key-deletion` if the
-destroy was accidental, but the bucket's own `RemovalPolicy.DESTROY`
-provides no grace period — deleted objects are gone.
+The KMS key enters a 7-day pending-delete window (the AWS minimum) and can
+be recovered with `aws kms cancel-key-deletion` if the destroy was
+accidental, but the bucket's own `RemovalPolicy.DESTROY` provides no grace
+period — deleted objects are gone. This matches the posture of
+`Cluster_Shared_Bucket` and stays the default so existing deployments'
+teardown behavior (including deploy/destroy validation cycles) does not
+change underneath them.
 
-This matches the posture of `Cluster_Shared_Bucket` and is deliberate:
-both buckets are deployment artifacts, not data stores of record. There is
-no `retain` opt-in.
+**`retain`.** The bucket, its access-logs bucket, and the KMS key all
+survive `gco stacks destroy gco-<region>`:
 
-Practical consequences:
+- artifacts a job just produced outlive the region;
+- all three resources become unmanaged by CloudFormation — they keep
+  billing and must be deleted manually when genuinely done
+  (`aws s3 rb --force`, `aws kms schedule-key-deletion`);
+- a subsequent redeploy of the same region **fails on the bucket-name
+  collision** until the retained bucket is deleted or the deployment uses
+  a different project name — plan for one or the other before destroying.
+
+Apply a change with `gco stacks deploy gco-<region> -y` per region. An
+invalid value fails synthesis; `gco storage s3-inventory` reports the
+policy the next deploy will apply in its `removal_policy` field.
+
+Practical consequences under `destroy`:
 
 - **Do not treat this bucket as the durable home for a deliverable.** If a
-  training run's checkpoints are the output you care about, copy them to a
-  bucket you own before tearing the region down, or write them to an
-  operator-supplied bucket instead.
+  training run's checkpoints are the output you care about, copy them out
+  before tearing the region down:
+
+  ```bash
+  gco storage sync regional-shared:<region> ./checkpoints --prefix <prefix>
+  ```
+
+  or flip the region to `retain` and redeploy before the destroy.
 - The access-logs bucket carries a lifecycle rule expiring objects after
   `s3_access_logs.retention_days` (default 90).
 - Versioning is enabled, which protects against accidental overwrite

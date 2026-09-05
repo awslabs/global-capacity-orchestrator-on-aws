@@ -558,7 +558,7 @@ class StorageManager:
             "purpose": descriptor.purpose,
             "pod_access": descriptor.pod_access,
             "discovery": descriptor.discovery,
-            "removal_policy": descriptor.removal_policy,
+            "removal_policy": _effective_removal_policy(descriptor),
             "reserved_prefixes": list(descriptor.reserved_prefixes),
             "sync_alias": (
                 f"{descriptor.sync_alias}:{region}"
@@ -1671,6 +1671,45 @@ class StorageManager:
             return False
         path_stat = path.stat()
         return path_stat.st_size == size and int(path_stat.st_mtime) >= int(modified.timestamp())
+
+
+def _regional_shared_removal_policy() -> str:
+    """The configured regional-shared teardown policy, read tolerantly.
+
+    Mirrors the synth-time read of ``cdk.json::regional_shared_bucket.
+    removal_policy`` in ``gco/stacks/regional_stack.py`` so ``gco storage
+    s3-inventory`` reports the policy the next deploy will apply. The
+    inventory is a read-only report, so unlike synthesis (which fails
+    loudly on an invalid value) this degrades to the shipped default
+    rather than crashing on a hand-edited or missing cdk.json.
+    """
+    import json
+
+    try:
+        from .stacks import _find_cdk_json
+
+        cdk_json_path = _find_cdk_json()
+        if cdk_json_path is None:
+            return "destroy"
+        with open(cdk_json_path, encoding="utf-8") as config_file:
+            cdk_config = json.load(config_file)
+        block = cdk_config.get("context", {}).get("regional_shared_bucket") or {}
+        value = str(block.get("removal_policy", "destroy")).strip().lower()
+    except Exception:
+        return "destroy"
+    return value if value in ("destroy", "retain") else "destroy"
+
+
+def _effective_removal_policy(descriptor: BucketDescriptor) -> str:
+    """A descriptor's teardown policy after applying cdk.json configuration.
+
+    The regional-shared bucket family is the one whose removal policy is
+    deploy-time configurable; every other bucket's policy is a fixed
+    property of the design.
+    """
+    if descriptor.id in ("regional-shared", "regional-shared-access-logs"):
+        return _regional_shared_removal_policy()
+    return descriptor.removal_policy
 
 
 @dataclass(frozen=True)
