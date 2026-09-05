@@ -150,7 +150,7 @@ async def list_jobs(
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error listing jobs: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 def _job_scheduling(processor: Any, namespace: str, name: str) -> dict[str, Any]:
@@ -205,7 +205,7 @@ async def get_job(namespace: str, name: str) -> Response:
                 status_code=404, detail=f"Job '{name}' not found in namespace '{namespace}'"
             ) from e
         logger.error(f"Error getting job: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.get("/{namespace}/{name}/logs")
@@ -330,7 +330,7 @@ async def get_job_logs(
         ) from e
     except Exception as e:
         logger.error(f"Error getting job logs: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.get("/{namespace}/{name}/events")
@@ -377,7 +377,7 @@ async def get_job_events(namespace: str, name: str) -> Response:
 
     except Exception as e:
         logger.error(f"Error getting job events: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.get("/{namespace}/{name}/pods")
@@ -435,7 +435,7 @@ async def get_job_pods(namespace: str, name: str) -> Response:
 
     except Exception as e:
         logger.error(f"Error getting job pods: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.get("/{namespace}/{name}/pods/{pod_name}/logs")
@@ -492,7 +492,7 @@ async def get_pod_logs(
         if "NotFound" in str(e) or "404" in str(e):
             raise HTTPException(status_code=404, detail=f"Pod '{pod_name}' not found") from e
         logger.error(f"Error getting pod logs: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.get("/{namespace}/{name}/metrics")
@@ -593,7 +593,7 @@ async def get_job_metrics(namespace: str, name: str) -> Response:
         raise
     except Exception as e:
         logger.error(f"Error getting job metrics: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.delete("/{namespace}/{name}")
@@ -663,7 +663,7 @@ async def delete_job(
                 status_code=404, detail=f"Job '{name}' not found in namespace '{namespace}'"
             ) from e
         logger.error(f"Error deleting job: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.delete("")
@@ -751,7 +751,7 @@ async def bulk_delete_jobs(request: BulkDeleteRequest) -> Response:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error bulk deleting jobs: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.post("/{namespace}/{name}/retry")
@@ -827,4 +827,4 @@ async def retry_job(namespace: str, name: str) -> Response:
         raise
     except Exception as e:
         logger.error(f"Error retrying job: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise HTTPException(status_code=500, detail="Internal server error") from e
