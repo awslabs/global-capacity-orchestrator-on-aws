@@ -274,6 +274,11 @@
       "retention_days": 90
     },
 
+    "_comment_workload_metrics": "CloudWatch metrics namespace job/inference workload pods (the gco-service-account Pod Identity role) may publish to via cloudwatch:PutMetricData. The IAM grant is namespace-conditioned, so pods can write metrics to exactly this namespace and nothing else. Change it if your training code emits to its own namespace; redeploy regional stacks to apply.",
+    "workload_metrics": {
+      "cloudwatch_namespace": "GCO/Workloads"
+    },
+
     "_comment_addons": "Optional add-on services (toggle enabled, then deploy-all to provision)",
 
     "_comment_valkey": "ElastiCache Serverless Valkey (Redis-compatible) cache. enabled: master toggle. max_data_storage_gb / max_ecpu_per_second: serverless usage caps (cost ceiling). snapshot_retention_limit: days of automatic backups retained. See docs/CUSTOMIZATION.md (Configure Valkey Cache) and https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/WhatIs.html.",

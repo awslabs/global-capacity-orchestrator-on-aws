@@ -35,6 +35,7 @@ This guide shows you how to customize GCO (Global Capacity Orchestrator on AWS) 
   - [Pod Resource Requests/Limits](#pod-resource-requestslimits)
   - [nodepool Limits](#nodepool-limits)
   - [Lambda Configuration](#lambda-configuration)
+- [Workload CloudWatch Metrics](#workload-cloudwatch-metrics)
 - [Enabling Additional Features](#enabling-additional-features)
 - [Helm Chart Configuration](#helm-chart-configuration)
   - [Enable EKS Logging](#enable-eks-logging)
@@ -1062,6 +1063,43 @@ kubectl_lambda = lambda_.Function(
     timeout=Duration.minutes(10),  # Increase from 5
     memory_size=1024,              # Increase from 512
     ...
+)
+```
+
+## Workload CloudWatch Metrics
+
+Job and inference pods run as `gco-service-account` (the shared Pod Identity
+role — the only identity with read/write on the regional shared bucket and
+its KMS key). That role may publish CloudWatch metrics with
+`cloudwatch:PutMetricData`, scoped by an IAM condition to exactly one
+namespace:
+
+```json
+{
+  "workload_metrics": {
+    "cloudwatch_namespace": "GCO/Workloads"
+  }
+}
+```
+
+- The default is the GCO-owned `GCO/Workloads` namespace. Point it at your
+  own namespace if your training code already emits somewhere specific
+  (for example `Acme/Training`).
+- The grant is namespace-conditioned, not resource-scoped —
+  `PutMetricData` does not support resource-level permissions, so the
+  `cloudwatch:namespace` condition carries the whole restriction. Pods
+  cannot write to any other namespace, including the `GCO/*` platform
+  namespaces used by the health monitor and manifest processor.
+- Apply with `gco stacks deploy <project>-<region> -y` per regional stack.
+
+From a training pod, publishing works with the standard SDK call:
+
+```python
+import boto3
+
+boto3.client("cloudwatch").put_metric_data(
+    Namespace="GCO/Workloads",
+    MetricData=[{"MetricName": "loss", "Value": 0.42}],
 )
 ```
 

@@ -2197,6 +2197,46 @@ class GCORegionalStack(Stack):
             ],
         )
 
+        # Workload pods must run as gco-service-account to write artifacts
+        # (it is the only identity with RW on the regional shared bucket plus
+        # KMS encrypt), and without this statement that same role could not
+        # publish training metrics — CloudWatch denied PutMetricData with a
+        # warning most trainers swallow. Grant exactly one namespace,
+        # configurable via cdk.json::workload_metrics.cloudwatch_namespace so
+        # a deployment can point its own consumers at it; the default is a
+        # GCO-owned workload namespace. PutMetricData does not support
+        # resource-level scoping (Resource must be *), so the namespace
+        # condition carries the whole restriction — the same shape as every
+        # platform role's metrics grant.
+        workload_metrics_config = self.node.try_get_context("workload_metrics") or {}
+        workload_metrics_namespace = str(
+            workload_metrics_config.get("cloudwatch_namespace") or "GCO/Workloads"
+        )
+        self.service_account_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["cloudwatch:PutMetricData"],
+                resources=["*"],
+                conditions={"StringEquals": {"cloudwatch:namespace": workload_metrics_namespace}},
+            )
+        )
+        acknowledge_nag_findings(
+            self.service_account_role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "cloudwatch:PutMetricData does not support resource-level "
+                        "scoping and requires Resource:*. The statement is "
+                        "constrained by a StringEquals condition to exactly one "
+                        "configured workload metric namespace, matching the "
+                        "namespace-conditioned metrics grants on the platform roles."
+                    ),
+                    "appliesTo": ["Resource::*"],
+                }
+            ],
+        )
+
         # Vector-store read path for workloads (opt-in feature). Deliberately
         # LOCAL-region ARNs: the store is a DynamoDB global table with a
         # replica in this cluster's region, so pods query locally instead of
