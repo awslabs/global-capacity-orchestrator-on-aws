@@ -60,6 +60,25 @@ def _by_layer(checks: list[DoctorCheck]) -> dict[str, DoctorCheck]:
     return {check.layer: check for check in checks}
 
 
+class TestDoctorCheckSerialization:
+    def test_as_dict_includes_the_remedy_when_present(self) -> None:
+        check = DoctorCheck(layer="reachability", status="warn", finding="PRIVATE", remedy="tunnel")
+        assert check.as_dict() == {
+            "layer": "reachability",
+            "status": "warn",
+            "finding": "PRIVATE",
+            "remedy": "tunnel",
+        }
+
+    def test_as_dict_omits_an_absent_remedy(self) -> None:
+        check = DoctorCheck(layer="authentication", status="ok", finding="entry exists")
+        assert check.as_dict() == {
+            "layer": "authentication",
+            "status": "ok",
+            "finding": "entry exists",
+        }
+
+
 class TestDiagnoseMissingCluster:
     def test_destroyed_cluster_with_stale_kubeconfig_names_both(self) -> None:
         checks = _by_layer(
