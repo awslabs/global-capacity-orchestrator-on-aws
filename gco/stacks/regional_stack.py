@@ -80,6 +80,7 @@ import aws_cdk.aws_eks_v2 as eks
 import yaml
 from aws_cdk import (
     Acknowledgment,
+    Annotations,
     CfnJson,
     CfnOutput,
     CfnTag,
@@ -1486,12 +1487,25 @@ class GCORegionalStack(Stack):
         eks_config = self.config.get_eks_cluster_config()
         endpoint_access_mode = eks_config.get("endpoint_access", "PRIVATE")
 
-        # Map config string to EKS EndpointAccess enum
-        endpoint_access = (
-            eks.EndpointAccess.PRIVATE
-            if endpoint_access_mode == "PRIVATE"
-            else eks.EndpointAccess.PUBLIC_AND_PRIVATE
-        )
+        # Map config string to EKS EndpointAccess enum. When the public
+        # endpoint is enabled, eks_cluster.public_access_cidrs restricts who
+        # can reach it; enabling it with no allowlist is a deliberate,
+        # loudly-announced 0.0.0.0/0 exposure rather than a silent default.
+        public_access_cidrs = [str(cidr) for cidr in (eks_config.get("public_access_cidrs") or [])]
+        if endpoint_access_mode == "PRIVATE":
+            endpoint_access = eks.EndpointAccess.PRIVATE
+        elif public_access_cidrs:
+            endpoint_access = eks.EndpointAccess.PUBLIC_AND_PRIVATE.only_from(*public_access_cidrs)
+        else:
+            Annotations.of(self).add_warning(
+                "eks_cluster.endpoint_access is PUBLIC_AND_PRIVATE with no "
+                "public_access_cidrs allowlist: the EKS API server accepts "
+                "connections from 0.0.0.0/0 (authentication still applies). "
+                "Set eks_cluster.public_access_cidrs to your egress CIDRs "
+                "(gco stacks eks endpoint set PUBLIC_AND_PRIVATE --cidr <cidr>) "
+                "or use PRIVATE with `gco cluster tunnel`."
+            )
+            endpoint_access = eks.EndpointAccess.PUBLIC_AND_PRIVATE
 
         # Create KMS key for EKS secrets encryption
         self.eks_encryption_key = kms.Key(
@@ -1601,11 +1615,77 @@ class GCORegionalStack(Stack):
         # - 44-nodepool-neuron.yaml: Trainium/Inferentia instances
         # These will be applied by the kubectl Lambda custom resource (created below)
 
+        # Developer access entries (eks_cluster.developer_access). The cluster
+        # authenticates through EKS access entries only, and until now no human
+        # principal could be granted one at deploy time — every access entry
+        # belonged to a platform Lambda. Absent or empty config synthesizes
+        # exactly today's entries.
+        self._create_developer_access_entries(eks_config)
+
         # Create IRSA role for service account to access secrets
         self._create_service_account_role()
 
         # Create kubectl Lambda for applying Kubernetes manifests
         self._create_kubectl_lambda()
+
+    def _create_developer_access_entries(self, eks_config: dict[str, Any]) -> None:
+        """Synthesize one EKS access entry per configured developer principal.
+
+        Each ``eks_cluster.developer_access`` element is
+        ``{principal_arn, scope, namespaces}``. The default is deliberately
+        the narrow grant — AmazonEKSEditPolicy scoped to the ``gco-jobs``
+        namespace, enough to submit and inspect jobs — not cluster-admin.
+        ``scope: cluster`` opts into AmazonEKSClusterAdminPolicy explicitly.
+        Config errors fail synthesis: a typo'd access grant must never
+        silently synthesize as nothing.
+        """
+        entries = eks_config.get("developer_access") or []
+        if not isinstance(entries, list):
+            raise ValueError("eks_cluster.developer_access must be a list of entries")
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"eks_cluster.developer_access[{index}] must be an object with "
+                    "principal_arn, and optionally scope and namespaces"
+                )
+            principal_arn = entry.get("principal_arn")
+            if not isinstance(principal_arn, str) or not principal_arn.startswith("arn:"):
+                raise ValueError(
+                    f"eks_cluster.developer_access[{index}].principal_arn must be an "
+                    f"IAM principal ARN, got {principal_arn!r}"
+                )
+            scope = str(entry.get("scope", "namespace")).strip().lower()
+            if scope == "cluster":
+                access_policy = eks.AccessPolicy.from_access_policy_name(
+                    "AmazonEKSClusterAdminPolicy",
+                    access_scope_type=eks.AccessScopeType.CLUSTER,
+                )
+            elif scope == "namespace":
+                namespaces = entry.get("namespaces") or ["gco-jobs"]
+                if not isinstance(namespaces, list) or not all(
+                    isinstance(namespace, str) and namespace for namespace in namespaces
+                ):
+                    raise ValueError(
+                        f"eks_cluster.developer_access[{index}].namespaces must be a "
+                        "list of namespace names"
+                    )
+                access_policy = eks.AccessPolicy.from_access_policy_name(
+                    "AmazonEKSEditPolicy",
+                    access_scope_type=eks.AccessScopeType.NAMESPACE,
+                    namespaces=namespaces,
+                )
+            else:
+                raise ValueError(
+                    f"eks_cluster.developer_access[{index}].scope must be 'namespace' "
+                    f"or 'cluster', got {entry.get('scope')!r}"
+                )
+            eks.AccessEntry(
+                self,
+                f"DeveloperAccessEntry{index}",
+                cluster=self.cluster,  # type: ignore[arg-type]
+                principal=principal_arn,
+                access_policies=[access_policy],
+            )
 
     # ── Shared toleration config for EKS add-ons ──────────────────────────
     # All GCO nodepools apply taints (nvidia.com/gpu, aws.amazon.com/neuron,

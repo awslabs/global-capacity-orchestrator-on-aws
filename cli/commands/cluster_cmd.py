@@ -195,3 +195,49 @@ def _block_until_interrupt() -> None:  # pragma: no cover - interactive wait
             time.sleep(3600)
     except KeyboardInterrupt:
         pass
+
+
+_DOCTOR_STATUS_MARKS = {"ok": "✓", "warn": "⚠", "fail": "✗", "unknown": "?"}
+
+
+@cluster.command("doctor")
+@click.option("--region", help="Cluster region (defaults to the first cdk.json regional entry).")
+@pass_config
+def doctor_cmd(config: Any, region: str | None) -> None:
+    """Diagnose EKS API access: reachability, authentication, authorization.
+
+    The three layers fail with misleading and overlapping symptoms — kubectl
+    timeouts (endpoint mode or CIDR allowlist), 'Unauthorized' (no EKS access
+    entry), RBAC 'Forbidden' (no associated access policy) — and a stale
+    kubeconfig context for a destroyed cluster produces the same 'no such
+    host' as a private endpoint. Doctor reports each layer separately with
+    the remedy for exactly what it found, and exits nonzero if any layer
+    fails.
+    """
+    from .. import cluster_doctor
+
+    formatter = get_output_formatter(config)
+    target_region = resolve_region(config, region)
+    cluster_name = f"{config.project_name}-{target_region}"
+
+    probe = cluster_doctor.probe_cluster(cluster_name, target_region)
+    checks = cluster_doctor.diagnose(probe)
+
+    if config.output_format in ("json", "yaml"):
+        formatter.print(
+            {
+                "cluster": cluster_name,
+                "region": target_region,
+                "checks": [check.as_dict() for check in checks],
+            }
+        )
+    else:
+        click.echo(f"# {cluster_name} ({target_region})")
+        for check in checks:
+            mark = _DOCTOR_STATUS_MARKS.get(check.status, "?")
+            click.echo(f"{mark} [{check.layer}] {check.finding}")
+            if check.remedy:
+                click.echo(f"    remedy: {check.remedy}")
+
+    if any(check.status == "fail" for check in checks):
+        sys.exit(1)

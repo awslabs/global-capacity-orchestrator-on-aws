@@ -1,5 +1,6 @@
 """Stack deployment and management commands."""
 
+import re
 import sys
 from typing import Any
 
@@ -91,6 +92,33 @@ def diff_stack(config: Any, stack_name: Any) -> None:
         sys.exit(1)
 
 
+def _print_cluster_access_hint(formatter: Any, config: Any, stack_name: str) -> None:
+    """Point at the cluster-access commands after a regional deploy.
+
+    Reaching the cluster API needs an access entry (authn/authz) on top of
+    endpoint reachability, and neither is discoverable from the deploy
+    output alone — the misdirection that stretched the original outage's
+    diagnosis. Printed only for base regional stacks (the ones that own an
+    EKS cluster).
+    """
+    prefix = f"{config.project_name}-"
+    if not stack_name.startswith(prefix):
+        return
+    suffix = stack_name[len(prefix) :]
+    if (
+        not suffix
+        or suffix in ("global", "api-gateway", "monitoring")
+        or suffix.startswith("regional-api")
+    ):
+        return
+    formatter.print_info(
+        f"kubectl access to {stack_name}: run 'gco stacks access -r {suffix}' to create "
+        "your EKS access entry (required even over a tunnel). Private endpoint? "
+        "'gco cluster tunnel --via-ssm auto' reaches it over SSM; 'gco cluster doctor' "
+        "diagnoses reachability, authentication, and authorization separately."
+    )
+
+
 @stacks.command("deploy")
 @click.argument("stack_name")
 @click.option("--yes", "-y", is_flag=True, help="Skip approval prompts")
@@ -132,6 +160,7 @@ def deploy_stack(config: Any, stack_name: Any, yes: Any, outputs_file: Any, tag:
 
         if success:
             formatter.print_success("Deployment completed successfully")
+            _print_cluster_access_hint(formatter, config, str(stack_name))
         else:
             formatter.print_error("Deployment failed")
             sys.exit(1)
@@ -442,12 +471,49 @@ def bootstrap_cdk(config: Any, account: Any, region: Any) -> None:
         sys.exit(1)
 
 
+def _print_eks_endpoint_drift(formatter: Any, config: Any, stack_name: str, region: str) -> None:
+    """Report configured-vs-live EKS endpoint drift for a regional stack.
+
+    An endpoint flip that was configured (``gco stacks eks endpoint set``)
+    but not deployed — or applied out-of-band and never written back to
+    cdk.json — must be visible in ``gco stacks status`` rather than
+    silently diverging. Best-effort: any probe or config-read failure
+    skips the drift report, never the status output.
+    """
+    if stack_name != f"{config.project_name}-{region}":
+        return  # Only base regional stacks own an EKS cluster.
+    try:
+        from ..cluster_doctor import endpoint_drift
+        from ..kubectl_helpers import describe_cluster_access
+        from ..stacks import get_eks_cluster_config
+
+        eks_config = get_eks_cluster_config()
+        live = describe_cluster_access(stack_name, region)
+        drift = endpoint_drift(
+            str(eks_config.get("endpoint_access", "PRIVATE")),
+            [str(cidr) for cidr in eks_config.get("public_access_cidrs") or []],
+            live,
+        )
+    except Exception:
+        return
+    if drift:
+        formatter.print_warning(
+            f"Config drift: {drift}. Run 'gco stacks deploy {stack_name} -y' to "
+            "converge the endpoint, or update cdk.json to match what is deployed."
+        )
+
+
 @stacks.command("status")
 @click.argument("stack_name")
 @click.option("--region", "-r", required=True, help="AWS region")
 @pass_config
 def stack_status(config: Any, stack_name: Any, region: Any) -> None:
-    """Get detailed status of a deployed stack."""
+    """Get detailed status of a deployed stack.
+
+    For a base regional stack this also compares the configured EKS endpoint
+    access (cdk.json eks_cluster) against the live cluster and reports any
+    drift.
+    """
     from ..stacks import get_stack_manager
 
     formatter = get_output_formatter(config)
@@ -458,6 +524,7 @@ def stack_status(config: Any, stack_name: Any, region: Any) -> None:
 
         if status:
             formatter.print(status.to_dict())
+            _print_eks_endpoint_drift(formatter, config, str(stack_name), str(region))
         else:
             formatter.print_error(f"Stack {stack_name} not found in {region}")
             sys.exit(1)
@@ -748,6 +815,111 @@ def setup_access(config: Any, cluster: Any, region: Any) -> None:
     except Exception as e:
         formatter.print_error(f"Failed to set up access: {e}")
         sys.exit(1)
+
+
+# =============================================================================
+# EKS access configuration commands
+# =============================================================================
+
+
+_CIDR_RE = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})$")
+
+
+def _valid_cidr(value: str) -> bool:
+    """True for a syntactically valid IPv4 CIDR (octets 0-255, prefix 0-32)."""
+    match = _CIDR_RE.match(value)
+    if not match:
+        return False
+    octets = [int(part) for part in match.groups()[:4]]
+    prefix = int(match.group(5))
+    return all(octet <= 255 for octet in octets) and prefix <= 32
+
+
+@stacks.group("eks")
+@pass_config
+def eks_cmd(config: Any) -> None:
+    """EKS cluster access configuration (cdk.json, synth-time only)."""
+
+
+@eks_cmd.group("endpoint")
+@pass_config
+def eks_endpoint_cmd(config: Any) -> None:
+    """EKS API endpoint access mode and CIDR allowlist."""
+
+
+@eks_endpoint_cmd.command("set")
+@click.argument("mode", type=click.Choice(["PRIVATE", "PUBLIC_AND_PRIVATE"], case_sensitive=False))
+@click.option(
+    "--cidr",
+    "cidrs",
+    multiple=True,
+    metavar="CIDR",
+    help=(
+        "Public-endpoint CIDR allowlist entry (repeatable). Required for "
+        "PUBLIC_AND_PRIVATE — widening access without an explicit allowlist is refused."
+    ),
+)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@pass_config
+def eks_endpoint_set(config: Any, mode: str, cidrs: tuple[str, ...], yes: bool) -> None:
+    """Set the EKS API endpoint access mode in cdk.json (audited, config only).
+
+    Synth-time only: nothing changes on AWS until 'gco stacks deploy'. Setting
+    PUBLIC_AND_PRIVATE requires at least one --cidr — opening the control
+    plane to 0.0.0.0/0 must be spelled out explicitly (--cidr 0.0.0.0/0), never
+    implied. The configured value appears in 'gco stacks status' as config
+    drift until the deploy converges the live endpoint.
+
+    Examples:
+        gco stacks eks endpoint set PUBLIC_AND_PRIVATE --cidr 203.0.113.7/32
+        gco stacks eks endpoint set PRIVATE -y
+    """
+    formatter = get_output_formatter(config)
+    normalized_mode = mode.upper()
+
+    if normalized_mode == "PUBLIC_AND_PRIVATE" and not cidrs:
+        formatter.print_error(
+            "Refusing to widen the EKS API endpoint without an explicit CIDR "
+            "allowlist. Pass at least one --cidr (e.g. --cidr 203.0.113.7/32); "
+            "an internet-open endpoint must be spelled out as --cidr 0.0.0.0/0."
+        )
+        sys.exit(1)
+
+    invalid = [cidr for cidr in cidrs if not _valid_cidr(cidr)]
+    if invalid:
+        formatter.print_error(
+            f"Invalid CIDR(s): {', '.join(invalid)} (expected e.g. 203.0.113.0/24)"
+        )
+        sys.exit(1)
+
+    summary = f"eks_cluster.endpoint_access -> {normalized_mode}"
+    if cidrs:
+        summary += f", public_access_cidrs -> [{', '.join(cidrs)}]"
+    if normalized_mode == "PRIVATE" and cidrs:
+        formatter.print_info(
+            "Note: public_access_cidrs only takes effect while endpoint_access is "
+            "PUBLIC_AND_PRIVATE; storing the allowlist for a later flip."
+        )
+    if not yes:
+        click.confirm(f"Update cdk.json: {summary}?", abort=True)
+
+    from ..stacks import update_eks_cluster_config
+
+    settings: dict[str, Any] = {"endpoint_access": normalized_mode}
+    if cidrs:
+        settings["public_access_cidrs"] = list(cidrs)
+    try:
+        update_eks_cluster_config(settings)
+    except RuntimeError as exc:
+        formatter.print_error(str(exc))
+        sys.exit(1)
+
+    formatter.print_success(summary)
+    formatter.print_info(
+        "Config only — no stacks were deployed. Run 'gco stacks deploy "
+        f"{config.project_name}-<region> -y' per regional stack to apply, then "
+        "'gco stacks access' / 'gco cluster doctor' to verify access."
+    )
 
 
 # =============================================================================

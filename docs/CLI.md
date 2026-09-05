@@ -1226,6 +1226,7 @@ Manage CDK infrastructure stacks.
 | [`gco stacks destroy-all`](#gco-stacks-destroy-all) | Destroy all stacks in correct order. |
 | [`gco stacks bootstrap`](#gco-stacks-bootstrap) | Bootstrap CDK in a region. |
 | [`gco stacks access`](#gco-stacks-access) | Configure kubectl access to a GCO EKS cluster. |
+| [`gco stacks eks`](#gco-stacks-eks) | Set the EKS API endpoint access mode and CIDR allowlist in cdk.json. |
 | [`gco stacks regions`](#gco-stacks-regions) | Manage deployment Regions in cdk.json (managed-config engine). |
 | [`gco stacks bedrock`](#gco-stacks-bedrock) | Manage Bedrock model and reasoning defaults in cdk.json (managed-config engine). |
 | [`gco stacks fsx`](#gco-stacks-fsx) | Manage [FSx for Lustre](https://docs.aws.amazon.com/fsx/latest/LustreGuide/what-is.html) storage. |
@@ -1422,6 +1423,47 @@ gco stacks access [OPTIONS]
 gco stacks access                             # Auto-detect region from cdk.json
 gco stacks access -r us-west-2                # Specific region
 gco stacks access -c my-cluster -r eu-west-1  # Custom cluster name
+```
+
+The access entry this creates is required even when you reach a PRIVATE
+endpoint through `gco cluster tunnel` — the tunnel solves reachability,
+not authentication. `gco cluster doctor` reports which of the two is
+actually missing. Deploy-time alternative: declare principals in
+`cdk.json` `eks_cluster.developer_access` for namespace-scoped grants
+(see [CUSTOMIZATION.md](CUSTOMIZATION.md#eks-cluster-configuration)).
+
+#### `gco stacks eks`
+
+EKS cluster access configuration in cdk.json. Synth-time only: nothing
+changes on AWS until the next `gco stacks deploy`, and `gco stacks status`
+reports the configured-vs-live endpoint as config drift until then.
+
+```bash
+gco stacks eks endpoint set MODE [OPTIONS]
+```
+
+**Subcommands:**
+
+- `endpoint set` - Set `eks_cluster.endpoint_access` to `PRIVATE` or
+  `PUBLIC_AND_PRIVATE`. Widening to `PUBLIC_AND_PRIVATE` **requires at least
+  one `--cidr`** — the command refuses to open the control plane without an
+  explicit allowlist, and an internet-open endpoint must be spelled out as
+  `--cidr 0.0.0.0/0`. Setting `PRIVATE` needs no CIDRs (a stored allowlist is
+  preserved for a later flip back).
+
+**Options (`endpoint set`):**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--cidr` | | Public-endpoint CIDR allowlist entry (repeatable). Required for `PUBLIC_AND_PRIVATE`. |
+| `--yes` | `-y` | Skip confirmation |
+
+**Examples:**
+
+```bash
+gco stacks eks endpoint set PUBLIC_AND_PRIVATE --cidr 203.0.113.7/32   # dev access from one IP
+gco stacks eks endpoint set PRIVATE -y                                  # back to production posture
+gco stacks deploy gco-us-east-1 -y                                      # apply the change
 ```
 
 #### `gco stacks regions`
@@ -4341,11 +4383,12 @@ Systems Manager tunnel, so `kubectl` works without a VPN or a standing bastion.
 connection plan for agents.
 
 <details>
-<summary>All <code>gco cluster</code> commands (1) — click to expand</summary>
+<summary>All <code>gco cluster</code> commands (2) — click to expand</summary>
 
 | Command | Description |
 | --- | --- |
 | [`gco cluster tunnel`](#gco-cluster-tunnel) | Open (or `--print`) an SSM tunnel to the private EKS API endpoint, optionally auto-provisioning a self-terminating ephemeral bastion. |
+| [`gco cluster doctor`](#gco-cluster-doctor) | Diagnose EKS API access layer by layer: reachability, authentication, authorization, and the kubeconfig context. |
 
 </details>
 
@@ -4394,6 +4437,47 @@ kubectl --server https://127.0.0.1:8443 \
 # Or just print the connection plan (no changes made, JSON for scripting):
 gco cluster tunnel --region us-east-1 --print
 gco --output json cluster tunnel --region us-east-1 --via-ssm i-0123456789abcdef0 --print
+```
+
+Opening a tunnel does **not** replace an EKS access entry: the tunnel solves
+reachability, while authentication still needs `gco stacks access -r <region>`
+(or a `developer_access` entry in cdk.json). Run `gco cluster doctor` when
+unsure which layer is failing.
+
+#### `gco cluster doctor`
+
+Diagnose EKS API access from this machine, one layer at a time. The layers
+fail with misleading and overlapping symptoms:
+
+- kubectl **timeouts** → reachability (a `PRIVATE` endpoint, or a public CIDR
+  allowlist your egress IP is outside of);
+- kubectl **`Unauthorized`** → authentication (no EKS access entry for your
+  principal — by default only platform Lambdas have one);
+- RBAC **`Forbidden`** → authorization (an entry with no associated access
+  policy);
+- kubectl **`no such host`** → a stale kubeconfig context pointing at a
+  **destroyed** cluster, which looks exactly like a private-endpoint problem
+  and misleads the diagnosis in the other direction.
+
+Each check reports `ok`/`warn`/`fail`/`unknown` with the remedy for what it
+actually found (`gco cluster tunnel`, `gco stacks access`,
+`aws eks update-kubeconfig`, or a redeploy). Exits nonzero if any layer fails.
+
+```bash
+gco cluster doctor [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--region` | Cluster region (defaults to the first `deployment_regions.regional` entry). |
+
+**Example:**
+
+```bash
+gco cluster doctor --region us-east-1
+gco --output json cluster doctor    # structured checks for scripting
 ```
 
 ---

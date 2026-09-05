@@ -13,6 +13,7 @@ This guide shows you how to customize GCO (Global Capacity Orchestrator on AWS) 
 - [EKS Cluster Configuration](#eks-cluster-configuration)
   - [Endpoint Access Modes](#endpoint-access-modes)
   - [Configuring Endpoint Access](#configuring-endpoint-access)
+  - [Developer Access Entries](#developer-access-entries)
   - [Job Submission with Private Endpoints](#job-submission-with-private-endpoints)
 - [Configuring GPU Nodepools](#configuring-gpu-nodepools)
   - [Modify Instance Types](#modify-instance-types)
@@ -361,16 +362,81 @@ Edit `cdk.json` to change the endpoint access mode:
 {
   "context": {
     "eks_cluster": {
-      "endpoint_access": "PUBLIC_AND_PRIVATE"
+      "endpoint_access": "PUBLIC_AND_PRIVATE",
+      "public_access_cidrs": ["203.0.113.7/32"]
     }
   }
 }
+```
+
+`public_access_cidrs` restricts who can reach the public endpoint. Leaving it
+empty means `0.0.0.0/0` — synthesis prints a loud warning naming that exposure
+rather than choosing it silently. Prefer the CLI, which refuses to widen
+access without an explicit allowlist and records the change atomically:
+
+```bash
+gco stacks eks endpoint set PUBLIC_AND_PRIVATE --cidr 203.0.113.7/32
+gco stacks eks endpoint set PRIVATE -y     # back to the production posture
 ```
 
 After changing, redeploy the regional stacks:
 
 ```bash
 gco stacks deploy gco-us-east-1 -y
+```
+
+Until the deploy, `gco stacks status gco-us-east-1 -r us-east-1` reports the
+configured-vs-live endpoint as config drift.
+
+### Developer Access Entries
+
+Reachability is only one of **three independent layers** — the cluster
+authenticates through [EKS access entries](https://docs.aws.amazon.com/eks/latest/userguide/access-entries.html),
+and by default only the platform Lambda roles have one. A public endpoint or
+an SSM tunnel without an access entry still fails with `Unauthorized`.
+
+Two ways to grant a human principal access:
+
+**One-shot, after deploy** (creates an access entry + associates the
+cluster-admin policy for the caller):
+
+```bash
+gco stacks access -r us-east-1
+```
+
+**Declared at deploy time** in `cdk.json`, for grants that should survive
+redeploys and be reviewable in config:
+
+```json
+{
+  "context": {
+    "eks_cluster": {
+      "developer_access": [
+        {"principal_arn": "arn:aws:iam::111122223333:role/DeveloperRole"},
+        {
+          "principal_arn": "arn:aws:iam::111122223333:user/alice",
+          "scope": "namespace",
+          "namespaces": ["gco-jobs", "gco-inference"]
+        },
+        {"principal_arn": "arn:aws:iam::111122223333:role/PlatformAdmin", "scope": "cluster"}
+      ]
+    }
+  }
+}
+```
+
+- The default (`scope: namespace`, `namespaces: ["gco-jobs"]`) grants
+  `AmazonEKSEditPolicy` scoped to the job namespace — enough to submit and
+  inspect jobs, deliberately not cluster-admin.
+- `scope: cluster` grants `AmazonEKSClusterAdminPolicy` explicitly.
+- An absent or empty list changes nothing; invalid entries fail synthesis
+  loudly instead of silently granting nothing.
+
+Diagnose which layer is actually failing (reachability, authentication,
+authorization, or a stale kubeconfig context) with:
+
+```bash
+gco cluster doctor --region us-east-1
 ```
 
 ### Job Submission with Private Endpoints

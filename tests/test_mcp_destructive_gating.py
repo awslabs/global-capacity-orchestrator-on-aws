@@ -78,6 +78,7 @@ UMBRELLA_FLAG_TOOLS = (
     "add_deployment_region",
     "remove_deployment_region",
     "set_deployment_region",
+    "set_eks_endpoint_access",
     "set_mission_default_model",
     "set_capacity_advisor_default_model",
     "set_claude_code_default_model",

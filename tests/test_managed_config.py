@@ -62,6 +62,7 @@ REGION_TOOLS = (
     "add_deployment_region",
     "remove_deployment_region",
     "set_deployment_region",
+    "set_eks_endpoint_access",
     "set_mission_default_model",
     "set_capacity_advisor_default_model",
     "set_claude_code_default_model",
@@ -1346,6 +1347,33 @@ class TestMcpRegionToolsArgv:
             run_mcp.set_deployment_region(role="monitoring", region="us-west-2")
             cmd = mock.call_args[0][0]
         assert cmd[-6:] == ["stacks", "regions", "set", "monitoring", "us-west-2", "-y"]
+
+    @patch.dict(os.environ, {"GCO_ENABLE_CONFIG_MANAGEMENT": "true"})
+    def test_set_eks_endpoint_access_argv_with_cidrs(self):
+        importlib.reload(run_mcp)
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            run_mcp.set_eks_endpoint_access(mode="PUBLIC_AND_PRIVATE", cidrs=["203.0.113.7/32"])
+            cmd = mock.call_args[0][0]
+        assert cmd[-8:] == [
+            "stacks",
+            "eks",
+            "endpoint",
+            "set",
+            "PUBLIC_AND_PRIVATE",
+            "--cidr",
+            "203.0.113.7/32",
+            "-y",
+        ]
+
+    @patch.dict(os.environ, {"GCO_ENABLE_CONFIG_MANAGEMENT": "true"})
+    def test_set_eks_endpoint_access_argv_private(self):
+        importlib.reload(run_mcp)
+        with patch("cli_runner.subprocess.run") as mock:
+            mock.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            run_mcp.set_eks_endpoint_access(mode="PRIVATE")
+            cmd = mock.call_args[0][0]
+        assert cmd[-6:] == ["stacks", "eks", "endpoint", "set", "PRIVATE", "-y"]
 
     @patch.dict(os.environ, {"GCO_ENABLE_CONFIG_MANAGEMENT": "true"})
     def test_set_mission_model_argv(self):

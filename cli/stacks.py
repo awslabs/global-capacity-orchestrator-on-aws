@@ -6311,6 +6311,32 @@ def update_fsx_config(settings: dict[str, Any], region: str | None = None) -> No
 
 
 # =============================================================================
+# EKS cluster access configuration (endpoint mode + CIDR allowlist)
+# =============================================================================
+
+_EKS_CLUSTER_DEFAULTS: dict[str, Any] = {
+    "endpoint_access": "PRIVATE",
+    "public_access_cidrs": [],
+    "developer_access": [],
+}
+
+
+def get_eks_cluster_config() -> dict[str, Any]:
+    """Get the current eks_cluster configuration from cdk.json.
+
+    Synth-time only: the values are read by ``gco/stacks/regional_stack.py``
+    at the next deploy. There is no per-region override — the block applies
+    to every regional cluster.
+    """
+    return _get_feature_config("eks_cluster", _EKS_CLUSTER_DEFAULTS, None)
+
+
+def update_eks_cluster_config(settings: dict[str, Any]) -> None:
+    """Update the eks_cluster configuration in cdk.json (config only)."""
+    _update_feature_config("eks_cluster", settings, _EKS_CLUSTER_DEFAULTS, None)
+
+
+# =============================================================================
 # Generic feature toggle helpers (used by FSx, Valkey, Aurora, and future features)
 # =============================================================================
 
