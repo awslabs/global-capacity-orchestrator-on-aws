@@ -41,8 +41,8 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 # <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
-# Generated at (UTC): 2026-09-01T14:42:56Z
-# Generated from Git commit: 89b000378ed5a912a38c06f4feab2b029936ebcc
+# Generated at (UTC): 2026-09-05T22:58:10Z
+# Generated from Git commit: 745b3fa3a9af9380bfe2797a5d9716fe8ce3a557
 # Flowchart(s) generated from this file:
 #   * ``JobStore.claim_job`` -> ``diagrams/code_diagrams/gco/services/template_store.JobStore_claim_job.html``
 #     (PNG: ``diagrams/code_diagrams/gco/services/template_store.JobStore_claim_job.png``)
