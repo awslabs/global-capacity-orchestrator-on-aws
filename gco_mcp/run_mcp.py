@@ -780,6 +780,7 @@ _PUBLIC_EXPORTS = [
     "set_codex_default_model",
     "set_codex_reasoning_effort",
     "set_deployment_region",
+    "set_eks_endpoint_access",
     "set_mission_default_model",
     "set_mooncake_topology",
     "setup_cluster_access",
