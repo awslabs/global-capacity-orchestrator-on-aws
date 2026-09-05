@@ -96,6 +96,8 @@ from gco.services.manifest_processor import (
     extract_trainjob_pod_specs,
     validate_resource_kind,
 )
+from gco.services.structured_logging import sanitize_log_value
+from gco.services.template_store import JobStore
 
 # <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
 # Generated at (UTC): 2026-09-03T18:56:22Z
@@ -160,6 +162,18 @@ def _parse_memory_string(memory_str: str) -> int:
 # and populated from cdk.json queue_processor settings during CDK deploy.
 QUEUE_URL = os.environ.get("JOB_QUEUE_URL", "")
 REGION = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
+# Jobs-table failure recording. Set by post-helm-sqs-consumer.yaml from the
+# stack's {{JOBS_TABLE_NAME}} replacement; the companion DYNAMODB_REGION env
+# var is consumed by JobStore itself. Empty (an older deployed ScaledJob
+# template) disables recording and preserves the pre-recording behavior.
+JOBS_TABLE_NAME = os.environ.get("JOBS_TABLE_NAME", "")
+# The job queue's redrive policy dead-letters a message after
+# maxReceiveCount failed receives (3 — see the JobQueue definition in
+# gco/stacks/regional_stack.py). The receive that reaches this count is the
+# message's final delivery, so it is the one attempt whose failure is
+# recorded as a terminal FAILED job record. Env override exists for tests
+# and for operators who retune the queue's redrive policy out-of-band.
+FINAL_RECEIVE_COUNT = int(os.environ.get("QP_JOB_QUEUE_MAX_RECEIVE_COUNT", "3"))
 _allowed_namespaces_env = os.environ.get("ALLOWED_NAMESPACES")
 ALLOWED_NAMESPACES = (
     {"gco-jobs"}
@@ -326,14 +340,80 @@ def _is_image_trusted(image: str) -> bool:
     return first in TRUSTED_DOCKERHUB_ORGS
 
 
+# The standard in-cluster credential paths the kubernetes client reads. The
+# worker's ServiceAccount sets ``automountServiceAccountToken: false``, so
+# these exist ONLY because post-helm-sqs-consumer.yaml projects the
+# ``kubernetes-api-token`` volume at this exact mount point.
+_SERVICEACCOUNT_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+_SERVICEACCOUNT_TOKEN_PATH = f"{_SERVICEACCOUNT_DIR}/token"
+
+# Mirrors gco.services.central_queue_worker._MAX_ERROR_LENGTH — every error
+# string persisted to the jobs table is bounded the same way on both paths.
+_MAX_ERROR_LENGTH = 2_000
+
+
+def _bounded_error(value: object) -> str:
+    """Bound user/runtime error text before persisting it in DynamoDB."""
+    text = str(value)
+    return text if len(text) <= _MAX_ERROR_LENGTH else f"{text[:_MAX_ERROR_LENGTH]}...[truncated]"
+
+
+class KubernetesConfigurationError(RuntimeError):
+    """The process cannot construct a Kubernetes client at all.
+
+    Distinguishes a config/environment failure (the pod can never apply
+    anything; retrying the same message cannot succeed) from a per-message
+    failure (malformed body, validation, apply errors — which retain the
+    message for visibility-timeout retry and the DLQ).
+    """
+
+
+def _incluster_failure_detail(error: Exception) -> str:
+    """Name the actual broken precondition instead of the client's generic error."""
+    service_account = (
+        os.environ.get("SERVICE_ACCOUNT_NAME") or "<unknown - SERVICE_ACCOUNT_NAME unset>"
+    )
+    if not os.path.exists(_SERVICEACCOUNT_TOKEN_PATH):
+        return (
+            f"no Kubernetes API token at {_SERVICEACCOUNT_TOKEN_PATH}. This pod runs as "
+            f"ServiceAccount {service_account!r}, which sets automountServiceAccountToken: "
+            "false, so the token exists only when the workload projects one at "
+            f"{_SERVICEACCOUNT_DIR} (the kubernetes-api-token projected volume in "
+            "post-helm-sqs-consumer.yaml). Redeploy so the base-phase ServiceAccount "
+            "hardening and the post-Helm token projection are from the same release."
+        )
+    return (
+        f"a Kubernetes API token exists at {_SERVICEACCOUNT_TOKEN_PATH} but in-cluster "
+        f"configuration still failed for ServiceAccount {service_account!r}: {error}"
+    )
+
+
 def load_k8s() -> None:
-    """Load Kubernetes configuration (in-cluster or local kubeconfig)."""
+    """Load Kubernetes configuration (in-cluster, or local kubeconfig off-cluster).
+
+    Inside a pod (``KUBERNETES_SERVICE_HOST`` set) an in-cluster failure is
+    terminal and raises :class:`KubernetesConfigurationError` naming the
+    missing token path and ServiceAccount — it must NOT fall through to
+    ``load_kube_config()``, whose unguarded ``ConfigException`` used to kill
+    the pod before its first SQS receive and crash-loop invisibly.
+    """
     try:
         config.load_incluster_config()
         log.info("Loaded in-cluster Kubernetes configuration")
-    except config.ConfigException:
+        return
+    except config.ConfigException as incluster_error:
+        if os.environ.get("KUBERNETES_SERVICE_HOST"):
+            raise KubernetesConfigurationError(
+                _incluster_failure_detail(incluster_error)
+            ) from incluster_error
+    try:
         config.load_kube_config()
         log.info("Loaded local kubeconfig")
+    except config.ConfigException as kubeconfig_error:
+        raise KubernetesConfigurationError(
+            "no Kubernetes credentials available: not running in a cluster "
+            f"(KUBERNETES_SERVICE_HOST unset) and no local kubeconfig: {kubeconfig_error}"
+        ) from kubeconfig_error
 
 
 def validate_manifest(m: dict[str, Any]) -> tuple[bool, str]:
@@ -759,6 +839,7 @@ def process_one_message() -> bool:
         MaxNumberOfMessages=1,
         WaitTimeSeconds=5,
         MessageAttributeNames=["All"],
+        AttributeNames=["ApproximateReceiveCount"],
     )
 
     messages = resp.get("Messages", [])
@@ -810,15 +891,24 @@ def process_one_message() -> bool:
         for i, reason in validation_errors:
             log.error("  manifest[%d] validation failed: %s", i, reason)
         log.error("Job %s failed prevalidation; message will return to queue", job_id)
+        _record_failure_on_final_receive(
+            msg,
+            body,
+            job_id,
+            message="SQS job failed prevalidation",
+            error="; ".join(f"manifest[{i}]: {reason}" for i, reason in validation_errors),
+        )
         return False
 
     failed = False
+    failure_details: list[str] = []
     for i, manifest in enumerate(manifests):
         try:
             result = apply_manifest(manifest)
         except Exception as e:
             log.error("  manifest[%d] apply raised: %s", i, e)
             failed = True
+            failure_details.append(f"manifest[{i}] apply raised: {e}")
             continue
         log.info(
             "  manifest[%d]: %s %s/%s: %s",
@@ -830,12 +920,22 @@ def process_one_message() -> bool:
         )
         if not result.is_successful():
             failed = True
+            failure_details.append(
+                f"manifest[{i}] {result.kind}/{result.name}: {result.message or result.status}"
+            )
 
     if failed:
         # Don't delete the SQS message — it will become visible again after the
         # visibility timeout and retry. The queue redrive policy eventually
         # moves it to the DLQ for operator inspection.
         log.error("Job %s had failures; message will return to queue", job_id)
+        _record_failure_on_final_receive(
+            msg,
+            body,
+            job_id,
+            message="SQS job could not be applied to Kubernetes",
+            error="; ".join(failure_details),
+        )
         return False
 
     sqs.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=receipt)
@@ -843,9 +943,180 @@ def process_one_message() -> bool:
     return True
 
 
+def _receive_count(msg: dict[str, Any]) -> int:
+    """The message's ApproximateReceiveCount, defaulting to 1 when unreadable."""
+    raw = (msg.get("Attributes") or {}).get("ApproximateReceiveCount", "1")
+    try:
+        return max(int(raw), 1)
+    except TypeError, ValueError:
+        return 1
+
+
+def _record_job_failure(
+    job_id: str,
+    *,
+    namespace: str,
+    error: str,
+    message: str,
+    priority: int = 0,
+    submitted_at: str | None = None,
+) -> bool:
+    """Best-effort terminal FAILED record for an SQS job; never raises.
+
+    Recording failures must not change SQS retention semantics — the queue
+    and its DLQ remain the source of truth when DynamoDB is unreachable, so
+    every failure here is swallowed after logging.
+    """
+    if not JOBS_TABLE_NAME:
+        log.error(
+            "JOBS_TABLE_NAME not set; job %s failure will not be recorded",
+            sanitize_log_value(job_id),
+        )
+        return False
+    try:
+        store = JobStore(table_name=JOBS_TABLE_NAME)
+        created = store.record_job_failure(
+            job_id,
+            target_region=REGION,
+            namespace=namespace,
+            error=_bounded_error(error),
+            message=message,
+            priority=priority,
+            submitted_at=submitted_at,
+        )
+    except Exception:
+        log.exception("Unable to record FAILED for job %s", sanitize_log_value(job_id))
+        return False
+    if created:
+        log.info("Recorded FAILED job record for %s", sanitize_log_value(job_id))
+    else:
+        log.info(
+            "Job %s already has a centralized queue record; leaving it untouched",
+            sanitize_log_value(job_id),
+        )
+    return created
+
+
+def _record_failure_on_final_receive(
+    msg: dict[str, Any],
+    body: dict[str, Any],
+    job_id: str,
+    *,
+    message: str,
+    error: str,
+) -> None:
+    """Persist a FAILED record when this receive is the message's last delivery.
+
+    Earlier receives keep today's retain-for-retry behavior untouched — a
+    transient failure that succeeds on retry must not leave a terminal
+    record. On the final delivery (the receive that exhausts the queue's
+    redrive maxReceiveCount) the message is about to dead-letter, so its
+    job is recorded FAILED with the bounded failure detail.
+    """
+    if _receive_count(msg) < FINAL_RECEIVE_COUNT:
+        return
+    priority = body.get("priority", 0)
+    if not isinstance(priority, int):
+        priority = 0
+    submitted_at = body.get("submitted_at")
+    _record_job_failure(
+        job_id,
+        namespace=str(body.get("namespace", "gco-jobs")),
+        error=error,
+        message=message,
+        priority=priority,
+        submitted_at=submitted_at if isinstance(submitted_at, str) else None,
+    )
+
+
+def drain_one_message_after_config_failure(reason: str) -> bool:
+    """Convert one queued message into a visible FAILED record, then delete it.
+
+    A pod that cannot construct a Kubernetes client can never apply
+    anything, and the failure happens before the first SQS receive — so
+    the receive count never increments, the redrive policy never fires,
+    and KEDA restarts the loop forever with nothing recorded. That is the
+    exact shape of the SQS submission-path outage this module is being
+    hardened against. Draining one message per failed pod records the
+    terminal failure where operators and submitters look (the jobs table)
+    while emptying the queue at the same bounded rate KEDA scales pods.
+
+    The message is deleted ONLY after its ``job_id`` was recorded FAILED.
+    A message whose ``job_id`` cannot be parsed — or whose record could not
+    be written — is retained for the normal visibility-timeout/DLQ path.
+    Returns whether one message was drained with a record.
+    """
+    if not QUEUE_URL:
+        log.error("JOB_QUEUE_URL not set")
+        return False
+    if not JOBS_TABLE_NAME:
+        log.error("JOBS_TABLE_NAME not set; cannot record failures, leaving the queue untouched")
+        return False
+
+    sqs = boto3.client("sqs", region_name=REGION)
+    resp = sqs.receive_message(
+        QueueUrl=QUEUE_URL,
+        MaxNumberOfMessages=1,
+        WaitTimeSeconds=5,
+        MessageAttributeNames=["All"],
+        AttributeNames=["ApproximateReceiveCount"],
+    )
+    messages = resp.get("Messages", [])
+    if not messages:
+        log.info("No messages in queue to drain")
+        return False
+
+    msg = messages[0]
+    receipt = msg.get("ReceiptHandle")
+    try:
+        body = json.loads(msg.get("Body", ""))
+    except json.JSONDecodeError, TypeError:
+        body = None
+    job_id = body.get("job_id") if isinstance(body, dict) else None
+    if not receipt or not isinstance(job_id, str) or not job_id:
+        log.error("Cannot identify the job in the queued message; retaining it for the DLQ")
+        return False
+
+    priority = body.get("priority", 0)
+    submitted_at = body.get("submitted_at")
+    recorded = _record_job_failure(
+        job_id,
+        namespace=str(body.get("namespace", "gco-jobs")),
+        error=f"queue processor could not initialize Kubernetes credentials: {reason}",
+        message="Queue processor configuration failure",
+        priority=priority if isinstance(priority, int) else 0,
+        submitted_at=submitted_at if isinstance(submitted_at, str) else None,
+    )
+    if not recorded:
+        return False
+
+    sqs.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=receipt)
+    log.error(
+        "Job %s recorded FAILED and drained after a configuration failure",
+        sanitize_log_value(job_id),
+    )
+    return True
+
+
 def main() -> None:
-    """Entry point for the queue processor."""
-    load_k8s()
+    """Entry point for the queue processor.
+
+    Configuration failures are terminal and loud: the error is emitted in a
+    single structured line, one queued message is drained into a FAILED job
+    record so the queue depth and job status both move, and the process
+    exits nonzero. Per-message failures keep their retain-for-retry
+    semantics via :func:`process_one_message`.
+    """
+    try:
+        load_k8s()
+    except KubernetesConfigurationError as error:
+        drained = drain_one_message_after_config_failure(str(error))
+        log.error(
+            "terminal=config-failure drained_with_record=%s detail=%s",
+            drained,
+            error,
+        )
+        sys.exit(1)
     success = process_one_message()
     if not success:
         sys.exit(1)

@@ -89,6 +89,25 @@ spec:
             value: "{{MANIFEST_PROCESSOR_ROLE_ARN}}"
           - name: AWS_WEB_IDENTITY_TOKEN_FILE
             value: "/var/run/secrets/eks.amazonaws.com/serviceaccount/token"
+          # Jobs-table failure recording. A message whose runs cannot be
+          # applied (and any message drained after a fatal configuration
+          # failure) is surfaced as a terminal FAILED record in the
+          # centralized jobs table instead of only a dead-lettered message.
+          # DYNAMODB_REGION points JobStore at the global region that hosts
+          # the table. The manifest-processor role already grants
+          # dynamodb:PutItem/UpdateItem on this table.
+          - name: JOBS_TABLE_NAME
+            value: "{{JOBS_TABLE_NAME}}"
+          - name: DYNAMODB_REGION
+            value: "{{DYNAMODB_REGION}}"
+          # Lets startup failures name the ServiceAccount whose disabled
+          # token automount is being compensated by the projected volume
+          # below — the diagnostic that identifies a cluster where the two
+          # halves of that pairing came from different releases.
+          - name: SERVICE_ACCOUNT_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.serviceAccountName
           - name: ALLOWED_NAMESPACES
             value: "{{QP_ALLOWED_NAMESPACES}}"
           - name: ALLOWED_KINDS

@@ -1052,6 +1052,75 @@ class JobStore:
             return replay
         raise JobSubmissionConflict("job ID or idempotency key is already in use")
 
+    def record_job_failure(
+        self,
+        job_id: str,
+        *,
+        target_region: str,
+        namespace: str,
+        error: str,
+        message: str | None = None,
+        priority: int = 0,
+        submitted_at: str | None = None,
+        job_name: str | None = None,
+    ) -> bool:
+        """Create a terminal FAILED record for a job no other actor tracks.
+
+        The SQS submission path (``gco jobs submit-sqs`` consumed by
+        ``gco.services.queue_processor``) enqueues a ``job_id`` without
+        writing a queue record, so a submission whose runs could not be
+        applied had nothing to transition and stayed invisible outside the
+        queue itself. This writes the record directly in
+        ``JobStatus.FAILED`` — a terminal status the regional queue workers
+        never claim, so the record can never be mistaken for dispatchable
+        work.
+
+        Deliberately conditional on ``attribute_not_exists(job_id)``: an
+        existing record belongs to the centralized queue lifecycle and its
+        fenced ``transition_job`` discipline, and this method must never
+        stomp one. Returns ``True`` when the failure record was created and
+        ``False`` when a record already exists (left untouched). Callers
+        are responsible for bounding ``error`` text.
+        """
+        now = _utc_now_iso()
+        submitted = submitted_at or now
+        priority_sort = self._priority_sort_key(priority, submitted, job_id)
+        history_entry: dict[str, str] = {
+            "status": JobStatus.FAILED.value,
+            "timestamp": now,
+        }
+        if message:
+            history_entry["message"] = message
+        history_entry["error"] = error
+        item: dict[str, Any] = {
+            "job_id": job_id,
+            "job_name": job_name or job_id,
+            "target_region": target_region,
+            "namespace": namespace,
+            "status": JobStatus.FAILED.value,
+            "region_status": self._region_status(target_region, JobStatus.FAILED.value),
+            "priority": priority,
+            "priority_sort": priority_sort,
+            "work_sort": priority_sort,
+            "submitted_at": submitted,
+            "updated_at": now,
+            "completed_at": now,
+            "claim_generation": 0,
+            "error_message": error,
+            "status_history": json.dumps([history_entry], separators=(",", ":")),
+        }
+        try:
+            self._table.put_item(
+                Item=item,
+                ConditionExpression="attribute_not_exists(job_id)",
+            )
+            return True
+        except ClientError as record_error:
+            if self._is_conditional_failure(record_error):
+                return False
+            logger.error("Failed to record failure for job %s: %s", job_id, record_error)
+            raise
+
     def claim_job(
         self,
         job_id: str,
