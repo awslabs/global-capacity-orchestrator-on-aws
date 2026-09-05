@@ -221,6 +221,224 @@ def _planning_error_message(errors: list[str], failure_count: int) -> str:
     return "Manifest planning failed: " + "; ".join(errors) + suffix
 
 
+# ---------------------------------------------------------------------------
+# Cross-phase ServiceAccount/token-projection consistency guard.
+#
+# The 2026-08 SQS submission-path outage: hardening a ServiceAccount with
+# ``automountServiceAccountToken: false`` (base phase) and projecting the
+# compensating kubernetes-audience token onto its workload (post-Helm phase)
+# are one logical change split across two apply invocations. A redeploy that
+# ran only the base pass left the live queue-processor pod with no way to
+# authenticate to the Kubernetes API, crash-looping before its first SQS
+# receive. The two files cannot apply in one transaction (the ScaledJob needs
+# KEDA CRDs that do not exist in the base phase), so the planner enforces the
+# pairing instead — and because BOTH phases are always planned before either
+# is applied, a violation fails the base pass too.
+
+# Standard in-cluster credential mount point the kubernetes client reads.
+_KUBE_SERVICEACCOUNT_MOUNT = "/var/run/secrets/kubernetes.io/serviceaccount"
+
+# Where each workload kind keeps its pod spec.
+_POD_SPEC_PATHS: dict[str, tuple[str, ...]] = {
+    "Pod": ("spec",),
+    "Deployment": ("spec", "template", "spec"),
+    "StatefulSet": ("spec", "template", "spec"),
+    "DaemonSet": ("spec", "template", "spec"),
+    "Job": ("spec", "template", "spec"),
+    "CronJob": ("spec", "jobTemplate", "spec", "template", "spec"),
+    "ScaledJob": ("spec", "jobTargetRef", "template", "spec"),
+}
+
+
+def _planned_pod_spec(document: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the pod spec embedded in a planned workload document, if any."""
+    path = _POD_SPEC_PATHS.get(str(document.get("kind")))
+    if path is None:
+        return None
+    node: Any = document
+    for key in path:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    return node if isinstance(node, dict) else None
+
+
+def _pod_spec_projects_service_account_token(pod_spec: dict[str, Any]) -> bool:
+    """True when a projected serviceAccountToken is mounted at the standard path."""
+    token_volumes: set[str] = set()
+    for volume in pod_spec.get("volumes") or []:
+        if not isinstance(volume, dict):
+            continue
+        projected = volume.get("projected")
+        if not isinstance(projected, dict):
+            continue
+        sources = projected.get("sources") or []
+        has_token_source = any(
+            isinstance(source, dict) and "serviceAccountToken" in source for source in sources
+        )
+        if has_token_source and isinstance(volume.get("name"), str):
+            token_volumes.add(volume["name"])
+    if not token_volumes:
+        return False
+    for containers_key in ("containers", "initContainers", "ephemeralContainers"):
+        containers = pod_spec.get(containers_key) or []
+        if not isinstance(containers, list):
+            continue
+        for container in containers:
+            if not isinstance(container, dict):
+                continue
+            for mount in container.get("volumeMounts") or []:
+                if (
+                    isinstance(mount, dict)
+                    and mount.get("mountPath") == _KUBE_SERVICEACCOUNT_MOUNT
+                    and mount.get("name") in token_volumes
+                ):
+                    return True
+    return False
+
+
+def _automount_disabled_service_accounts(
+    planned: list[dict[str, Any]],
+) -> dict[tuple[str, str], str]:
+    """Planned ServiceAccounts with automount disabled, keyed by (namespace, name)."""
+    disabled: dict[tuple[str, str], str] = {}
+    for item in planned:
+        if item["kind"] != "ServiceAccount":
+            continue
+        if item["document"].get("automountServiceAccountToken") is False:
+            disabled[(item["namespace"], item["name"])] = item["sourceFile"]
+    return disabled
+
+
+def _rbac_bound_service_accounts(planned: list[dict[str, Any]]) -> set[tuple[str, str]]:
+    """ServiceAccounts referenced as subjects by planned (Cluster)RoleBindings.
+
+    An RBAC binding is the planned inventory's own declaration that the
+    ServiceAccount is expected to call the Kubernetes API. Accounts with
+    automount disabled and NO binding (workload identities that only hold
+    AWS credentials, e.g. the inference proxy) are deliberately exempt from
+    the token-projection invariant.
+    """
+    bound: set[tuple[str, str]] = set()
+    for item in planned:
+        if item["kind"] not in ("RoleBinding", "ClusterRoleBinding"):
+            continue
+        default_namespace = item["namespace"] if item["kind"] == "RoleBinding" else None
+        for subject in item["document"].get("subjects") or []:
+            if not isinstance(subject, dict) or subject.get("kind") != "ServiceAccount":
+                continue
+            name = subject.get("name")
+            namespace = subject.get("namespace") or default_namespace
+            if isinstance(name, str) and isinstance(namespace, str):
+                bound.add((namespace, name))
+    return bound
+
+
+def _service_account_token_projection_errors(
+    phases: dict[str, list[dict[str, Any]]],
+) -> list[str]:
+    """Cross-phase invariant: hardened, API-bound SAs need a projected token.
+
+    For every planned ServiceAccount (either phase) that sets
+    ``automountServiceAccountToken: false`` AND is bound to the Kubernetes
+    API by a planned RoleBinding/ClusterRoleBinding, every planned workload
+    whose pod spec runs as that account must mount a projected
+    serviceAccountToken at ``/var/run/secrets/kubernetes.io/serviceaccount``.
+    """
+    planned = phases["base"] + phases["post-helm"]
+    disabled = _automount_disabled_service_accounts(planned)
+    if not disabled:
+        return []
+    bound = _rbac_bound_service_accounts(planned)
+    guarded = {identity: source for identity, source in disabled.items() if identity in bound}
+    if not guarded:
+        return []
+
+    errors: list[str] = []
+    for item in planned:
+        pod_spec = _planned_pod_spec(item["document"])
+        if pod_spec is None:
+            continue
+        service_account = pod_spec.get("serviceAccountName")
+        if not isinstance(service_account, str) or not service_account:
+            continue
+        source_file = guarded.get((item["namespace"], service_account))
+        if source_file is None:
+            continue
+        if _pod_spec_projects_service_account_token(pod_spec):
+            continue
+        errors.append(
+            f"{item['sourceFile']}: {item['kind']}/{item['namespace']}/{item['name']} runs as "
+            f"ServiceAccount {service_account!r} ({source_file}), which sets "
+            "automountServiceAccountToken: false and is RBAC-bound to the Kubernetes API, "
+            f"but mounts no projected serviceAccountToken at {_KUBE_SERVICEACCOUNT_MOUNT} - "
+            "the pod would have no credentials. Project the token (see the "
+            "kubernetes-api-token volume in post-helm-sqs-consumer.yaml) or ship both "
+            "halves of the hardening in one release"
+        )
+    return errors
+
+
+def _log_service_account_automount_flip(
+    v1: Any,
+    document: dict[str, Any],
+    namespace: str,
+    name: str,
+    plan: dict[str, Any],
+) -> None:
+    """Name the workloads affected when automount is being flipped to false.
+
+    Clusters created by an older release are supported: their live
+    ServiceAccount may still automount tokens while the incoming manifest
+    disables it. This apply is the exact moment previously-running pods
+    lose ambient credentials, so log every planned workload that references
+    the account and whether each already carries the compensating projected
+    token — the diagnostic that would have named the queue processor on the
+    redeploy that caused the SQS outage. Best-effort: any read failure
+    skips the diagnostic, never the apply.
+    """
+    if document.get("automountServiceAccountToken") is not False:
+        return
+    try:
+        live = v1.read_namespaced_service_account(name, namespace)
+    except ApiException as e:
+        if e.status != 404:
+            logger.debug(
+                "Automount-flip check could not read live ServiceAccount %s/%s: %s",
+                namespace,
+                name,
+                e,
+            )
+        return
+    except Exception as e:  # pragma: no cover - defensive; diagnostics never block
+        logger.debug("Automount-flip check failed for ServiceAccount %s/%s: %s", namespace, name, e)
+        return
+    if getattr(live, "automount_service_account_token", None) is False:
+        return  # Already hardened on the live cluster; nothing is flipping.
+
+    references: list[str] = []
+    for item in plan["phases"]["base"] + plan["phases"]["post-helm"]:
+        pod_spec = _planned_pod_spec(item["document"])
+        if (
+            pod_spec is None
+            or item["namespace"] != namespace
+            or pod_spec.get("serviceAccountName") != name
+        ):
+            continue
+        projected = _pod_spec_projects_service_account_token(pod_spec)
+        references.append(
+            f"{item['phase']}:{item['sourceFile']} {item['kind']}/{item['name']} "
+            f"projected-token={'present' if projected else 'MISSING'}"
+        )
+    logger.warning(
+        "ServiceAccount %s/%s: automountServiceAccountToken is being flipped to false on a "
+        "live cluster; planned workloads running as it: %s",
+        namespace,
+        name,
+        "; ".join(references) or "<none>",
+    )
+
+
 def plan_manifests(
     manifests_dir: str,
     replacements: dict[str, str],
@@ -361,6 +579,13 @@ def plan_manifests(
                     "document": document,
                 }
             )
+
+    # Cross-phase consistency: a hardened ServiceAccount and the token
+    # projection that compensates for it must ship together. Runs over BOTH
+    # planned phases, so the base pass fails before its first Kubernetes
+    # mutation even when the violation lives in a post-Helm file.
+    for message in _service_account_token_projection_errors(phases):
+        add_error(message)
 
     if failure_count:
         raise ValueError(_planning_error_message(errors, failure_count))
@@ -1010,6 +1235,7 @@ def apply_manifests(
                                 raise
 
                     elif kind == "ServiceAccount":
+                        _log_service_account_automount_flip(v1, doc, namespace, name, plan)
                         try:
                             v1.create_namespaced_service_account(namespace, body=doc)
                         except ApiException as e:
