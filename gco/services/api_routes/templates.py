@@ -16,6 +16,7 @@ from gco.services.api_shared import (
     _apply_template_parameters,
     _check_namespace,
     _check_processor,
+    internal_server_error,
 )
 
 if TYPE_CHECKING:
@@ -170,5 +171,4 @@ async def create_job_from_template(name: str, request: JobFromTemplateRequest) -
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error creating job from template: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise internal_server_error("creating job from template", e) from e

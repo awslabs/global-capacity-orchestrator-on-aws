@@ -10,7 +10,11 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 
 from gco.models import ManifestSubmissionRequest
-from gco.services.api_shared import ManifestSubmissionAPIRequest, _check_processor
+from gco.services.api_shared import (
+    ManifestSubmissionAPIRequest,
+    _check_processor,
+    internal_server_error,
+)
 
 router = APIRouter(prefix="/api/v1/manifests", tags=["Manifests"])
 logger = logging.getLogger(__name__)
@@ -88,8 +92,7 @@ async def submit_manifests(request: ManifestSubmissionAPIRequest) -> Response:
         # Already a well-formed HTTP error — don't demote to 500.
         raise
     except Exception as e:
-        logger.error(f"Error processing manifest submission: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise internal_server_error("processing manifest submission", e) from e
 
 
 @router.post("/validate")
@@ -137,8 +140,7 @@ async def validate_manifests(request: ManifestSubmissionAPIRequest) -> Response:
         return JSONResponse(status_code=200, content=response)
 
     except Exception as e:
-        logger.error(f"Error validating manifests: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise internal_server_error("validating manifests", e) from e
 
 
 @router.get("/{namespace}/{name}")
@@ -177,8 +179,7 @@ async def get_resource_status(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting resource status: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise internal_server_error("getting resource status", e) from e
 
 
 @router.delete("/{namespace}/{name}")
@@ -223,5 +224,4 @@ async def delete_resource(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting resource: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+        raise internal_server_error("deleting resource", e) from e

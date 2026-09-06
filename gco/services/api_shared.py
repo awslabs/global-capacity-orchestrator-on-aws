@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from gco.services.manifest_processor import ManifestProcessor
 from gco.services.metrics_publisher import ManifestProcessorMetrics
+from gco.services.request_context import current_request_id
 from gco.services.structured_logging import sanitize_log_value
 from gco.services.template_store import (
     JobStore,
@@ -27,6 +28,24 @@ from gco.services.template_store import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def internal_server_error(context: str, error: Exception) -> HTTPException:
+    """Log the full exception server-side; return a generic, correlatable 500.
+
+    The client-facing detail carries only the constant message plus the
+    request's correlation id — never exception text (the information-exposure
+    shape CodeQL flagged across the jobs routes). The id also lands in the
+    paired log line, so an operator can grep the service logs for exactly
+    the failure a caller reported. Callers raise the returned exception with
+    ``from error`` so the traceback chain stays intact.
+    """
+    request_id = current_request_id()
+    logger.error("Error %s (request-id %s): %s", context, request_id, error)
+    return HTTPException(
+        status_code=500,
+        detail=f"Internal server error (request-id: {request_id})",
+    )
 
 
 # ---------------------------------------------------------------------------

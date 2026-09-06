@@ -190,6 +190,32 @@ app.add_middleware(AuthenticationMiddleware)
 _max_body_bytes = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(DEFAULT_MAX_REQUEST_BODY_BYTES)))
 app.add_middleware(RequestSizeLimitMiddleware, max_body_bytes=_max_body_bytes)
 
+# Request correlation. Every request gets a server-generated id that is
+# echoed as the X-Request-ID response header and embedded in generic 500
+# details (see api_shared.internal_server_error), so an operator can tie a
+# client-reported failure back to the exact logged exception. The id is
+# never read from an inbound header — a client-controlled value adjacent to
+# log lines would need CWE-117 sanitization and could muddy investigations.
+from gco.services.request_context import (  # noqa: E402
+    REQUEST_ID_HEADER,
+    bind_request_id,
+    current_request_id,
+    unbind_request_id,
+)
+
+
+@app.middleware("http")
+async def request_correlation_middleware(request: Request, call_next: Any) -> Any:
+    """Bind a fresh correlation id for the request and echo it on the response."""
+    request_id, token = bind_request_id()
+    try:
+        response = await call_next(request)
+    finally:
+        unbind_request_id(token)
+    response.headers[REQUEST_ID_HEADER] = request_id
+    return response
+
+
 # Expose Prometheus /metrics for the in-cluster observability scrape. The auth
 # middleware exempts /metrics, so the cluster Prometheus reaches it over the
 # existing service port without credentials.
@@ -436,12 +462,16 @@ async def get_job_validation_policy() -> dict[str, Any]:
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Global exception handler for unhandled errors."""
-    logger.error(f"Unhandled exception in {request.method} {request.url}: {exc}")
+    request_id = current_request_id()
+    logger.error(
+        f"Unhandled exception in {request.method} {request.url} (request-id {request_id}): {exc}"
+    )
     return JSONResponse(
         status_code=500,
         content={
             "error": "Internal server error",
             "detail": str(exc) if os.getenv("DEBUG") else "An unexpected error occurred",
+            "request_id": request_id,
             "timestamp": datetime.now(UTC).isoformat(),
         },
     )
