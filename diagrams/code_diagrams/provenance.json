@@ -72,9 +72,9 @@
       "source_commit": "014029fc23b3763b4a03447e9e95b4a3fafcc3f3"
     },
     "gco/services/manifest_api.py": {
-      "digest": "d7a5cfaa0fa59899baf5a2c2cb0c9ae059d8feea055b4d75aa0675ae320ac05f",
-      "generated_at": "2026-09-01T14:42:56Z",
-      "source_commit": "89b000378ed5a912a38c06f4feab2b029936ebcc"
+      "digest": "0474a52e22887e971e4dde2c78749213c31b4d46ba918f8e71b249f0b26e06f2",
+      "generated_at": "2026-09-06T03:59:12Z",
+      "source_commit": "d6191ba8fab6dbef25fa4cfef37a9101f6fa24c4"
     },
     "gco/services/manifest_processor.py": {
       "digest": "b79e8a714a569b512a1ef81e0c1722204125136bcd18fb01ad7ae877ed969251",

@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import socket
 import time
 from datetime import UTC, datetime, timedelta
@@ -1202,7 +1203,9 @@ async def test_jobs_route_500_details_never_echo_exception_text() -> None:
 
     for route_call in route_calls:
         detail = await _raised_detail(route_call)
-        assert detail == "Internal server error"
+        # The only variable part of the detail is the server-generated
+        # correlation id that ties the response to the logged exception.
+        assert re.fullmatch(r"Internal server error \(request-id: [0-9a-f]{32}\)", detail)
         assert marker not in detail
 
 

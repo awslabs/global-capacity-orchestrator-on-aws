@@ -140,6 +140,48 @@ def mock_manifest_processor():
     return mock_processor
 
 
+class TestRequestCorrelation:
+    """Every response carries a fresh server-generated X-Request-ID header."""
+
+    def test_responses_carry_unique_request_id_headers(self, mock_manifest_processor):
+        import re
+
+        with patch(
+            "gco.services.manifest_api.create_manifest_processor_from_env",
+            return_value=mock_manifest_processor,
+        ):
+            from fastapi.testclient import TestClient
+
+            from gco.services.manifest_api import app
+
+            with TestClient(app, raise_server_exceptions=False) as client:
+                first = client.get("/", headers={})
+                second = client.get("/", headers={})
+
+        assert first.status_code == 200
+        first_id = first.headers["X-Request-ID"]
+        second_id = second.headers["X-Request-ID"]
+        assert re.fullmatch(r"[0-9a-f]{32}", first_id)
+        assert re.fullmatch(r"[0-9a-f]{32}", second_id)
+        # Server-generated per request: two requests never share an id.
+        assert first_id != second_id
+
+    def test_client_supplied_header_is_not_trusted(self, mock_manifest_processor):
+        """An inbound X-Request-ID never becomes the response id (log-injection surface)."""
+        with patch(
+            "gco.services.manifest_api.create_manifest_processor_from_env",
+            return_value=mock_manifest_processor,
+        ):
+            from fastapi.testclient import TestClient
+
+            from gco.services.manifest_api import app
+
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.get("/", headers={"X-Request-ID": "attacker\ninjected"})
+
+        assert response.headers["X-Request-ID"] != "attacker\ninjected"
+
+
 class TestManifestAPIBasicEndpoints:
     """Tests for basic Manifest API endpoints using TestClient."""
 

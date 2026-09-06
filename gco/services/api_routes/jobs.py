@@ -21,6 +21,7 @@ from gco.services.api_shared import (
     _parse_event_to_dict,
     _parse_job_to_dict,
     _parse_pod_to_dict,
+    internal_server_error,
 )
 from gco.services.structured_logging import sanitize_log_value
 
@@ -149,8 +150,7 @@ async def list_jobs(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        logger.error(f"Error listing jobs: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise internal_server_error("listing jobs", e) from e
 
 
 def _job_scheduling(processor: Any, namespace: str, name: str) -> dict[str, Any]:
@@ -204,8 +204,7 @@ async def get_job(namespace: str, name: str) -> Response:
             raise HTTPException(
                 status_code=404, detail=f"Job '{name}' not found in namespace '{namespace}'"
             ) from e
-        logger.error(f"Error getting job: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise internal_server_error("getting job", e) from e
 
 
 @router.get("/{namespace}/{name}/logs")
@@ -329,8 +328,7 @@ async def get_job_logs(
             status_code=502, detail=f"Kubernetes API error: {e.status} {e.reason}"
         ) from e
     except Exception as e:
-        logger.error(f"Error getting job logs: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise internal_server_error("getting job logs", e) from e
 
 
 @router.get("/{namespace}/{name}/events")
@@ -376,8 +374,7 @@ async def get_job_events(namespace: str, name: str) -> Response:
         return JSONResponse(status_code=200, content=response)
 
     except Exception as e:
-        logger.error(f"Error getting job events: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise internal_server_error("getting job events", e) from e
 
 
 @router.get("/{namespace}/{name}/pods")
@@ -434,8 +431,7 @@ async def get_job_pods(namespace: str, name: str) -> Response:
         return JSONResponse(status_code=200, content=response)
 
     except Exception as e:
-        logger.error(f"Error getting job pods: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise internal_server_error("getting job pods", e) from e
 
 
 @router.get("/{namespace}/{name}/pods/{pod_name}/logs")
@@ -491,8 +487,7 @@ async def get_pod_logs(
     except Exception as e:
         if "NotFound" in str(e) or "404" in str(e):
             raise HTTPException(status_code=404, detail=f"Pod '{pod_name}' not found") from e
-        logger.error(f"Error getting pod logs: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise internal_server_error("getting pod logs", e) from e
 
 
 @router.get("/{namespace}/{name}/metrics")
@@ -592,8 +587,7 @@ async def get_job_metrics(namespace: str, name: str) -> Response:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting job metrics: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise internal_server_error("getting job metrics", e) from e
 
 
 @router.delete("/{namespace}/{name}")
@@ -662,8 +656,7 @@ async def delete_job(
             raise HTTPException(
                 status_code=404, detail=f"Job '{name}' not found in namespace '{namespace}'"
             ) from e
-        logger.error(f"Error deleting job: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise internal_server_error("deleting job", e) from e
 
 
 @router.delete("")
@@ -750,8 +743,7 @@ async def bulk_delete_jobs(request: BulkDeleteRequest) -> Response:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        logger.error(f"Error bulk deleting jobs: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise internal_server_error("bulk deleting jobs", e) from e
 
 
 @router.post("/{namespace}/{name}/retry")
@@ -826,5 +818,4 @@ async def retry_job(namespace: str, name: str) -> Response:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrying job: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        raise internal_server_error("retrying job", e) from e

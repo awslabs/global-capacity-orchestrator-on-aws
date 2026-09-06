@@ -1944,6 +1944,22 @@ All error responses follow this format:
 | 500 | Internal Server Error |
 | 503 | Service Unavailable - Processor not ready |
 
+**Request correlation:**
+
+Every response carries an `X-Request-ID` header with a server-generated
+correlation id (32 hex characters). Unexpected failures return a generic
+500 detail that embeds the same id instead of exception text:
+
+```json
+{
+  "detail": "Internal server error (request-id: 3f2a…)"
+}
+```
+
+Report that id when filing an issue — operators grep the manifest-processor
+service logs for it and land directly on the logged exception. Ids are
+always generated server-side; an inbound `X-Request-ID` header is ignored.
+
 ---
 
 ## Examples
