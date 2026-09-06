@@ -7,8 +7,8 @@
 # does, and verifies the session boots to the last point reachable without
 # real AWS credentials. Used by integration:autopilot:codex-boot
 # (integration-tests.yml). The Claude Code twin lives in
-# autopilot_boot_probe.sh; the phases are parallel on purpose so the two
-# probes stay comparable engine to engine.
+# autopilot_claude_code_boot_probe.sh; the phases are parallel on purpose so
+# the two probes stay comparable engine to engine.
 #
 # What runs for real (nothing about autopilot is mocked):
 #

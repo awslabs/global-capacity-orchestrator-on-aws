@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
-# autopilot_boot_probe.sh — boot the real `gco autopilot` Claude Code session
+# autopilot_claude_code_boot_probe.sh — boot the real `gco autopilot` Claude Code session
 # =============================================================================
 #
 # Drives `gco autopilot` end-to-end the way a first-time user does, and
 # verifies the session boots to the last point reachable without real AWS
-# credentials. Used by integration:autopilot:boot (integration-tests.yml).
+# credentials. Used by integration:autopilot:claude-code-boot
+# (integration-tests.yml). The Codex twin lives in
+# autopilot_codex_boot_probe.sh; the phases are parallel on purpose so the
+# two probes stay comparable engine to engine.
 #
 # What runs for real (nothing about autopilot is mocked):
 #
@@ -52,7 +55,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-WORK_DIR="${RUNNER_TEMP:-$(mktemp -d)}/autopilot-boot-probe"
+WORK_DIR="${RUNNER_TEMP:-$(mktemp -d)}/autopilot-claude-code-boot-probe"
 mkdir -p "$WORK_DIR"
 
 # Autopilot writes the session MCP config here instead of ~/.gco/autopilot.

@@ -11,8 +11,8 @@
 # types so the suite fires the moment a PR leaves draft.
 #
 # Jobs (alphabetical by display name):
-#   - integration:autopilot:boot                  — `gco autopilot` installs pinned Claude Code + boots the MCP/Bedrock stack to the cred boundary
-#   - integration:autopilot:codex-boot            — `gco autopilot --engine codex` installs pinned Codex + boots the MCP/Bedrock stack to the cred boundary
+#   - integration:autopilot:claude-code-boot      — `gco autopilot` self-installs the pin + boots MCP/Bedrock to the cred boundary
+#   - integration:autopilot:codex-boot            — `gco autopilot --engine codex` self-installs the pin + boots MCP/Bedrock to the cred boundary
 #   - integration:dev-alias:docker                — verify runner Docker, build gco-dev, prove the generated `gco` alias runs
 #   - integration:dev-alias:finch                 — install latest Finch (rootful), build gco-dev, prove the generated `gco` alias runs
 #   - integration:dev-alias:none                  — prove setup-dev-alias.sh refuses cleanly when no runtime is installed
@@ -385,7 +385,7 @@ jobs:
           retention-days: 7
 
   # --------------------------------------------------------------------------
-  # integration:autopilot:boot — `gco autopilot` boots the real Claude Code
+  # integration:autopilot:claude-code-boot — `gco autopilot` boots the real Claude Code
   # stack on a bare runner, exactly like a first-time user: autopilot
   # npm-installs the pinned Claude Code release itself (`claude` is absent
   # on purpose), writes the session MCP config, and execs claude, which
@@ -399,8 +399,8 @@ jobs:
   # itself; assertions and marker contract live in the probe script.
   # --------------------------------------------------------------------------
 
-  integration-autopilot-boot:
-    name: "integration:autopilot:boot"
+  integration-autopilot-claude-code-boot:
+    name: "integration:autopilot:claude-code-boot"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -424,13 +424,13 @@ jobs:
       - name: Install uv (uvx launches the PyPI companion MCP servers)
         run: pip install uv
       - name: Boot the autopilot session to the credential boundary
-        run: bash .github/scripts/autopilot_boot_probe.sh
+        run: bash .github/scripts/autopilot_claude_code_boot_probe.sh
       - name: Upload session evidence
         if: always()
         uses: ./.github/actions/upload-artifact-with-retry
         with:
-          name: autopilot-boot-evidence
-          path: ${{ runner.temp }}/autopilot-boot-probe/
+          name: autopilot-claude-code-boot-evidence
+          path: ${{ runner.temp }}/autopilot-claude-code-boot-probe/
           retention-days: 7
 
   # --------------------------------------------------------------------------
