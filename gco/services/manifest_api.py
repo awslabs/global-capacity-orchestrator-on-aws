@@ -50,8 +50,8 @@ from gco.services.template_store import (
 )
 
 # <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
-# Generated at (UTC): 2026-09-01T14:42:56Z
-# Generated from Git commit: 89b000378ed5a912a38c06f4feab2b029936ebcc
+# Generated at (UTC): 2026-09-06T03:59:12Z
+# Generated from Git commit: d6191ba8fab6dbef25fa4cfef37a9101f6fa24c4
 # Flowchart(s) generated from this file:
 #   * ``lifespan`` -> ``diagrams/code_diagrams/gco/services/manifest_api.lifespan.html``
 #     (PNG: ``diagrams/code_diagrams/gco/services/manifest_api.lifespan.png``)
