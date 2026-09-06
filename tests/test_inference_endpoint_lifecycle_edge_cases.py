@@ -572,6 +572,40 @@ async def test_tls_watcher_rejects_bad_rotated_keypair_then_stops(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_tls_watcher_skips_reload_when_digest_is_unchanged_then_stops(tmp_path: Path) -> None:
+    """A poll tick with an identical keypair digest loops without rebinding.
+
+    This pins the ``digest == self._keypair_digest`` arc of the watcher loop
+    deterministically. The live-rotation test only crosses that arc when the
+    watcher happens to complete a poll tick while the certificate is stable,
+    which loaded CI runners cannot guarantee (release v7.4.0 missed the arc
+    in two independent runs and failed the combined coverage floor).
+    """
+    proxy = TlsProxy(_proxy_config(tmp_path))
+    proxy._keypair_digest = "digest-v1"
+
+    async def expire(awaitable: Any, *, timeout: float) -> Any:
+        del timeout
+        awaitable.close()
+        raise TimeoutError
+
+    def unchanged(_config: ProxyConfig) -> tuple[Any, str]:
+        # Stop after this tick so the second loop-condition check exits.
+        proxy._stop.set()
+        return MagicMock(), "digest-v1"
+
+    with (
+        patch("gco.services.tls_proxy.asyncio.wait_for", side_effect=expire),
+        patch("gco.services.tls_proxy._ssl_context", side_effect=unchanged),
+        patch.object(proxy, "_reload_certificate", AsyncMock()) as reload_certificate,
+    ):
+        await proxy.watch_certificates()
+
+    reload_certificate.assert_not_awaited()
+    assert proxy._keypair_digest == "digest-v1"
+
+
+@pytest.mark.asyncio
 async def test_tls_shutdown_without_server_or_streams_is_idempotent(tmp_path: Path) -> None:
     proxy = TlsProxy(_proxy_config(tmp_path))
     await proxy.shutdown()
