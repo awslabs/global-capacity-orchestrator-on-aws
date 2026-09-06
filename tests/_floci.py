@@ -216,7 +216,8 @@ def create_jobs_table(dynamodb: object, table_name: str) -> None:
             {"AttributeName": "job_id", "AttributeType": "S"},
             {"AttributeName": "target_region", "AttributeType": "S"},
             {"AttributeName": "status", "AttributeType": "S"},
-            {"AttributeName": "status_work", "AttributeType": "S"},
+            {"AttributeName": "region_status", "AttributeType": "S"},
+            {"AttributeName": "work_sort", "AttributeType": "S"},
         ],
         KeySchema=[{"AttributeName": "job_id", "KeyType": "HASH"}],
         GlobalSecondaryIndexes=[
@@ -228,11 +229,18 @@ def create_jobs_table(dynamodb: object, table_name: str) -> None:
                 ],
                 "Projection": {"ProjectionType": "ALL"},
             },
+            # The unified worker index, keyed exactly as global_stack.py
+            # builds it: ``region_status`` partitions and ``work_sort`` orders
+            # (priority/FIFO for queued records, lease expiry for claimed or
+            # applying ones). An earlier transcription keyed this GSI as
+            # target_region/status_work, which nothing queried until the
+            # central-queue worker tests read it the way production does —
+            # the emulator then rejected the mismatched key condition.
             {
                 "IndexName": "region-status-work-index",
                 "KeySchema": [
-                    {"AttributeName": "target_region", "KeyType": "HASH"},
-                    {"AttributeName": "status_work", "KeyType": "RANGE"},
+                    {"AttributeName": "region_status", "KeyType": "HASH"},
+                    {"AttributeName": "work_sort", "KeyType": "RANGE"},
                 ],
                 "Projection": {"ProjectionType": "ALL"},
             },

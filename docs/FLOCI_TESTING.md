@@ -85,8 +85,8 @@ committed tests, not inferred from Floci's docs):
 
 | Service | GCO path under test | Depth |
 |---|---|---|
-| DynamoDB | `TemplateStore`/`WebhookStore`/`JobStore`/`InferenceEndpointStore`; `capacity-poller` snapshot writes | Meaningful behavior: conditional writes, GSIs, pagination, waiters |
-| SQS | `queue_processor` consume path, queue+DLQ redrive pair | Meaningful behavior incl. server-side redrive to the DLQ |
+| DynamoDB | `TemplateStore`/`WebhookStore`/`JobStore`/`InferenceEndpointStore`; `central_queue_worker` dispatch passes (worker-index discovery, fenced claims, transitions, gated deferrals, failure persistence); `capacity-poller` snapshot writes | Meaningful behavior: conditional writes, GSIs, pagination, waiters |
+| SQS | `JobManager.submit_job_sqs` producer path (CloudFormation-discovered queue, envelope schema) and the `queue_processor` consume path, queue+DLQ redrive pair — including the produce→consume contract over one real queue | Meaningful behavior incl. server-side redrive to the DLQ |
 | S3 | `CostMonitor` Parquet reports; presigned URLs | Meaningful behavior incl. `head_object` idempotency |
 | Secrets Manager | `auth_middleware` token load + rotation stages; `secret-rotation` Lambda four-step protocol | Meaningful behavior (staging labels, promotion, per-token idempotency) |
 | CloudFormation | `GCOAWSClient` discovery; harness fingerprints; `cross-region-aggregator` bridge discovery; E2E CDKToolkit/`cdk list` | Stack materialization, outputs, waiters, tags, fail-closed + bounded-stale discovery (see gaps) |
