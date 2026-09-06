@@ -12,6 +12,7 @@
 #
 # Jobs (alphabetical by display name):
 #   - integration:autopilot:boot                  — `gco autopilot` installs pinned Claude Code + boots the MCP/Bedrock stack to the cred boundary
+#   - integration:autopilot:codex-boot            — `gco autopilot --engine codex` installs pinned Codex + boots the MCP/Bedrock stack to the cred boundary
 #   - integration:dev-alias:docker                — verify runner Docker, build gco-dev, prove the generated `gco` alias runs
 #   - integration:dev-alias:finch                 — install latest Finch (rootful), build gco-dev, prove the generated `gco` alias runs
 #   - integration:dev-alias:none                  — prove setup-dev-alias.sh refuses cleanly when no runtime is installed
@@ -430,6 +431,55 @@ jobs:
         with:
           name: autopilot-boot-evidence
           path: ${{ runner.temp }}/autopilot-boot-probe/
+          retention-days: 7
+
+  # --------------------------------------------------------------------------
+  # integration:autopilot:codex-boot — the Codex twin of the probe above.
+  # `gco autopilot --engine codex` on a bare runner: autopilot npm-installs
+  # the pinned Codex release itself (`codex` is absent on purpose), writes
+  # the isolated CODEX_HOME config, and execs codex, which launches the
+  # in-tree gco MCP server plus every curated companion and dispatches to
+  # Amazon Bedrock Runtime's OpenAI-compatible endpoint with the shipped
+  # default Codex model. Fabricated fail-closed credentials stop the launch
+  # at the exact credential boundary — SigV4 rejecting the signed request is
+  # the success condition. Complements unit:cli:autopilot (plan/config/
+  # pin-install, no boot) with the boot itself; assertions, the engine-delta
+  # rationale (codex races MCP init against the first turn, unlike claude),
+  # and the marker contract live in the probe script.
+  # --------------------------------------------------------------------------
+
+  integration-autopilot-codex-boot:
+    name: "integration:autopilot:codex-boot"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version-file: ".nvmrc"
+      - name: Install and verify the declared npm version
+        run: bash .github/scripts/use-pinned-npm.sh package.json
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version-file: ".python-version"
+          cache: "pip"
+          cache-dependency-path: "requirements-lock.txt"
+      - name: Install the CLI and the in-tree MCP server dependencies
+        # [mcp] brings fastmcp so the gco server entry in the generated
+        # config (python3 gco_mcp/run_mcp.py, straight off this checkout)
+        # can actually boot under codex.
+        run: pip install -e ".[mcp]"
+      - name: Install uv (uvx launches the PyPI companion MCP servers)
+        run: pip install uv
+      - name: Boot the codex autopilot session to the credential boundary
+        run: bash .github/scripts/autopilot_codex_boot_probe.sh
+      - name: Upload session evidence
+        if: always()
+        uses: ./.github/actions/upload-artifact-with-retry
+        with:
+          name: autopilot-codex-boot-evidence
+          path: ${{ runner.temp }}/autopilot-codex-boot-probe/
           retention-days: 7
 
   # --------------------------------------------------------------------------
