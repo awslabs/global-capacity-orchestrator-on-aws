@@ -208,10 +208,10 @@ class TestToolRegistration:
         if "sync_storage_bucket" in tool_names:
             expected += 1  # gated by GCO_ENABLE_LOCAL_STORAGE_SYNC
         if "add_deployment_region" in tool_names:
-            # list/add/remove/set_deployment_region plus the five managed
-            # Bedrock model/reasoning setters register together under
-            # GCO_ENABLE_CONFIG_MANAGEMENT.
-            expected += 9
+            # list/add/remove/set_deployment_region, the EKS endpoint-access
+            # setter, plus the five managed Bedrock model/reasoning setters
+            # register together under GCO_ENABLE_CONFIG_MANAGEMENT.
+            expected += 10
         if "swarm_start" in tool_names:
             # The six swarm_* tools register together under GCO_ENABLE_SWARM.
             expected += 6
@@ -489,6 +489,7 @@ class TestToolRegistration:
                     "add_deployment_region",
                     "remove_deployment_region",
                     "set_deployment_region",
+                    "set_eks_endpoint_access",
                     "set_mission_default_model",
                     "set_capacity_advisor_default_model",
                     "set_claude_code_default_model",

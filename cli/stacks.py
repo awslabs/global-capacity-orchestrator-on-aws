@@ -70,8 +70,8 @@ from gco.stacks.constants import (
 )
 
 # <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
-# Generated at (UTC): 2026-09-03T18:56:22Z
-# Generated from Git commit: 37fd4384775eeebf18fea3e5e085cef9645077be
+# Generated at (UTC): 2026-09-05T22:58:10Z
+# Generated from Git commit: 745b3fa3a9af9380bfe2797a5d9716fe8ce3a557
 # Flowchart(s) generated from this file:
 #   * ``StackManager.deploy_orchestrated`` -> ``diagrams/code_diagrams/cli/stacks.StackManager_deploy_orchestrated.html``
 #     (PNG: ``diagrams/code_diagrams/cli/stacks.StackManager_deploy_orchestrated.png``)
@@ -6308,6 +6308,32 @@ def update_fsx_config(settings: dict[str, Any], region: str | None = None) -> No
         region: Optional region for region-specific config. If None, updates global config.
     """
     _update_feature_config("fsx_lustre", settings, _FSX_DEFAULTS, region)
+
+
+# =============================================================================
+# EKS cluster access configuration (endpoint mode + CIDR allowlist)
+# =============================================================================
+
+_EKS_CLUSTER_DEFAULTS: dict[str, Any] = {
+    "endpoint_access": "PRIVATE",
+    "public_access_cidrs": [],
+    "developer_access": [],
+}
+
+
+def get_eks_cluster_config() -> dict[str, Any]:
+    """Get the current eks_cluster configuration from cdk.json.
+
+    Synth-time only: the values are read by ``gco/stacks/regional_stack.py``
+    at the next deploy. There is no per-region override — the block applies
+    to every regional cluster.
+    """
+    return _get_feature_config("eks_cluster", _EKS_CLUSTER_DEFAULTS, None)
+
+
+def update_eks_cluster_config(settings: dict[str, Any]) -> None:
+    """Update the eks_cluster configuration in cdk.json (config only)."""
+    _update_feature_config("eks_cluster", settings, _EKS_CLUSTER_DEFAULTS, None)
 
 
 # =============================================================================

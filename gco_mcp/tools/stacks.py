@@ -627,6 +627,33 @@ if is_enabled(FLAG_CONFIG_MANAGEMENT):
 
     @mcp.tool(tags={"low-risk", "stacks"})
     @audit_logged
+    def set_eks_endpoint_access(mode: str, cidrs: list[str] | None = None) -> str:
+        """[gated by GCO_ENABLE_CONFIG_MANAGEMENT]
+
+        Set cdk.json eks_cluster.endpoint_access (the EKS API endpoint mode).
+
+        Config-only and synth-time: no stack is deployed, and `gco stacks
+        status` reports the configured-vs-live endpoint as drift until a
+        deploy converges it. PUBLIC_AND_PRIVATE requires an explicit CIDR
+        allowlist — the CLI refuses to widen control-plane access without
+        one, and an internet-open endpoint must be spelled out as 0.0.0.0/0.
+        PRIVATE needs no CIDRs (use cluster_tunnel_command / `gco cluster
+        tunnel` for laptop access, plus an access entry via `gco stacks
+        access`).
+
+        Args:
+            mode: "PRIVATE" or "PUBLIC_AND_PRIVATE".
+            cidrs: CIDR allowlist entries for the public endpoint
+                (e.g. ["203.0.113.7/32"]). Required for PUBLIC_AND_PRIVATE.
+        """
+        args = ["stacks", "eks", "endpoint", "set", mode]
+        for cidr in cidrs or []:
+            args.extend(["--cidr", cidr])
+        args.append("-y")
+        return cli_runner._run_cli(*args)
+
+    @mcp.tool(tags={"low-risk", "stacks"})
+    @audit_logged
     def set_mission_default_model(model_id: str) -> str:
         """[gated by GCO_ENABLE_CONFIG_MANAGEMENT]
 

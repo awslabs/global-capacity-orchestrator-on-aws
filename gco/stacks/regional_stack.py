@@ -80,6 +80,7 @@ import aws_cdk.aws_eks_v2 as eks
 import yaml
 from aws_cdk import (
     Acknowledgment,
+    Annotations,
     CfnJson,
     CfnOutput,
     CfnTag,
@@ -142,8 +143,8 @@ from gco.stacks.constants import (
 )
 
 # <pyflowchart-code-diagram> BEGIN - auto-inserted, do not edit
-# Generated at (UTC): 2026-09-03T18:56:22Z
-# Generated from Git commit: 37fd4384775eeebf18fea3e5e085cef9645077be
+# Generated at (UTC): 2026-09-05T22:58:10Z
+# Generated from Git commit: 745b3fa3a9af9380bfe2797a5d9716fe8ce3a557
 # Flowchart(s) generated from this file:
 #   * ``GCORegionalStack.__init__`` -> ``diagrams/code_diagrams/gco/stacks/regional_stack.GCORegionalStack___init__.html``
 #     (PNG: ``diagrams/code_diagrams/gco/stacks/regional_stack.GCORegionalStack___init__.png``)
@@ -1486,12 +1487,25 @@ class GCORegionalStack(Stack):
         eks_config = self.config.get_eks_cluster_config()
         endpoint_access_mode = eks_config.get("endpoint_access", "PRIVATE")
 
-        # Map config string to EKS EndpointAccess enum
-        endpoint_access = (
-            eks.EndpointAccess.PRIVATE
-            if endpoint_access_mode == "PRIVATE"
-            else eks.EndpointAccess.PUBLIC_AND_PRIVATE
-        )
+        # Map config string to EKS EndpointAccess enum. When the public
+        # endpoint is enabled, eks_cluster.public_access_cidrs restricts who
+        # can reach it; enabling it with no allowlist is a deliberate,
+        # loudly-announced 0.0.0.0/0 exposure rather than a silent default.
+        public_access_cidrs = [str(cidr) for cidr in (eks_config.get("public_access_cidrs") or [])]
+        if endpoint_access_mode == "PRIVATE":
+            endpoint_access = eks.EndpointAccess.PRIVATE
+        elif public_access_cidrs:
+            endpoint_access = eks.EndpointAccess.PUBLIC_AND_PRIVATE.only_from(*public_access_cidrs)
+        else:
+            Annotations.of(self).add_warning(
+                "eks_cluster.endpoint_access is PUBLIC_AND_PRIVATE with no "
+                "public_access_cidrs allowlist: the EKS API server accepts "
+                "connections from 0.0.0.0/0 (authentication still applies). "
+                "Set eks_cluster.public_access_cidrs to your egress CIDRs "
+                "(gco stacks eks endpoint set PUBLIC_AND_PRIVATE --cidr <cidr>) "
+                "or use PRIVATE with `gco cluster tunnel`."
+            )
+            endpoint_access = eks.EndpointAccess.PUBLIC_AND_PRIVATE
 
         # Create KMS key for EKS secrets encryption
         self.eks_encryption_key = kms.Key(
@@ -1601,11 +1615,77 @@ class GCORegionalStack(Stack):
         # - 44-nodepool-neuron.yaml: Trainium/Inferentia instances
         # These will be applied by the kubectl Lambda custom resource (created below)
 
+        # Developer access entries (eks_cluster.developer_access). The cluster
+        # authenticates through EKS access entries only, and until now no human
+        # principal could be granted one at deploy time — every access entry
+        # belonged to a platform Lambda. Absent or empty config synthesizes
+        # exactly today's entries.
+        self._create_developer_access_entries(eks_config)
+
         # Create IRSA role for service account to access secrets
         self._create_service_account_role()
 
         # Create kubectl Lambda for applying Kubernetes manifests
         self._create_kubectl_lambda()
+
+    def _create_developer_access_entries(self, eks_config: dict[str, Any]) -> None:
+        """Synthesize one EKS access entry per configured developer principal.
+
+        Each ``eks_cluster.developer_access`` element is
+        ``{principal_arn, scope, namespaces}``. The default is deliberately
+        the narrow grant — AmazonEKSEditPolicy scoped to the ``gco-jobs``
+        namespace, enough to submit and inspect jobs — not cluster-admin.
+        ``scope: cluster`` opts into AmazonEKSClusterAdminPolicy explicitly.
+        Config errors fail synthesis: a typo'd access grant must never
+        silently synthesize as nothing.
+        """
+        entries = eks_config.get("developer_access") or []
+        if not isinstance(entries, list):
+            raise ValueError("eks_cluster.developer_access must be a list of entries")
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"eks_cluster.developer_access[{index}] must be an object with "
+                    "principal_arn, and optionally scope and namespaces"
+                )
+            principal_arn = entry.get("principal_arn")
+            if not isinstance(principal_arn, str) or not principal_arn.startswith("arn:"):
+                raise ValueError(
+                    f"eks_cluster.developer_access[{index}].principal_arn must be an "
+                    f"IAM principal ARN, got {principal_arn!r}"
+                )
+            scope = str(entry.get("scope", "namespace")).strip().lower()
+            if scope == "cluster":
+                access_policy = eks.AccessPolicy.from_access_policy_name(
+                    "AmazonEKSClusterAdminPolicy",
+                    access_scope_type=eks.AccessScopeType.CLUSTER,
+                )
+            elif scope == "namespace":
+                namespaces = entry.get("namespaces") or ["gco-jobs"]
+                if not isinstance(namespaces, list) or not all(
+                    isinstance(namespace, str) and namespace for namespace in namespaces
+                ):
+                    raise ValueError(
+                        f"eks_cluster.developer_access[{index}].namespaces must be a "
+                        "list of namespace names"
+                    )
+                access_policy = eks.AccessPolicy.from_access_policy_name(
+                    "AmazonEKSEditPolicy",
+                    access_scope_type=eks.AccessScopeType.NAMESPACE,
+                    namespaces=namespaces,
+                )
+            else:
+                raise ValueError(
+                    f"eks_cluster.developer_access[{index}].scope must be 'namespace' "
+                    f"or 'cluster', got {entry.get('scope')!r}"
+                )
+            eks.AccessEntry(
+                self,
+                f"DeveloperAccessEntry{index}",
+                cluster=self.cluster,  # type: ignore[arg-type]
+                principal=principal_arn,
+                access_policies=[access_policy],
+            )
 
     # ── Shared toleration config for EKS add-ons ──────────────────────────
     # All GCO nodepools apply taints (nvidia.com/gpu, aws.amazon.com/neuron,
@@ -2191,6 +2271,46 @@ class GCORegionalStack(Stack):
                         "not support resource-level scoping; the central queue worker's "
                         "spot price gate needs current pricing). DynamoDB table names "
                         "and the CloudWatch namespace are otherwise exact."
+                    ),
+                    "appliesTo": ["Resource::*"],
+                }
+            ],
+        )
+
+        # Workload pods must run as gco-service-account to write artifacts
+        # (it is the only identity with RW on the regional shared bucket plus
+        # KMS encrypt), and without this statement that same role could not
+        # publish training metrics — CloudWatch denied PutMetricData with a
+        # warning most trainers swallow. Grant exactly one namespace,
+        # configurable via cdk.json::workload_metrics.cloudwatch_namespace so
+        # a deployment can point its own consumers at it; the default is a
+        # GCO-owned workload namespace. PutMetricData does not support
+        # resource-level scoping (Resource must be *), so the namespace
+        # condition carries the whole restriction — the same shape as every
+        # platform role's metrics grant.
+        workload_metrics_config = self.node.try_get_context("workload_metrics") or {}
+        workload_metrics_namespace = str(
+            workload_metrics_config.get("cloudwatch_namespace") or "GCO/Workloads"
+        )
+        self.service_account_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["cloudwatch:PutMetricData"],
+                resources=["*"],
+                conditions={"StringEquals": {"cloudwatch:namespace": workload_metrics_namespace}},
+            )
+        )
+        acknowledge_nag_findings(
+            self.service_account_role,
+            [
+                {
+                    "id": "AwsSolutions-IAM5",
+                    "reason": (
+                        "cloudwatch:PutMetricData does not support resource-level "
+                        "scoping and requires Resource:*. The statement is "
+                        "constrained by a StringEquals condition to exactly one "
+                        "configured workload metric namespace, matching the "
+                        "namespace-conditioned metrics grants on the platform roles."
                     ),
                     "appliesTo": ["Resource::*"],
                 }
@@ -2805,8 +2925,33 @@ class GCORegionalStack(Stack):
         bucket policy independent of ``enforce_ssl=True`` so the deny is
         verifiable in the synthesized template under a known SID.
         """
+        # Teardown behavior is configurable (cdk.json::regional_shared_bucket.
+        # removal_policy) because this bucket holds artifacts jobs just
+        # produced: 'destroy' (the default, preserving historical teardown
+        # semantics for existing deployments and validation cycles) deletes
+        # bucket, logs, and key with the region; 'retain' lets all three
+        # outlive a regional destroy so checkpoints survive. Invalid values
+        # fail synthesis rather than silently choosing a side. Keep this in
+        # sync with the tolerant CLI-side read in cli/storage.py
+        # (_regional_shared_removal_policy) that `gco storage s3-inventory`
+        # reports through.
+        retention_context = self.node.try_get_context("regional_shared_bucket") or {}
+        configured_policy = str(retention_context.get("removal_policy", "destroy")).strip().lower()
+        if configured_policy not in ("destroy", "retain"):
+            raise ValueError(
+                "regional_shared_bucket.removal_policy must be 'destroy' or 'retain', "
+                f"got {retention_context.get('removal_policy')!r}"
+            )
+        retain_regional_shared = configured_policy == "retain"
+        regional_shared_removal_policy = (
+            RemovalPolicy.RETAIN if retain_regional_shared else RemovalPolicy.DESTROY
+        )
+
         # KMS key for the regional bucket. Matches the cluster-shared key
-        # posture: annual rotation, 7-day pending window, destroy-on-teardown.
+        # posture: annual rotation, 7-day pending window, destroy-on-teardown
+        # by default. Under 'retain' the key survives with the bucket —
+        # a retained bucket whose key was scheduled for deletion would be
+        # undecryptable, so the two always share a fate.
         self.regional_shared_kms_key = kms.Key(
             self,
             "RegionalSharedKmsKey",
@@ -2816,7 +2961,7 @@ class GCORegionalStack(Stack):
             ),
             enable_key_rotation=True,
             pending_window=Duration.days(7),
-            removal_policy=RemovalPolicy.DESTROY,
+            removal_policy=regional_shared_removal_policy,
         )
 
         # Key-policy grants for the service principals that encrypt/decrypt on
@@ -2866,8 +3011,8 @@ class GCORegionalStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             enforce_ssl=True,
             versioned=True,
-            removal_policy=RemovalPolicy.DESTROY,
-            auto_delete_objects=True,
+            removal_policy=regional_shared_removal_policy,
+            auto_delete_objects=not retain_regional_shared,
             lifecycle_rules=[
                 s3.LifecycleRule(
                     id="ExpireAccessLogs",
@@ -2898,8 +3043,8 @@ class GCORegionalStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             enforce_ssl=True,
             versioned=True,
-            removal_policy=RemovalPolicy.DESTROY,
-            auto_delete_objects=True,
+            removal_policy=regional_shared_removal_policy,
+            auto_delete_objects=not retain_regional_shared,
             server_access_logs_bucket=self.regional_shared_access_logs_bucket,
             server_access_logs_prefix="regional-shared/",
         )

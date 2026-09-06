@@ -11,6 +11,7 @@ and the module-level singleton getters (get_template_store, get_webhook_store,
 get_job_store), including ClientError propagation across store operations.
 """
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -426,6 +427,97 @@ class TestJobStore:
         assert result["status"] == "queued"
         assert result["priority"] == 10
         mock_dynamodb.put_item.assert_called_once()
+
+    def test_record_job_failure_creates_terminal_record(self, job_store, mock_dynamodb):
+        """A jobless failure is recorded directly in the terminal FAILED state."""
+        mock_dynamodb.put_item.return_value = {}
+
+        created = job_store.record_job_failure(
+            "sqs-1234",
+            target_region="us-east-1",
+            namespace="gco-jobs",
+            error="manifest[0] apply raised: boom",
+            message="SQS job could not be applied to Kubernetes",
+            priority=5,
+            submitted_at="2026-03-26T12:00:00+00:00",
+            job_name="trainer",
+        )
+
+        assert created is True
+        call = mock_dynamodb.put_item.call_args.kwargs
+        assert call["ConditionExpression"] == "attribute_not_exists(job_id)"
+        item = call["Item"]
+        assert item["job_id"] == "sqs-1234"
+        assert item["job_name"] == "trainer"
+        assert item["status"] == "failed"
+        assert item["region_status"] == "us-east-1#failed"
+        assert item["namespace"] == "gco-jobs"
+        assert item["priority"] == 5
+        assert item["submitted_at"] == "2026-03-26T12:00:00+00:00"
+        assert item["error_message"] == "manifest[0] apply raised: boom"
+        assert item["completed_at"] == item["updated_at"]
+        assert item["work_sort"] == item["priority_sort"]
+        history = json.loads(item["status_history"])
+        assert history == [
+            {
+                "status": "failed",
+                "timestamp": item["updated_at"],
+                "message": "SQS job could not be applied to Kubernetes",
+                "error": "manifest[0] apply raised: boom",
+            }
+        ]
+
+    def test_record_job_failure_defaults_name_and_omits_empty_message(
+        self, job_store, mock_dynamodb
+    ):
+        """job_name falls back to the job_id and empty messages stay out of history."""
+        mock_dynamodb.put_item.return_value = {}
+
+        created = job_store.record_job_failure(
+            "sqs-5678",
+            target_region="us-east-1",
+            namespace="gco-jobs",
+            error="prevalidation failed",
+        )
+
+        assert created is True
+        item = mock_dynamodb.put_item.call_args.kwargs["Item"]
+        assert item["job_name"] == "sqs-5678"
+        assert item["priority"] == 0
+        assert item["submitted_at"] == item["updated_at"]
+        history = json.loads(item["status_history"])
+        assert "message" not in history[0]
+        assert history[0]["error"] == "prevalidation failed"
+
+    def test_record_job_failure_leaves_existing_records_untouched(self, job_store, mock_dynamodb):
+        """A conditional failure means another lifecycle owns the record."""
+        mock_dynamodb.put_item.side_effect = ClientError(
+            {"Error": {"Code": "ConditionalCheckFailedException", "Message": "exists"}},
+            "PutItem",
+        )
+
+        created = job_store.record_job_failure(
+            "job-123",
+            target_region="us-east-1",
+            namespace="gco-jobs",
+            error="boom",
+        )
+
+        assert created is False
+
+    def test_record_job_failure_raises_on_other_client_errors(self, job_store, mock_dynamodb):
+        mock_dynamodb.put_item.side_effect = ClientError(
+            {"Error": {"Code": "InternalServerError", "Message": "Test error"}},
+            "PutItem",
+        )
+
+        with pytest.raises(ClientError):
+            job_store.record_job_failure(
+                "job-123",
+                target_region="us-east-1",
+                namespace="gco-jobs",
+                error="boom",
+            )
 
     def test_claim_job_success(self, job_store, mock_dynamodb):
         """A queued record is claimed with region and fencing identity."""

@@ -131,7 +131,7 @@ def test_live_counts_are_current_values() -> None:
     test_mcp_server.py.
     """
     default, ceiling = _live_counts()
-    assert (default, ceiling) == (139, 195), (
+    assert (default, ceiling) == (139, 196), (
         f"Registered MCP tool counts changed to {default}/{ceiling}. If intentional, "
         "update the docs, test_mcp_server.py, and this expectation together."
     )

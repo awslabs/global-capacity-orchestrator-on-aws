@@ -11,6 +11,7 @@ reloads the handler with sys.modules cleanup so each test runs
 against a fresh import.
 """
 
+import logging
 import re
 import sys
 from pathlib import Path
@@ -18,6 +19,41 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 import yaml
+
+
+def _fully_enabled_replacements(manifests_dir: Path) -> dict[str, str]:
+    """Stub every feature-gate placeholder in the real manifests directory.
+
+    Shared by the planner tests that must run against the shipped manifests
+    with every optional feature resolved: any remaining ``{{TOKEN}}`` would
+    gate its whole file out of the plan and silently exempt it from the
+    planner's invariants.
+    """
+    token_re = re.compile(r"\{\{[A-Za-z0-9_]+\}\}")
+    quantity_tokens = {
+        "{{INFERENCE_PROXY_TLS_CPU_REQUEST}}",
+        "{{QUOTA_MAX_CPU}}",
+        "{{QUOTA_MAX_MEMORY}}",
+        "{{QUOTA_MAX_GPU}}",
+    }
+    integer_tokens = {"{{INFERENCE_PROXY_TLS_CPU_TARGET_UTILIZATION}}"}
+    integer_prefixes = ("{{QP_", "{{LIMIT_", "{{QUOTA_MAX_PODS}}")
+    replacements: dict[str, str] = {
+        "{{VPC_ENDPOINT_CIDR_BLOCKS}}": '- ipBlock:\n            cidr: "10.0.0.0/16"',
+    }
+    for manifest in sorted(manifests_dir.glob("*.yaml")):
+        for token in token_re.findall(manifest.read_text(encoding="utf-8")):
+            if token in replacements:
+                continue
+            if (
+                token in quantity_tokens
+                or token in integer_tokens
+                or token.startswith(integer_prefixes)
+            ):
+                replacements[token] = "1"
+            else:
+                replacements[token] = "stub-value"
+    return replacements
 
 
 @pytest.fixture
@@ -2092,30 +2128,7 @@ class TestAuthoritativeManifestPlanner:
         manifests_dir = (
             Path(__file__).parent.parent / "lambda" / "kubectl-applier-simple" / "manifests"
         )
-        token_re = re.compile(r"\{\{[A-Za-z0-9_]+\}\}")
-        quantity_tokens = {
-            "{{INFERENCE_PROXY_TLS_CPU_REQUEST}}",
-            "{{QUOTA_MAX_CPU}}",
-            "{{QUOTA_MAX_MEMORY}}",
-            "{{QUOTA_MAX_GPU}}",
-        }
-        integer_tokens = {"{{INFERENCE_PROXY_TLS_CPU_TARGET_UTILIZATION}}"}
-        integer_prefixes = ("{{QP_", "{{LIMIT_", "{{QUOTA_MAX_PODS}}")
-        replacements: dict[str, str] = {
-            "{{VPC_ENDPOINT_CIDR_BLOCKS}}": '- ipBlock:\n            cidr: "10.0.0.0/16"',
-        }
-        for manifest in sorted(manifests_dir.glob("*.yaml")):
-            for token in token_re.findall(manifest.read_text(encoding="utf-8")):
-                if token in replacements:
-                    continue
-                if (
-                    token in quantity_tokens
-                    or token in integer_tokens
-                    or token.startswith(integer_prefixes)
-                ):
-                    replacements[token] = "1"
-                else:
-                    replacements[token] = "stub-value"
+        replacements = _fully_enabled_replacements(manifests_dir)
 
         plan = handler_module.plan_manifests(str(manifests_dir), replacements)
 
@@ -2135,6 +2148,194 @@ class TestAuthoritativeManifestPlanner:
             item["kind"] for phase in ("base", "post-helm") for item in plan["phases"][phase]
         }
         assert {"ClusterQueue", "LocalQueue", "ResourceFlavor", "NetworkPolicy"} <= planned_kinds
+
+    # ── Cross-phase ServiceAccount/token-projection invariant ────────────
+    #
+    # Shared synthetic fixtures: a hardened ServiceAccount (base), an RBAC
+    # binding declaring it talks to the Kubernetes API (base), and a
+    # post-Helm workload running as it — the exact shape of the SQS
+    # queue-processor pairing whose split-release deploy caused the outage.
+
+    @staticmethod
+    def _write_hardened_sa_fixture(tmp_path, *, rbac_bound=True, project_token=False):
+        (tmp_path / "01-sa.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "apiVersion": "v1",
+                    "kind": "ServiceAccount",
+                    "metadata": {"name": "gco-test-sa", "namespace": "gco-system"},
+                    "automountServiceAccountToken": False,
+                }
+            )
+        )
+        if rbac_bound:
+            (tmp_path / "02-rbac.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "apiVersion": "rbac.authorization.k8s.io/v1",
+                        "kind": "RoleBinding",
+                        "metadata": {"name": "gco-test-binding", "namespace": "gco-system"},
+                        "roleRef": {
+                            "apiGroup": "rbac.authorization.k8s.io",
+                            "kind": "Role",
+                            "name": "gco-test-role",
+                        },
+                        "subjects": [{"kind": "ServiceAccount", "name": "gco-test-sa"}],
+                    }
+                )
+            )
+        pod_spec: dict = {
+            "serviceAccountName": "gco-test-sa",
+            "containers": [{"name": "worker", "image": "python:3.14"}],
+        }
+        if project_token:
+            pod_spec["volumes"] = [
+                {
+                    "name": "kubernetes-api-token",
+                    "projected": {
+                        "sources": [
+                            {"serviceAccountToken": {"expirationSeconds": 3600, "path": "token"}}
+                        ]
+                    },
+                }
+            ]
+            pod_spec["containers"][0]["volumeMounts"] = [
+                {
+                    "name": "kubernetes-api-token",
+                    "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                    "readOnly": True,
+                }
+            ]
+        (tmp_path / "post-helm-worker.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "apiVersion": "apps/v1",
+                    "kind": "Deployment",
+                    "metadata": {"name": "worker", "namespace": "gco-system"},
+                    "spec": {"template": {"spec": pod_spec}},
+                }
+            )
+        )
+
+    def test_real_manifests_satisfy_the_token_projection_invariant(self, handler_module):
+        """The shipped manifests keep every hardened, API-bound SA projected.
+
+        Runs the planner over the real directory with every feature gate
+        resolved, so the sqs-queue-processor ScaledJob and both platform
+        Deployments are actually planned and subject to the invariant.
+        """
+        manifests_dir = (
+            Path(__file__).parent.parent / "lambda" / "kubectl-applier-simple" / "manifests"
+        )
+        plan = handler_module.plan_manifests(
+            str(manifests_dir), _fully_enabled_replacements(manifests_dir)
+        )
+        planned_names = {
+            (item["kind"], item["name"])
+            for phase in ("base", "post-helm")
+            for item in plan["phases"][phase]
+        }
+        # The pairing that caused the outage must be planned (not gated out)
+        # for this test to mean anything.
+        assert ("ScaledJob", "sqs-queue-processor") in planned_names
+        assert ("ServiceAccount", "gco-manifest-processor-sa") in planned_names
+
+    def test_hardened_rbac_bound_sa_without_projection_fails_planning(
+        self, handler_module, tmp_path
+    ):
+        """The outage shape is a planning error naming both objects."""
+        self._write_hardened_sa_fixture(tmp_path, rbac_bound=True, project_token=False)
+
+        with pytest.raises(ValueError) as error:
+            handler_module.plan_manifests(str(tmp_path), {})
+
+        message = str(error.value)
+        assert "Deployment/gco-system/worker" in message
+        assert "post-helm-worker.yaml" in message
+        assert "'gco-test-sa'" in message
+        assert "01-sa.yaml" in message
+        assert "/var/run/secrets/kubernetes.io/serviceaccount" in message
+
+    def test_hardened_rbac_bound_sa_with_projection_passes(self, handler_module, tmp_path):
+        self._write_hardened_sa_fixture(tmp_path, rbac_bound=True, project_token=True)
+
+        plan = handler_module.plan_manifests(str(tmp_path), {})
+
+        assert [item["name"] for item in plan["phases"]["post-helm"]] == ["worker"]
+
+    def test_hardened_unbound_sa_without_projection_is_exempt(self, handler_module, tmp_path):
+        """No RBAC binding means the SA holds no Kubernetes API role.
+
+        Matches the shipped inference-proxy and cost-monitor pods: automount
+        is disabled, the pods hold only AWS credentials, and requiring a
+        Kubernetes token projection for them would be wrong.
+        """
+        self._write_hardened_sa_fixture(tmp_path, rbac_bound=False, project_token=False)
+
+        plan = handler_module.plan_manifests(str(tmp_path), {})
+
+        assert [item["name"] for item in plan["phases"]["post-helm"]] == ["worker"]
+
+    def test_unhardened_sa_is_exempt_even_when_rbac_bound(self, handler_module, tmp_path):
+        """Automount left on (or unset) needs no projection: pods get tokens."""
+        self._write_hardened_sa_fixture(tmp_path, rbac_bound=True, project_token=False)
+        (tmp_path / "01-sa.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "apiVersion": "v1",
+                    "kind": "ServiceAccount",
+                    "metadata": {"name": "gco-test-sa", "namespace": "gco-system"},
+                }
+            )
+        )
+
+        plan = handler_module.plan_manifests(str(tmp_path), {})
+
+        assert [item["name"] for item in plan["phases"]["post-helm"]] == ["worker"]
+
+    def test_projection_without_matching_mount_still_fails(self, handler_module, tmp_path):
+        """A projected volume that no container mounts is not a credential."""
+        self._write_hardened_sa_fixture(tmp_path, rbac_bound=True, project_token=True)
+        worker = yaml.safe_load((tmp_path / "post-helm-worker.yaml").read_text())
+        del worker["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+        (tmp_path / "post-helm-worker.yaml").write_text(yaml.safe_dump(worker))
+
+        with pytest.raises(ValueError) as error:
+            handler_module.plan_manifests(str(tmp_path), {})
+
+        assert "Deployment/gco-system/worker" in str(error.value)
+
+    def test_cluster_role_binding_subject_requires_explicit_namespace(
+        self, handler_module, tmp_path
+    ):
+        """ClusterRoleBinding subjects bind only via their stated namespace."""
+        self._write_hardened_sa_fixture(tmp_path, rbac_bound=False, project_token=False)
+        (tmp_path / "02-rbac.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "apiVersion": "rbac.authorization.k8s.io/v1",
+                    "kind": "ClusterRoleBinding",
+                    "metadata": {"name": "gco-test-cluster-binding"},
+                    "roleRef": {
+                        "apiGroup": "rbac.authorization.k8s.io",
+                        "kind": "ClusterRole",
+                        "name": "gco-test-role",
+                    },
+                    "subjects": [
+                        {
+                            "kind": "ServiceAccount",
+                            "name": "gco-test-sa",
+                            "namespace": "gco-system",
+                        }
+                    ],
+                }
+            )
+        )
+
+        with pytest.raises(ValueError) as error:
+            handler_module.plan_manifests(str(tmp_path), {})
+
+        assert "Deployment/gco-system/worker" in str(error.value)
 
     def test_every_supported_kind_has_an_apply_dispatch_branch(self, handler_module):
         """_SUPPORTED_MANIFEST_KINDS and the apply loop must agree exactly.
@@ -2941,3 +3142,140 @@ class TestQueueingCustomObjectMapConsistency:
         ]
         pruned = {(api_version, kind, str(ns), name) for api_version, kind, ns, name in inventory}
         assert pruned == expected
+
+
+class TestServiceAccountAutomountFlipDiagnostic:
+    """Base-pass diagnostic for clusters created by an older release.
+
+    When the incoming manifest disables automountServiceAccountToken on a
+    ServiceAccount whose live object still allows it, the apply names every
+    planned workload running as that account and whether each carries the
+    compensating projected token — the log line that identifies the exact
+    workload the flip is about to strand.
+    """
+
+    _SA_DOC = {
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": {"name": "gco-test-sa", "namespace": "gco-system"},
+        "automountServiceAccountToken": False,
+    }
+
+    @staticmethod
+    def _plan_with_worker(project_token: bool) -> dict:
+        pod_spec: dict = {
+            "serviceAccountName": "gco-test-sa",
+            "containers": [{"name": "worker", "image": "python:3.14"}],
+        }
+        if project_token:
+            pod_spec["volumes"] = [
+                {
+                    "name": "kubernetes-api-token",
+                    "projected": {"sources": [{"serviceAccountToken": {"path": "token"}}]},
+                }
+            ]
+            pod_spec["containers"][0]["volumeMounts"] = [
+                {
+                    "name": "kubernetes-api-token",
+                    "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                }
+            ]
+        return {
+            "phases": {
+                "base": [],
+                "post-helm": [
+                    {
+                        "apiVersion": "apps/v1",
+                        "kind": "Deployment",
+                        "namespace": "gco-system",
+                        "name": "worker",
+                        "sourceFile": "post-helm-worker.yaml",
+                        "phase": "post-helm",
+                        "document": {
+                            "apiVersion": "apps/v1",
+                            "kind": "Deployment",
+                            "metadata": {"name": "worker", "namespace": "gco-system"},
+                            "spec": {"template": {"spec": pod_spec}},
+                        },
+                    }
+                ],
+            }
+        }
+
+    def _live_sa(self, automount):
+        live = MagicMock()
+        live.automount_service_account_token = automount
+        return live
+
+    def test_flip_on_live_cluster_names_workloads_missing_the_projection(
+        self, handler_module, caplog
+    ):
+        v1 = MagicMock()
+        v1.read_namespaced_service_account.return_value = self._live_sa(None)
+        with caplog.at_level(logging.WARNING):
+            handler_module._log_service_account_automount_flip(
+                v1, self._SA_DOC, "gco-system", "gco-test-sa", self._plan_with_worker(False)
+            )
+        assert "flipped to false" in caplog.text
+        assert "post-helm:post-helm-worker.yaml Deployment/worker" in caplog.text
+        assert "projected-token=MISSING" in caplog.text
+
+    def test_flip_reports_present_projections(self, handler_module, caplog):
+        v1 = MagicMock()
+        v1.read_namespaced_service_account.return_value = self._live_sa(True)
+        with caplog.at_level(logging.WARNING):
+            handler_module._log_service_account_automount_flip(
+                v1, self._SA_DOC, "gco-system", "gco-test-sa", self._plan_with_worker(True)
+            )
+        assert "projected-token=present" in caplog.text
+
+    def test_flip_with_no_referencing_workloads_logs_none(self, handler_module, caplog):
+        v1 = MagicMock()
+        v1.read_namespaced_service_account.return_value = self._live_sa(None)
+        empty_plan = {"phases": {"base": [], "post-helm": []}}
+        with caplog.at_level(logging.WARNING):
+            handler_module._log_service_account_automount_flip(
+                v1, self._SA_DOC, "gco-system", "gco-test-sa", empty_plan
+            )
+        assert "<none>" in caplog.text
+
+    def test_already_hardened_live_sa_is_not_a_flip(self, handler_module, caplog):
+        v1 = MagicMock()
+        v1.read_namespaced_service_account.return_value = self._live_sa(False)
+        with caplog.at_level(logging.WARNING):
+            handler_module._log_service_account_automount_flip(
+                v1, self._SA_DOC, "gco-system", "gco-test-sa", self._plan_with_worker(True)
+            )
+        assert caplog.text == ""
+
+    def test_missing_live_sa_is_a_fresh_cluster_not_a_flip(self, handler_module, caplog):
+        v1 = MagicMock()
+        v1.read_namespaced_service_account.side_effect = handler_module.ApiException(status=404)
+        with caplog.at_level(logging.WARNING):
+            handler_module._log_service_account_automount_flip(
+                v1, self._SA_DOC, "gco-system", "gco-test-sa", self._plan_with_worker(True)
+            )
+        assert caplog.text == ""
+
+    def test_live_read_failure_never_blocks_the_apply(self, handler_module, caplog):
+        v1 = MagicMock()
+        v1.read_namespaced_service_account.side_effect = handler_module.ApiException(status=503)
+        with caplog.at_level(logging.WARNING):
+            handler_module._log_service_account_automount_flip(
+                v1, self._SA_DOC, "gco-system", "gco-test-sa", self._plan_with_worker(True)
+            )
+        assert caplog.text == ""
+
+    def test_document_without_disabled_automount_skips_the_live_read(self, handler_module, caplog):
+        v1 = MagicMock()
+        unhardened = {
+            "apiVersion": "v1",
+            "kind": "ServiceAccount",
+            "metadata": {"name": "gco-test-sa", "namespace": "gco-system"},
+        }
+        with caplog.at_level(logging.WARNING):
+            handler_module._log_service_account_automount_flip(
+                v1, unhardened, "gco-system", "gco-test-sa", self._plan_with_worker(True)
+            )
+        v1.read_namespaced_service_account.assert_not_called()
+        assert caplog.text == ""

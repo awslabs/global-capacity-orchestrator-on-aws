@@ -1142,6 +1142,71 @@ async def test_jobs_metrics_bare_units_iteration_failure_and_outer_failure() -> 
 
 
 @pytest.mark.asyncio
+async def test_jobs_route_500_details_never_echo_exception_text() -> None:
+    """Every jobs-route 500 returns a generic detail, never the exception text.
+
+    CodeQL flagged two of these handlers (information exposure through an
+    exception, alerts #308/#309); all ten share the same shape, so all ten are
+    pinned here. The full exception stays in the server log; the client sees
+    only the constant detail.
+    """
+    import gco.services.api_routes.jobs as routes
+    from gco.services.api_shared import BulkDeleteRequest
+
+    marker = "secret-internal-failure-detail"
+
+    async def _raised_detail(route_call: Any) -> str:
+        processor = _api_processor()
+        processor.list_jobs = AsyncMock(side_effect=RuntimeError(marker))
+        processor.batch_v1.read_namespaced_job.side_effect = RuntimeError(marker)
+        processor.batch_v1.delete_namespaced_job.side_effect = RuntimeError(marker)
+        processor.core_v1.list_namespaced_pod.side_effect = RuntimeError(marker)
+        processor.core_v1.list_namespaced_event.side_effect = RuntimeError(marker)
+        processor.core_v1.read_namespaced_pod.side_effect = RuntimeError(marker)
+        with (
+            patch.object(routes, "_check_processor", return_value=processor),
+            patch.object(routes, "_check_namespace"),
+            pytest.raises(HTTPException) as error,
+        ):
+            await route_call(routes, processor)
+        assert error.value.status_code == 500
+        return str(error.value.detail)
+
+    async def _get_job_logs(routes: Any, processor: Any) -> Any:
+        # The job read must succeed so the failure lands in the generic handler.
+        processor.batch_v1.read_namespaced_job.side_effect = None
+        return await routes.get_job_logs("gco-jobs", "trainer", None, 100, False, None, False)
+
+    async def _get_job_metrics(routes: Any, processor: Any) -> Any:
+        processor.batch_v1.read_namespaced_job.side_effect = None
+        return await routes.get_job_metrics("gco-jobs", "trainer")
+
+    async def _delete_job(routes: Any, processor: Any) -> Any:
+        processor.batch_v1.read_namespaced_job.side_effect = None
+        return await routes.delete_job("gco-jobs", "trainer", None)
+
+    route_calls: list[Any] = [
+        lambda routes, processor: routes.list_jobs(None, None, 50, 0, "createdAt:desc", None),
+        lambda routes, processor: routes.get_job("gco-jobs", "trainer"),
+        _get_job_logs,
+        lambda routes, processor: routes.get_job_events("gco-jobs", "trainer"),
+        lambda routes, processor: routes.get_job_pods("gco-jobs", "trainer"),
+        lambda routes, processor: routes.get_pod_logs(
+            "gco-jobs", "trainer", "pod-1", None, 100, False
+        ),
+        _get_job_metrics,
+        _delete_job,
+        lambda routes, processor: routes.bulk_delete_jobs(BulkDeleteRequest(namespace="gco-jobs")),
+        lambda routes, processor: routes.retry_job("gco-jobs", "trainer"),
+    ]
+
+    for route_call in route_calls:
+        detail = await _raised_detail(route_call)
+        assert detail == "Internal server error"
+        assert marker not in detail
+
+
+@pytest.mark.asyncio
 async def test_jobs_bulk_delete_missing_timestamp_and_per_job_failure() -> None:
     import gco.services.api_routes.jobs as routes
     from gco.services.api_shared import BulkDeleteRequest

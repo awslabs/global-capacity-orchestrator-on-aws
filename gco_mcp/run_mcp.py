@@ -300,6 +300,7 @@ with _contextlib.suppress(ImportError):
         set_codex_default_model,
         set_codex_reasoning_effort,
         set_deployment_region,
+        set_eks_endpoint_access,
         set_mission_default_model,
     )
 
@@ -442,6 +443,7 @@ if _IS_RELOAD and (
         "add_deployment_region",
         "remove_deployment_region",
         "set_deployment_region",
+        "set_eks_endpoint_access",
         "set_mission_default_model",
         "set_capacity_advisor_default_model",
         "set_claude_code_default_model",
@@ -778,6 +780,7 @@ _PUBLIC_EXPORTS = [
     "set_codex_default_model",
     "set_codex_reasoning_effort",
     "set_deployment_region",
+    "set_eks_endpoint_access",
     "set_mission_default_model",
     "set_mooncake_topology",
     "setup_cluster_access",

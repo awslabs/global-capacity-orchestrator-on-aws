@@ -104,6 +104,7 @@ _TOOL_GATING_TABLE: dict[str, str] = {
     "add_deployment_region": FLAG_CONFIG_MANAGEMENT,
     "remove_deployment_region": FLAG_CONFIG_MANAGEMENT,
     "set_deployment_region": FLAG_CONFIG_MANAGEMENT,
+    "set_eks_endpoint_access": FLAG_CONFIG_MANAGEMENT,
     "set_mission_default_model": FLAG_CONFIG_MANAGEMENT,
     "set_capacity_advisor_default_model": FLAG_CONFIG_MANAGEMENT,
     "set_claude_code_default_model": FLAG_CONFIG_MANAGEMENT,

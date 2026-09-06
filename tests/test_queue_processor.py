@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -43,6 +44,11 @@ _QP_ENV_VARS = (
     "TRUSTED_REGISTRIES",
     "TRUSTED_DOCKERHUB_ORGS",
     "REQUIRE_ACCELERATOR_TOLERATION",
+    "JOBS_TABLE_NAME",
+    "DYNAMODB_REGION",
+    "QP_JOB_QUEUE_MAX_RECEIVE_COUNT",
+    "KUBERNETES_SERVICE_HOST",
+    "SERVICE_ACCOUNT_NAME",
 )
 
 
@@ -87,24 +93,28 @@ def _job(name="test-job", namespace="gco-jobs", gpu=0, privileged=False, escalat
     }
 
 
-def _sqs_resp(manifests, job_id="abc123"):
-    """Build an SQS receive_message response."""
-    return {
-        "Messages": [
-            {
-                "ReceiptHandle": "receipt-xyz",
-                "Body": json.dumps(
-                    {
-                        "job_id": job_id,
-                        "manifests": manifests,
-                        "namespace": "gco-jobs",
-                        "priority": 0,
-                        "submitted_at": "2026-03-26T12:00:00+00:00",
-                    }
-                ),
-            }
-        ]
+def _sqs_resp(manifests, job_id="abc123", receive_count=None, **body_overrides):
+    """Build an SQS receive_message response.
+
+    ``receive_count`` fills ``Attributes.ApproximateReceiveCount`` (omitted
+    when ``None``, matching a receive without ``AttributeNames``).
+    ``body_overrides`` replace or add top-level message-body fields.
+    """
+    body = {
+        "job_id": job_id,
+        "manifests": manifests,
+        "namespace": "gco-jobs",
+        "priority": 0,
+        "submitted_at": "2026-03-26T12:00:00+00:00",
     }
+    body.update(body_overrides)
+    message = {
+        "ReceiptHandle": "receipt-xyz",
+        "Body": json.dumps(body),
+    }
+    if receive_count is not None:
+        message["Attributes"] = {"ApproximateReceiveCount": str(receive_count)}
+    return {"Messages": [message]}
 
 
 @pytest.fixture(autouse=True)
@@ -496,6 +506,18 @@ class TestMain:
             qp.main()
         assert exc.value.code == 1
 
+    def test_config_failure_drains_with_record_and_exits(self):
+        """A configuration failure is terminal: drain one message, exit 1."""
+        qp = _reload()
+        qp.load_k8s = MagicMock(side_effect=qp.KubernetesConfigurationError("no token"))
+        qp.drain_one_message_after_config_failure = MagicMock(return_value=True)
+        qp.process_one_message = MagicMock()
+        with pytest.raises(SystemExit) as exc:
+            qp.main()
+        assert exc.value.code == 1
+        qp.drain_one_message_after_config_failure.assert_called_once_with("no token")
+        qp.process_one_message.assert_not_called()
+
 
 class TestLoadK8s:
     def test_incluster(self):
@@ -514,6 +536,332 @@ class TestLoadK8s:
         qp.config = mock_cfg
         qp.load_k8s()
         mock_cfg.load_kube_config.assert_called_once()
+
+    @staticmethod
+    def _incluster_failure(qp):
+        from kubernetes.config import ConfigException
+
+        mock_cfg = MagicMock()
+        mock_cfg.load_incluster_config.side_effect = ConfigException(
+            "Service host/port is not set."
+        )
+        mock_cfg.ConfigException = ConfigException
+        qp.config = mock_cfg
+        return mock_cfg
+
+    def test_in_pod_failure_is_terminal_and_names_token_path_and_sa(self, monkeypatch):
+        """Inside a pod the fallback must not run; the error is actionable."""
+        monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.100.0.1")
+        monkeypatch.setenv("SERVICE_ACCOUNT_NAME", "gco-manifest-processor-sa")
+        qp = _reload()
+        mock_cfg = self._incluster_failure(qp)
+
+        real_exists = os.path.exists
+        monkeypatch.setattr(
+            "os.path.exists",
+            lambda path: False if path == qp._SERVICEACCOUNT_TOKEN_PATH else real_exists(path),
+        )
+
+        with pytest.raises(qp.KubernetesConfigurationError) as error:
+            qp.load_k8s()
+        detail = str(error.value)
+        assert "/var/run/secrets/kubernetes.io/serviceaccount/token" in detail
+        assert "gco-manifest-processor-sa" in detail
+        assert "automountServiceAccountToken" in detail
+        mock_cfg.load_kube_config.assert_not_called()
+
+    def test_in_pod_failure_with_token_present_reports_the_original_error(self, monkeypatch):
+        monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.100.0.1")
+        monkeypatch.setenv("SERVICE_ACCOUNT_NAME", "gco-manifest-processor-sa")
+        qp = _reload()
+        mock_cfg = self._incluster_failure(qp)
+
+        real_exists = os.path.exists
+        monkeypatch.setattr(
+            "os.path.exists",
+            lambda path: True if path == qp._SERVICEACCOUNT_TOKEN_PATH else real_exists(path),
+        )
+
+        with pytest.raises(qp.KubernetesConfigurationError) as error:
+            qp.load_k8s()
+        detail = str(error.value)
+        assert "token exists" in detail
+        assert "gco-manifest-processor-sa" in detail
+        assert "Service host/port is not set." in detail
+        mock_cfg.load_kube_config.assert_not_called()
+
+    def test_in_pod_failure_without_sa_env_still_raises(self, monkeypatch):
+        monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.100.0.1")
+        qp = _reload()
+        self._incluster_failure(qp)
+
+        real_exists = os.path.exists
+        monkeypatch.setattr(
+            "os.path.exists",
+            lambda path: False if path == qp._SERVICEACCOUNT_TOKEN_PATH else real_exists(path),
+        )
+
+        with pytest.raises(qp.KubernetesConfigurationError) as error:
+            qp.load_k8s()
+        assert "SERVICE_ACCOUNT_NAME unset" in str(error.value)
+
+    def test_off_cluster_fallback_failure_is_wrapped(self):
+        """A broken local kubeconfig raises the specific error, not ConfigException."""
+        from kubernetes.config import ConfigException
+
+        qp = _reload()
+        mock_cfg = MagicMock()
+        mock_cfg.load_incluster_config.side_effect = ConfigException("not in cluster")
+        mock_cfg.load_kube_config.side_effect = ConfigException("no kubeconfig")
+        mock_cfg.ConfigException = ConfigException
+        qp.config = mock_cfg
+        with pytest.raises(qp.KubernetesConfigurationError) as error:
+            qp.load_k8s()
+        assert "KUBERNETES_SERVICE_HOST unset" in str(error.value)
+
+
+class TestBoundedError:
+    def test_short_text_passes_through(self):
+        qp = _reload()
+        assert qp._bounded_error("boom") == "boom"
+
+    def test_long_text_is_truncated(self):
+        qp = _reload()
+        bounded = qp._bounded_error("x" * 5000)
+        assert bounded == "x" * 2000 + "...[truncated]"
+
+
+class TestRecordJobFailure:
+    def _qp(self, monkeypatch, table="gco-jobs"):
+        if table is not None:
+            monkeypatch.setenv("JOBS_TABLE_NAME", table)
+        qp = _reload()
+        qp.JobStore = MagicMock()
+        return qp
+
+    def test_records_failed_with_bounded_error(self, monkeypatch):
+        qp = self._qp(monkeypatch)
+        qp.JobStore.return_value.record_job_failure.return_value = True
+
+        assert qp._record_job_failure(
+            "abc123",
+            namespace="gco-jobs",
+            error="y" * 5000,
+            message="SQS job could not be applied to Kubernetes",
+            priority=7,
+            submitted_at="2026-03-26T12:00:00+00:00",
+        )
+        qp.JobStore.assert_called_once_with(table_name="gco-jobs")
+        kwargs = qp.JobStore.return_value.record_job_failure.call_args.kwargs
+        assert qp.JobStore.return_value.record_job_failure.call_args.args == ("abc123",)
+        assert kwargs["target_region"] == "us-east-1"
+        assert kwargs["namespace"] == "gco-jobs"
+        assert kwargs["error"] == "y" * 2000 + "...[truncated]"
+        assert kwargs["message"] == "SQS job could not be applied to Kubernetes"
+        assert kwargs["priority"] == 7
+        assert kwargs["submitted_at"] == "2026-03-26T12:00:00+00:00"
+
+    def test_without_table_env_records_nothing(self, monkeypatch):
+        qp = self._qp(monkeypatch, table=None)
+        assert not qp._record_job_failure("abc123", namespace="gco-jobs", error="e", message="m")
+        qp.JobStore.assert_not_called()
+
+    def test_store_exception_is_swallowed(self, monkeypatch):
+        qp = self._qp(monkeypatch)
+        qp.JobStore.return_value.record_job_failure.side_effect = RuntimeError("ddb down")
+        assert not qp._record_job_failure("abc123", namespace="gco-jobs", error="e", message="m")
+
+    def test_existing_record_left_untouched(self, monkeypatch):
+        qp = self._qp(monkeypatch)
+        qp.JobStore.return_value.record_job_failure.return_value = False
+        assert not qp._record_job_failure("abc123", namespace="gco-jobs", error="e", message="m")
+
+
+class TestDrainAfterConfigFailure:
+    def _qp(self, monkeypatch, table="gco-jobs"):
+        if table is not None:
+            monkeypatch.setenv("JOBS_TABLE_NAME", table)
+        qp = _reload()
+        qp.boto3 = MagicMock()
+        qp.JobStore = MagicMock()
+        qp.JobStore.return_value.record_job_failure.return_value = True
+        return qp, qp.boto3.client.return_value
+
+    def test_drains_one_message_with_record(self, monkeypatch):
+        qp, sqs = self._qp(monkeypatch)
+        sqs.receive_message.return_value = _sqs_resp([_job()], receive_count=1)
+
+        assert qp.drain_one_message_after_config_failure("no token at /var/run/...")
+
+        kwargs = qp.JobStore.return_value.record_job_failure.call_args.kwargs
+        assert qp.JobStore.return_value.record_job_failure.call_args.args == ("abc123",)
+        assert "could not initialize Kubernetes credentials" in kwargs["error"]
+        assert "no token at /var/run/..." in kwargs["error"]
+        assert kwargs["message"] == "Queue processor configuration failure"
+        sqs.delete_message.assert_called_once()
+
+    def test_empty_queue_drains_nothing(self, monkeypatch):
+        qp, sqs = self._qp(monkeypatch)
+        sqs.receive_message.return_value = {"Messages": []}
+        assert not qp.drain_one_message_after_config_failure("boom")
+        sqs.delete_message.assert_not_called()
+
+    def test_without_queue_url_reports_nothing(self, monkeypatch):
+        monkeypatch.delenv("JOB_QUEUE_URL", raising=False)
+        monkeypatch.setenv("JOBS_TABLE_NAME", "gco-jobs")
+        qp = _reload()
+        qp.boto3 = MagicMock()
+        assert not qp.drain_one_message_after_config_failure("boom")
+        qp.boto3.client.assert_not_called()
+
+    def test_without_table_env_leaves_queue_untouched(self, monkeypatch):
+        qp, _sqs = self._qp(monkeypatch, table=None)
+        assert not qp.drain_one_message_after_config_failure("boom")
+        qp.boto3.client.assert_not_called()
+
+    def test_malformed_body_is_retained_for_dlq(self, monkeypatch):
+        qp, sqs = self._qp(monkeypatch)
+        sqs.receive_message.return_value = {
+            "Messages": [{"ReceiptHandle": "receipt-xyz", "Body": "not json"}]
+        }
+        assert not qp.drain_one_message_after_config_failure("boom")
+        qp.JobStore.return_value.record_job_failure.assert_not_called()
+        sqs.delete_message.assert_not_called()
+
+    def test_missing_job_id_is_retained_for_dlq(self, monkeypatch):
+        qp, sqs = self._qp(monkeypatch)
+        sqs.receive_message.return_value = _sqs_resp([_job()], job_id="")
+        assert not qp.drain_one_message_after_config_failure("boom")
+        sqs.delete_message.assert_not_called()
+
+    def test_unrecorded_failure_keeps_the_message(self, monkeypatch):
+        qp, sqs = self._qp(monkeypatch)
+        qp.JobStore.return_value.record_job_failure.return_value = False
+        sqs.receive_message.return_value = _sqs_resp([_job()])
+        assert not qp.drain_one_message_after_config_failure("boom")
+        sqs.delete_message.assert_not_called()
+
+    def test_non_string_priority_and_submitted_at_are_normalized(self, monkeypatch):
+        qp, sqs = self._qp(monkeypatch)
+        sqs.receive_message.return_value = _sqs_resp([_job()], priority="high", submitted_at=12345)
+        assert qp.drain_one_message_after_config_failure("boom")
+        kwargs = qp.JobStore.return_value.record_job_failure.call_args.kwargs
+        assert kwargs["priority"] == 0
+        assert kwargs["submitted_at"] is None
+
+
+class TestFinalReceiveFailureRecording:
+    """A message's LAST delivery converts its failure into a FAILED record.
+
+    Earlier receives keep the pre-existing retain-for-retry semantics with
+    no record, so a transient failure that succeeds on a later receive
+    never leaves a terminal record behind.
+    """
+
+    def _setup(self, manifests, monkeypatch, receive_count, apply_status="failed"):
+        monkeypatch.setenv("JOBS_TABLE_NAME", "gco-jobs")
+        qp = _reload()
+        mock_sqs = MagicMock()
+        qp.boto3 = MagicMock()
+        qp.boto3.client.return_value = mock_sqs
+        mock_sqs.receive_message.return_value = _sqs_resp(manifests, receive_count=receive_count)
+        result = qp.ResourceStatus(
+            api_version="batch/v1",
+            kind="Job",
+            name="test-job",
+            namespace="gco-jobs",
+            status=apply_status,
+            message=f"{apply_status} for test",
+        )
+        qp.apply_manifest = MagicMock(return_value=result)
+        qp.JobStore = MagicMock()
+        qp.JobStore.return_value.record_job_failure.return_value = True
+        return qp, mock_sqs
+
+    def test_apply_failure_on_final_receive_records_failed(self, monkeypatch):
+        qp, sqs = self._setup([_job()], monkeypatch, receive_count=3)
+        assert qp.process_one_message() is False
+        sqs.delete_message.assert_not_called()
+        kwargs = qp.JobStore.return_value.record_job_failure.call_args.kwargs
+        assert qp.JobStore.return_value.record_job_failure.call_args.args == ("abc123",)
+        assert kwargs["message"] == "SQS job could not be applied to Kubernetes"
+        assert "manifest[0] Job/test-job" in kwargs["error"]
+        assert kwargs["target_region"] == "us-east-1"
+        assert kwargs["namespace"] == "gco-jobs"
+        assert kwargs["submitted_at"] == "2026-03-26T12:00:00+00:00"
+
+    def test_apply_exception_on_final_receive_records_bounded_error(self, monkeypatch):
+        qp, sqs = self._setup([_job()], monkeypatch, receive_count=3)
+        qp.apply_manifest = MagicMock(side_effect=RuntimeError("z" * 5000))
+        assert qp.process_one_message() is False
+        kwargs = qp.JobStore.return_value.record_job_failure.call_args.kwargs
+        assert "manifest[0] apply raised" in kwargs["error"]
+        assert kwargs["error"].endswith("...[truncated]")
+        assert len(kwargs["error"]) == 2000 + len("...[truncated]")
+
+    def test_apply_failure_before_final_receive_records_nothing(self, monkeypatch):
+        qp, sqs = self._setup([_job()], monkeypatch, receive_count=1)
+        assert qp.process_one_message() is False
+        sqs.delete_message.assert_not_called()
+        qp.JobStore.return_value.record_job_failure.assert_not_called()
+
+    def test_prevalidation_failure_on_final_receive_records_failed(self, monkeypatch):
+        qp, _sqs = self._setup([_job(namespace="kube-system")], monkeypatch, receive_count=3)
+        assert qp.process_one_message() is False
+        kwargs = qp.JobStore.return_value.record_job_failure.call_args.kwargs
+        assert kwargs["message"] == "SQS job failed prevalidation"
+        assert "manifest[0]:" in kwargs["error"]
+
+    def test_prevalidation_failure_before_final_receive_records_nothing(self, monkeypatch):
+        qp, _sqs = self._setup([_job(namespace="kube-system")], monkeypatch, receive_count=1)
+        assert qp.process_one_message() is False
+        qp.JobStore.return_value.record_job_failure.assert_not_called()
+
+    def test_success_on_final_receive_records_nothing(self, monkeypatch):
+        qp, sqs = self._setup([_job()], monkeypatch, receive_count=3, apply_status="created")
+        assert qp.process_one_message() is True
+        sqs.delete_message.assert_called_once()
+        qp.JobStore.return_value.record_job_failure.assert_not_called()
+
+    def test_unreadable_receive_count_is_treated_as_first_receive(self, monkeypatch):
+        qp, _sqs = self._setup([_job()], monkeypatch, receive_count="not-a-number")
+        assert qp.process_one_message() is False
+        qp.JobStore.return_value.record_job_failure.assert_not_called()
+
+    def test_missing_attributes_default_to_first_receive(self, monkeypatch):
+        qp, _sqs = self._setup([_job()], monkeypatch, receive_count=None)
+        assert qp.process_one_message() is False
+        qp.JobStore.return_value.record_job_failure.assert_not_called()
+
+    def test_recording_disabled_without_table_env(self, monkeypatch):
+        monkeypatch.delenv("JOBS_TABLE_NAME", raising=False)
+        qp = _reload()
+        mock_sqs = MagicMock()
+        qp.boto3 = MagicMock()
+        qp.boto3.client.return_value = mock_sqs
+        mock_sqs.receive_message.return_value = _sqs_resp([_job()], receive_count=3)
+        result = qp.ResourceStatus(
+            api_version="batch/v1",
+            kind="Job",
+            name="test-job",
+            namespace="gco-jobs",
+            status="failed",
+            message="failed for test",
+        )
+        qp.apply_manifest = MagicMock(return_value=result)
+        qp.JobStore = MagicMock()
+        assert qp.process_one_message() is False
+        qp.JobStore.assert_not_called()
+
+    def test_non_int_priority_in_body_is_normalized(self, monkeypatch):
+        qp, _sqs = self._setup([_job()], monkeypatch, receive_count=3)
+        qp.boto3.client.return_value.receive_message.return_value = _sqs_resp(
+            [_job()], receive_count=3, priority="urgent", submitted_at=99
+        )
+        assert qp.process_one_message() is False
+        kwargs = qp.JobStore.return_value.record_job_failure.call_args.kwargs
+        assert kwargs["priority"] == 0
+        assert kwargs["submitted_at"] is None
 
 
 # ── Env-string parsing (regression tests) ───────────────────────────────

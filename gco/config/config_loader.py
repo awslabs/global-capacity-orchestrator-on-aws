@@ -1435,14 +1435,25 @@ class ConfigLoader:
             - endpoint_access: EKS API endpoint access mode
               - "PRIVATE": API server only accessible from within VPC (default, most secure)
               - "PUBLIC_AND_PRIVATE": API server accessible from internet and VPC
+            - public_access_cidrs: CIDR allowlist for the public endpoint when
+              endpoint_access is PUBLIC_AND_PRIVATE. Empty (the default) means
+              0.0.0.0/0, which synthesis calls out with a loud warning.
+            - developer_access: list of EKS access entries to synthesize for
+              human principals, each ``{principal_arn, scope, namespaces}``.
+              scope defaults to "namespace" and namespaces to ["gco-jobs"];
+              scope "cluster" grants AmazonEKSClusterAdminPolicy instead.
+              Empty (the default) synthesizes exactly today's entries.
 
         Note:
             PRIVATE endpoint is recommended for production. Job submission still works
             via API Gateway → Lambda (in VPC) or SQS queues. For kubectl access with
-            PRIVATE endpoint, use a bastion host, VPN, or AWS SSM Session Manager.
+            PRIVATE endpoint, use `gco cluster tunnel` (SSM), a bastion host, or a VPN —
+            and an access entry for your principal either way (`gco stacks access`).
         """
-        default_config = {
+        default_config: dict[str, Any] = {
             "endpoint_access": "PRIVATE",
+            "public_access_cidrs": [],
+            "developer_access": [],
         }
         return {**default_config, **(self.app.node.try_get_context("eks_cluster") or {})}
 
